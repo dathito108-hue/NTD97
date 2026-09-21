@@ -15,7 +15,8 @@ const SPM_SPACE: &[u8; 3] = b"\xE2\x96\x81";
 pub trait TextTokenizer {
     fn vocab_size(&self) -> usize;
     fn eos_token(&self) -> Option<u32>;
-    fn encode_text(&self, text: &str, add_special_tokens: bool) -> Result<Vec<u32>, TokenizerError>;
+    fn encode_text(&self, text: &str, add_special_tokens: bool)
+        -> Result<Vec<u32>, TokenizerError>;
     fn decode_text(&self, token_ids: &[u32], skip_special: bool) -> Result<String, TokenizerError>;
 }
 
@@ -196,11 +197,7 @@ impl TextTokenizer for VocabularyTokenizer {
         self.encode(text, add_special_tokens)
     }
 
-    fn decode_text(
-        &self,
-        token_ids: &[u32],
-        skip_special: bool,
-    ) -> Result<String, TokenizerError> {
+    fn decode_text(&self, token_ids: &[u32], skip_special: bool) -> Result<String, TokenizerError> {
         self.decode(token_ids, skip_special)
     }
 }
@@ -298,11 +295,7 @@ impl LlamaSpmTokenizer {
         self.add_eos_token
     }
 
-    pub fn encode(
-        &self,
-        text: &str,
-        add_special_tokens: bool,
-    ) -> Result<Vec<u32>, TokenizerError> {
+    pub fn encode(&self, text: &str, add_special_tokens: bool) -> Result<Vec<u32>, TokenizerError> {
         let normalized = normalize_spm(text, self.add_space_prefix);
         let mut output = Vec::new();
 
@@ -613,10 +606,7 @@ fn validate_specials(
     eos_token: Option<u32>,
     unknown_token: Option<u32>,
 ) -> Result<(), TokenizerError> {
-    for id in [bos_token, eos_token, unknown_token]
-        .into_iter()
-        .flatten()
-    {
+    for id in [bos_token, eos_token, unknown_token].into_iter().flatten() {
         let index = usize::try_from(id).map_err(|_| TokenizerError::InvalidSpecialToken(id))?;
         if index >= tokens.len() {
             return Err(TokenizerError::InvalidSpecialToken(id));
@@ -692,7 +682,12 @@ fn parse_byte_piece(token: &[u8]) -> Option<u8> {
     if token.len() == 1 {
         return Some(token[0]);
     }
-    if token.len() != 6 || token[0] != b'<' || token[1] != b'0' || token[2] != b'x' || token[5] != b'>' {
+    if token.len() != 6
+        || token[0] != b'<'
+        || token[1] != b'0'
+        || token[2] != b'x'
+        || token[5] != b'>'
+    {
         return None;
     }
     let high = hex_nibble(token[3])?;
@@ -826,19 +821,25 @@ mod tests {
 
         assert_eq!(
             tokens,
-            vec![1, 11, 6, 10, u32::try_from(byte_exclamation).expect("byte id")]
+            vec![
+                1,
+                11,
+                6,
+                10,
+                u32::try_from(byte_exclamation).expect("byte id")
+            ]
         );
-        assert_eq!(
-            tokenizer.decode(&tokens, true).expect("decode"),
-            " hello!"
-        );
+        assert_eq!(tokenizer.decode(&tokens, true).expect("decode"), " hello!");
     }
 
     #[test]
     fn llama_spm_honors_source_bos_and_eos_policy() {
         let tokenizer = spm_tokenizer();
         assert_eq!(tokenizer.encode("", true).expect("empty"), vec![1]);
-        assert_eq!(tokenizer.encode("", false).expect("plain empty"), Vec::<u32>::new());
+        assert_eq!(
+            tokenizer.encode("", false).expect("plain empty"),
+            Vec::<u32>::new()
+        );
     }
 
     #[test]
