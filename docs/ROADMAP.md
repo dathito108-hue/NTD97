@@ -267,6 +267,11 @@ Exit: complete.
 - security-boundary tests;
 - 24/7 logical continuity soak tests;
 - representative-device matrix;
-- no-third-party-AI-dependency audit.
+- no-third-party-AI-dependency audit;
+- NDE97 physical-device evidence records;
+- CI-attested Android evidence APK;
+- emulator-rejecting physical evidence collector.
+
+Current status: CI validation foundation is implemented and green. Final M10 completion remains blocked until distinct physical 4 GB / 8 GB / 12 GB device records satisfy the declared latency, energy, reliability, recovery and sovereignty targets.
 
 Exit: measurable capability, latency, reliability, recovery and sovereignty targets are met on representative mobile hardware.

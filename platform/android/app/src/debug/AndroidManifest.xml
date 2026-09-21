@@ -3,5 +3,8 @@
         <activity
             android:name=".NtdLifecycleProbeActivity"
             android:exported="true" />
+        <activity
+            android:name=".NtdPhysicalEvidenceActivity"
+            android:exported="true" />
     </application>
 </manifest>

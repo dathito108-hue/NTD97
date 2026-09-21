@@ -17,6 +17,10 @@ use ntd_mobile_shell::{
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
 use ntd_runtime::{ResourceSnapshot, ThermalState};
+use ntd_validation::{
+    encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
+    DeviceEvidence, EvidenceClass, PhysicalEvidenceRecord,
+};
 
 const BRIDGE_PROTOCOL_VERSION: u8 = 1;
 
@@ -377,4 +381,102 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativePullSpeak
     _sample_rate_hz: jint,
 ) -> jbyteArray {
     java_bytes(&env, &[])
+}
+
+fn java_string(env: &mut JNIEnv<'_>, value: &JString<'_>) -> Option<String> {
+    env.get_string(value)
+        .ok()
+        .map(|text| text.to_string_lossy().into_owned())
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeValidationWorkload(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jlong {
+    run_native_validation_workload()
+        .ok()
+        .and_then(|value| i64::try_from(value).ok())
+        .unwrap_or(-1)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeRecoveryProbe(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jboolean {
+    u8::from(run_logical_continuity_soak(1, 5).is_ok())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeEncodeEvidence(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    profile: JString<'_>,
+    fingerprint_hash: JString<'_>,
+    build_revision: JString<'_>,
+    total_ram_bytes: jlong,
+    p95_latency_nanos: jlong,
+    energy_per_task_microjoules: jlong,
+    reliability_permille: jint,
+    recovery_permille: jint,
+    sovereignty_audit_passed: jboolean,
+    sample_count: jint,
+    energy_source: JString<'_>,
+) -> jbyteArray {
+    let Some(profile) = java_string(&mut env, &profile) else {
+        return java_bytes(&env, &[]);
+    };
+    let Some(device_fingerprint) = java_string(&mut env, &fingerprint_hash) else {
+        return java_bytes(&env, &[]);
+    };
+    let Some(build_revision) = java_string(&mut env, &build_revision) else {
+        return java_bytes(&env, &[]);
+    };
+    let Some(energy_source) = java_string(&mut env, &energy_source) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(total_ram_bytes) = u64::try_from(total_ram_bytes) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(p95_latency_nanos) = u64::try_from(p95_latency_nanos) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(energy_per_task_microjoules) = u64::try_from(energy_per_task_microjoules) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(reliability_permille) = u16::try_from(reliability_permille) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(recovery_permille) = u16::try_from(recovery_permille) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(sample_count) = u32::try_from(sample_count) else {
+        return java_bytes(&env, &[]);
+    };
+
+    let record = PhysicalEvidenceRecord {
+        evidence: DeviceEvidence {
+            class: EvidenceClass::PhysicalDevice,
+            profile,
+            device_fingerprint,
+            p95_latency_nanos,
+            energy_per_task_microjoules,
+            reliability_permille,
+            recovery_permille,
+            sovereignty_audit_passed: sovereignty_audit_passed != 0,
+        },
+        build_revision,
+        total_ram_bytes,
+        sample_count,
+        energy_source,
+    };
+    match encode_physical_evidence(&record) {
+        Ok(bytes) => java_bytes(&env, &bytes),
+        Err(_) => java_bytes(&env, &[]),
+    }
 }

@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 jni = { version = "0.21.1", default-features = false }
 ntd-mobile-shell = { path = "../ntd-mobile-shell" }
 ntd-runtime = { path = "../ntd-runtime" }
+ntd-validation = { path = "../ntd-validation" }
 
 [lints.clippy]
 all = "warn"
