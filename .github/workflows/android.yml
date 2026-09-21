@@ -88,3 +88,80 @@ jobs:
           name: ntd97-debug-apk
           path: platform/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Enable KVM for lifecycle validation
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Validate Android lifecycle on emulator
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_7_pro
+          cores: 2
+          ram-size: 2048M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            APK="platform/android/app/build/outputs/apk/debug/app-debug.apk"
+            PACKAGE="ai.ntd97.mobile"
+
+            adb install -r "${APK}"
+            adb shell pm grant "${PACKAGE}" android.permission.POST_NOTIFICATIONS
+            adb shell pm grant "${PACKAGE}" android.permission.RECORD_AUDIO
+            adb shell appops set "${PACKAGE}" SYSTEM_ALERT_WINDOW allow
+
+            adb shell am start -W -n "${PACKAGE}/.MainActivity"
+            test -n "$(adb shell pidof "${PACKAGE}" | tr -d '\r')"
+
+            adb shell am start -W \
+              -n "${PACKAGE}/.NtdLifecycleProbeActivity" \
+              --ez seed_reboot true
+            sleep 2
+
+            PROBE="$(adb shell run-as "${PACKAGE}" cat files/ntd97-lifecycle-probe.txt | tr -d '\r')"
+            printf '%s\n' "${PROBE}"
+
+            for REQUIRED in \
+              native_host=ok \
+              avatar=ok \
+              audio_bridge=ok \
+              notification_channels=ok \
+              foreground_request=ok \
+              overlay_request=ok \
+              persistent_job=ok \
+              reboot_marker=ok
+            do
+              printf '%s\n' "${PROBE}" | grep -q "^${REQUIRED}$"
+            done
+
+            adb shell dumpsys activity services "${PACKAGE}" | grep -q "NtdOverlayService"
+
+            adb reboot
+            adb wait-for-device
+            for ATTEMPT in $(seq 1 90); do
+              if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; then
+                break
+              fi
+              sleep 2
+            done
+            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+
+            adb shell input keyevent 82 || true
+            adb shell am start -W -n "${PACKAGE}/.MainActivity"
+            test -n "$(adb shell pidof "${PACKAGE}" | tr -d '\r')"
+
+            adb shell am start -W -n "${PACKAGE}/.NtdLifecycleProbeActivity"
+            sleep 2
+            POST_REBOOT="$(adb shell run-as "${PACKAGE}" cat files/ntd97-lifecycle-probe.txt | tr -d '\r')"
+            printf '%s\n' "${POST_REBOOT}"
+            printf '%s\n' "${POST_REBOOT}" | grep -q '^native_host=ok
+            printf '%s\n' "${POST_REBOOT}" | grep -q '^avatar=ok
+            printf '%s\n' "${POST_REBOOT}" | grep -q '^audio_bridge=ok
+            printf '%s\n' "${POST_REBOOT}" | grep -q '^notification_channels=ok
