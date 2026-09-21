@@ -25,6 +25,7 @@ platform/android
 - stable `CognitiveIdentity`;
 - SIK97 cognitive checkpoint;
 - TAF97 action checkpoint;
+- canonical capability descriptor snapshot with pinned versions/scopes/side-effect metadata;
 - continuity state;
 - wake reason;
 - monotonic checkpoint sequence;
@@ -38,7 +39,7 @@ major = 0
 minor = 1
 ```
 
-Build and restore validate the nested SIK97 and TAF97 checkpoints and cross-check every action plan against an existing cognitive task. A pending approval must match an actual task/plan/action/capability tuple.
+Build and restore validate the nested SIK97 and TAF97 checkpoints and cross-check every action plan against an existing cognitive task. Capability descriptors are carried inside MCS97, so reboot restore does not require Android to reconstruct a registry by hand. A pending approval must match an actual task/plan/action/capability tuple.
 
 Authority grants and platform adapters are deliberately not serialized.
 
@@ -157,7 +158,7 @@ Rendering is therefore a consumer of mobile resource policy rather than a requir
 
 `VoiceStateMachine` defines local input/output state, transcript handoff, speaking progress, amplitude and viseme state. It contains no cloud speech dependency.
 
-Actual microphone/speaker adapters remain platform-owned and can be replaced without changing cognition or avatar semantics.
+The Android shell also includes a local PCM `AudioRecord` / `AudioTrack` bridge. Microphone PCM is delivered only to the packaged local runtime host and speaker PCM is pulled from that host. No Android SpeechRecognizer/TTS service is required for the sovereign baseline.
 
 ## 13. Android source status
 
