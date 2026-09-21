@@ -748,6 +748,16 @@ fn canonical_gpt2_lowers_packages_and_executes_native_tokenizer() {
     let loaded =
         load_native_generative_program(&view, &MemoryContentStore::default()).expect("load");
     assert_eq!(loaded.tokenizer, lowered.tokenizer);
+    let manifest = loaded.manifest.expect("generative manifest");
+    assert_eq!(manifest.token_input, lowered.token_input);
+    assert_eq!(
+        usize::try_from(manifest.distribution_output).expect("distribution output"),
+        lowered.distribution_output
+    );
+    assert_eq!(
+        usize::try_from(manifest.vocabulary_size).expect("vocabulary size"),
+        lowered.vocabulary_size
+    );
 
     let NativeTokenizerModel::Gpt2Bpe {
         merges,
@@ -823,6 +833,16 @@ fn lowered_llama_packages_as_signed_native_generative_intelligence() {
     assert_eq!(loaded.program.graph, lowered.graph);
     assert_eq!(loaded.program.tensors, lowered.tensors);
     assert_eq!(loaded.tokenizer, lowered.tokenizer);
+    let manifest = loaded.manifest.expect("generative manifest");
+    assert_eq!(manifest.token_input, lowered.token_input);
+    assert_eq!(
+        usize::try_from(manifest.distribution_output).expect("distribution output"),
+        lowered.distribution_output
+    );
+    assert_eq!(
+        usize::try_from(manifest.vocabulary_size).expect("vocabulary size"),
+        lowered.vocabulary_size
+    );
 
     let NativeTokenizerModel::LlamaSpm {
         score_bits,
