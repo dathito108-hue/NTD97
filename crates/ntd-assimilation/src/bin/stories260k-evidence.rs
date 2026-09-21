@@ -245,9 +245,23 @@ fn validate_streamed_model(
         || model.config.rope_dimension_count != 8
         || (model.config.rms_epsilon - 1.0e-5).abs() > f32::EPSILON
         || model.vocabulary_size != 512
-        || model.tensor_shards.len() != 48
+        || model.tensor_shards.len() != 52
+        || model.bindings.len() != 52
     {
-        return Err(format!("pinned stories260K model config drift: {model:?}"));
+        return Err(format!(
+            "pinned stories260K model config drift: context={} embd={} ff={} blocks={} heads={}/{} rope={} rms={} vocab={} shards={} bindings={}",
+            model.config.context_length,
+            model.config.embedding_length,
+            model.config.feed_forward_length,
+            model.config.block_count,
+            model.config.head_count,
+            model.config.head_count_kv,
+            model.config.rope_dimension_count,
+            model.config.rms_epsilon,
+            model.vocabulary_size,
+            model.tensor_shards.len(),
+            model.bindings.len()
+        ));
     }
     Ok(())
 }
