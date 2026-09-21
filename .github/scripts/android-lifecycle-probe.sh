@@ -58,6 +58,7 @@ for REQUIRED in \
   chat_submit=ok \
   chat_stream=ok \
   chat_reasoning=ok \
+  chat_deliberation=ok \
   chat_memory=ok \
   chat_restore=ok \
   chat_store=ok \
