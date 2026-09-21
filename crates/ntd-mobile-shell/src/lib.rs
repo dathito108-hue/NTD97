@@ -6,8 +6,8 @@ mod media;
 mod scheduler;
 
 pub use avatar::{
-    AvatarController, AvatarExpression, AvatarFrame, AvatarGesture, AvatarMode, AvatarRenderProfile,
-    AvatarSurface, GazeTarget, LipSyncState,
+    AvatarController, AvatarExpression, AvatarFrame, AvatarGesture, AvatarMode,
+    AvatarRenderProfile, AvatarSurface, GazeTarget, LipSyncState,
 };
 pub use continuity::{
     build_mobile_continuity_bundle, decode_mobile_continuity_bundle,
@@ -17,6 +17,4 @@ pub use continuity::{
 };
 
 pub use media::{MediaEvent, VoiceFrame, VoiceInputState, VoiceOutputState, VoiceStateMachine};
-pub use scheduler::{
-    choose_platform_directive, PlatformDirective, WakeContext, WakePolicyError,
-};
+pub use scheduler::{choose_platform_directive, PlatformDirective, WakeContext, WakePolicyError};
