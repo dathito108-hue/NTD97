@@ -6,11 +6,13 @@ use ntd_assimilation::{
     NativeValidationSandbox, SourcePackage, GGUF_MAGIC, GGUF_VERSION,
 };
 use ntd_capsule::{
-    load_native_generative_program, CapsuleView, MemoryContentStore, NativeTokenizerModel,
+    load_native_generative_program, CapsuleView, MemoryContentStore, NativeGpt2PreTokenizer,
+    NativeTokenizerModel,
 };
 use ntd_runtime::{
-    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
-    LlamaSpmTokenizer, QuantizationParams, SamplingMode, TensorLoader,
+    CpuReferenceProvider, DistributionKind, GenerationConfig, Gpt2BpeConfig, Gpt2BpeTokenizer,
+    Gpt2PreTokenizer, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer, QuantizationParams,
+    SamplingMode, TensorLoader,
 };
 
 const ALIGNMENT: usize = 32;
@@ -290,18 +292,82 @@ fn lowering_rejects_unsupported_rope_scaling_instead_of_drifting() {
 }
 
 #[test]
-fn lowering_rejects_gpt2_until_native_bpe_execution_exists() {
+fn lowering_accepts_supported_gpt2_bpe_profile_and_executes_natively() {
     let bytes = fixture();
     let mut model = GgufModel::parse(&bytes).expect("parse");
     model.metadata.insert(
         "tokenizer.ggml.model".into(),
         GgufValue::String("gpt2".into()),
     );
+    model.metadata.insert(
+        "tokenizer.ggml.pre".into(),
+        GgufValue::String("gpt-2".into()),
+    );
+    model.metadata.insert(
+        "tokenizer.ggml.merges".into(),
+        GgufValue::Array {
+            element_type: GgufValueType::String,
+            values: vec![GgufValue::String("a a".into())],
+        },
+    );
+
+    let lowered = lower_llama_model(&bytes, &model).expect("lower");
+    let NativeTokenizerModel::Gpt2Bpe {
+        token_types,
+        merges,
+        pre_tokenizer,
+        add_bos_token,
+        add_eos_token,
+        ignore_merges,
+    } = &lowered.tokenizer.model
+    else {
+        panic!("expected GPT-2 BPE tokenizer");
+    };
+    assert_eq!(*pre_tokenizer, NativeGpt2PreTokenizer::Gpt2);
+
+    let runtime = Gpt2BpeTokenizer::new(
+        lowered.tokenizer.tokens.clone(),
+        token_types.clone(),
+        merges.clone(),
+        Gpt2BpeConfig {
+            pre_tokenizer: Gpt2PreTokenizer::Gpt2,
+            bos_token: lowered.tokenizer.bos_token,
+            eos_token: lowered.tokenizer.eos_token,
+            unknown_token: lowered.tokenizer.unknown_token,
+            add_bos_token: *add_bos_token,
+            add_eos_token: *add_eos_token,
+            ignore_merges: *ignore_merges,
+        },
+    )
+    .expect("runtime tokenizer");
+    assert_eq!(runtime.encode("ab", false).expect("encode"), vec![0, 1]);
+    assert_eq!(runtime.decode(&[0, 1], true).expect("decode"), "ab");
+}
+
+#[test]
+fn lowering_rejects_unknown_gpt2_pre_tokenizer_profile() {
+    let bytes = fixture();
+    let mut model = GgufModel::parse(&bytes).expect("parse");
+    model.metadata.insert(
+        "tokenizer.ggml.model".into(),
+        GgufValue::String("gpt2".into()),
+    );
+    model.metadata.insert(
+        "tokenizer.ggml.pre".into(),
+        GgufValue::String("qwen2".into()),
+    );
+    model.metadata.insert(
+        "tokenizer.ggml.merges".into(),
+        GgufValue::Array {
+            element_type: GgufValueType::String,
+            values: vec![GgufValue::String("a a".into())],
+        },
+    );
 
     assert!(matches!(
         lower_llama_model(&bytes, &model),
         Err(ntd_assimilation::GgufError::UnsupportedModelFeature(message))
-            if message.contains("source-equivalent tokenizer")
+            if message.contains("not supported")
     ));
 }
 
