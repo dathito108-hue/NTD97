@@ -10,7 +10,8 @@ mod store;
 
 pub use forge::{CapabilityForge, ForgePolicy};
 pub use gguf::{
-    ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, lower_llama_model, parse_gguf,
+    ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, lower_llama_model,
+    lowered_llama_candidate, parse_gguf,
     tensor_disposition, transcode_tensor, GgufConversionPlan, GgufError, GgufModel,
     GgufTensorDisposition, GgufTensorInfo, GgufTokenizer, GgufValue, GgufValueType,
     LlamaConfig, LlamaTensorBinding, LoweredLlamaModel, TranscodedTensor,
