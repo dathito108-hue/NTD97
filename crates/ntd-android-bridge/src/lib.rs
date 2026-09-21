@@ -714,10 +714,10 @@ fn chat_reasoning_budget(request_id: u64) -> i32 {
         return 0;
     };
     match guard.conversation.reasoning_budget_for_task(session.task_id) {
-        Some(ntd_core::ReasoningBudget::Reflex) => 1,
-        Some(ntd_core::ReasoningBudget::Standard) => 2,
-        Some(ntd_core::ReasoningBudget::Deep) => 3,
-        Some(ntd_core::ReasoningBudget::Recovery) => 4,
+        Some(ntd_runtime::ReasoningBudget::Reflex) => 1,
+        Some(ntd_runtime::ReasoningBudget::Standard) => 2,
+        Some(ntd_runtime::ReasoningBudget::Deep) => 3,
+        Some(ntd_runtime::ReasoningBudget::Recovery) => 4,
         None => 0,
     }
 }
