@@ -69,7 +69,8 @@ public final class NtdNotificationController {
         Notification notification = new Notification.Builder(context, APPROVAL_CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle("NTD97 needs approval")
-                .setContentText(capability + ": " + rationale)
+                .setContentText("Open NTD97 to review the pending action")
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setAutoCancel(true)
                 .setContentIntent(pendingOpen)
                 .build();
