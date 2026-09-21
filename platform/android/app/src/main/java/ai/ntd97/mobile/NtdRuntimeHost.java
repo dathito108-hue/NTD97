@@ -87,6 +87,18 @@ public interface NtdRuntimeHost {
         return 0;
     }
 
+    default int chatActionPlannerStatus(long requestId) {
+        return 0;
+    }
+
+    default int chatActionCount(long requestId) {
+        return 0;
+    }
+
+    default int chatVerifiedActionCount(long requestId) {
+        return 0;
+    }
+
     default byte[] chatCheckpoint() {
         return new byte[0];
     }
