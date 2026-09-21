@@ -245,12 +245,14 @@ fn canonical_gpt2_metadata_is_ready_while_other_pre_tokenizers_fail_closed() {
         "tokenizer.ggml.pre".into(),
         GgufValue::String("gpt-2".into()),
     );
-    model
-        .metadata
-        .insert("tokenizer.ggml.add_bos_token".into(), GgufValue::Bool(false));
-    model
-        .metadata
-        .insert("tokenizer.ggml.add_eos_token".into(), GgufValue::Bool(false));
+    model.metadata.insert(
+        "tokenizer.ggml.add_bos_token".into(),
+        GgufValue::Bool(false),
+    );
+    model.metadata.insert(
+        "tokenizer.ggml.add_eos_token".into(),
+        GgufValue::Bool(false),
+    );
 
     let tokenizer = model.tokenizer().expect("tokenizer");
     assert_eq!(tokenizer.merges, vec!["a b".to_owned(), "b a".to_owned()]);
