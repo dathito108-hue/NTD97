@@ -755,6 +755,59 @@ mod tests {
     }
 
     #[test]
+    fn capability_version_tampering_breaks_restore() {
+        let registry = registry();
+        let mut cognitive = CognitiveRuntime::new(CognitiveIdentity(*b"NTD97-COGNITION1"));
+        let task_id = cognitive
+            .state_mut()
+            .submit_task(
+                Intent::new("version-bound task"),
+                TaskGraph {
+                    actions: vec![ActionNode {
+                        id: 1,
+                        capability: CapabilityId("web.search".into()),
+                        side_effect: SideEffectClass::ReadOnly,
+                        verification_required: true,
+                    }],
+                },
+                None,
+            )
+            .expect("task");
+        let task = cognitive.state().tasks.get(&task_id).expect("task").clone();
+        let mut fabric = ActionFabric::new(registry.clone());
+        fabric
+            .prepare_cognitive_task(
+                &task,
+                BTreeMap::from([(
+                    1,
+                    TypedAction::WebSearch {
+                        query: "version".into(),
+                        max_results: 1,
+                    },
+                )]),
+            )
+            .expect("plan");
+
+        let mut bundle = build_mobile_continuity_bundle(
+            &cognitive,
+            &registry,
+            fabric.state(),
+            MobileContinuityState::Checkpointed,
+            WakeReason::Reboot,
+            1,
+            None,
+            None,
+        )
+        .expect("bundle");
+
+        bundle.capabilities[0].version = 2;
+        assert!(matches!(
+            restore_mobile_continuity_bundle(bundle),
+            Err(MobileContinuityError::ActionCheckpoint(_))
+        ));
+    }
+
+    #[test]
     fn approval_must_match_action_plan() {
         let registry = registry();
         let mut cognitive = CognitiveRuntime::new(CognitiveIdentity(*b"NTD97-COGNITION1"));
