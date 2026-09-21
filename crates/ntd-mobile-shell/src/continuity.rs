@@ -124,7 +124,6 @@ pub struct MobileContinuityBundle {
     pub retry: Option<RetryBackoff>,
 }
 
-#[derive(Debug)]
 pub struct RestoredMobileSession {
     pub cognitive: CognitiveRuntime,
     pub actions: ActionFabric,
