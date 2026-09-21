@@ -147,3 +147,9 @@ It then finishes the task, marks the goal completed and records completion memor
 This block establishes persistent cognition and sovereign memory. It does not yet execute web/browser/device actions, manage Android process scheduling, render the 3D assistant, or perform live intelligence assimilation.
 
 Those later blocks must consume this state machine rather than creating a second agent identity.
+
+## Major Block E action continuity binding
+
+Major Block E adds the deterministic `TAF97\0` action journal beside SIK97 cognitive state. SIK97 preserves identity/goals/tasks/memory; TAF97 preserves in-flight typed capability execution. Platform adapters and authority grants are deliberately not serialized.
+
+Major Block F must reconstruct both state families under platform-approved lifecycle mechanisms before resuming eligible work.

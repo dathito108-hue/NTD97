@@ -115,19 +115,28 @@ Exit: one local NTD97 identity can reason, remember, checkpoint and recover with
 
 Goal: give cognition typed, governed real-world capabilities.
 
-Planned scope:
+Delivered contract:
 
-- capability registry;
-- typed web/search/browser/file actions;
-- permission and authority scopes;
-- side-effect classification;
-- verification and rollback;
-- Android observation and permitted interaction bridge;
-- app/device action execution;
-- failure recovery and resumable task state.
+- versioned `CapabilityRegistry` with Web / Browser / File / Device / App / Custom domains;
+- typed WebSearch/WebFetch/BrowserObserve/BrowserInteract/FileRead/FileWrite/DeviceObserve/DeviceInteract/AppAction requests;
+- authority scopes with deny-by-default external-write and irreversible gates;
+- canonical side-effect contract reused from `ntd-core`;
+- direct binding from `CognitiveTask` / `TaskGraph` into action plans;
+- transactional plan preparation and stable action IDs;
+- capability-version pinning across checkpoint/restore;
+- replaceable `CapabilityAdapter` execution boundary with no platform API in sovereign core;
+- Accept / Retry / Reject verification semantics;
+- rollback tokens and fail-closed rollback behavior;
+- resumable actions and adapter failure recovery;
+- stable ActionId idempotency contract across retry/cold resume;
+- deterministic `TAF97` action-journal checkpoint;
+- authority is intentionally re-evaluated after restore rather than persisted;
+- NCC97 State-capsule binding through `ContinuityState`;
+- end-to-end WebSearch -> FileWrite -> DeviceObserve -> AppAction test across TAF97 restore;
+- verifier-rejection test proving external-write rollback;
+- transient-adapter failure test proving retry reuses the same ActionId.
 
-Exit: NTD97 can plan, execute and verify multi-step tasks across local tools, internet and permitted device surfaces.
-
+Exit: NTD97 can materialize a cognitive TaskGraph into governed typed actions, execute and verify multi-step work across registered local/internet/device adapters, and resume interrupted actions without changing task identity.
 ## M6 — Major Block F: Android Continuity + Interactive 3D Assistant
 
 Goal: make NTD97 a persistent mobile assistant interface under operating-system limits.
