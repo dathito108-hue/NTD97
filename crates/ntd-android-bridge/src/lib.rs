@@ -695,23 +695,26 @@ fn submit_chat_reserved(
     let budget = choose_reasoning_budget(signals);
     let recall_limit = memory_recall_limit_for_budget(budget);
 
-    let mut guard = lock_state();
-    if guard
-        .chat_session
-        .as_ref()
-        .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
-    {
-        return Err("another native chat request started during preflight".into());
-    }
-    let loaded_model = guard
-        .chat_model
-        .as_ref()
-        .ok_or_else(|| "native chat model was unloaded during preflight".to_owned())?;
-    if loaded_model.asset_id != model.asset_id || loaded_model.version != model.version {
-        return Err("native chat model changed during reasoning preflight".into());
-    }
+    let conversation_snapshot = {
+        let guard = lock_state();
+        if guard
+            .chat_session
+            .as_ref()
+            .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+        {
+            return Err("another native chat request started during preflight".into());
+        }
+        let loaded_model = guard
+            .chat_model
+            .as_ref()
+            .ok_or_else(|| "native chat model was unloaded during preflight".to_owned())?;
+        if loaded_model.asset_id != model.asset_id || loaded_model.version != model.version {
+            return Err("native chat model changed during reasoning preflight".into());
+        }
+        guard.conversation.clone()
+    };
 
-    let mut conversation = guard.conversation.clone();
+    let mut conversation = conversation_snapshot.clone();
     let recalled = conversation
         .recall_conversation_context(user_message, recall_limit)
         .map_err(|error| format!("recall sovereign conversation memory: {error:?}"))?;
@@ -755,6 +758,23 @@ fn submit_chat_reserved(
     conversation
         .record_reasoning_cycle_report(task_id, &report)
         .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
+
+    let mut guard = lock_state();
+    let loaded_model = guard
+        .chat_model
+        .as_ref()
+        .ok_or_else(|| "native chat model was unloaded before reasoning commit".to_owned())?;
+    if loaded_model.asset_id != model.asset_id || loaded_model.version != model.version {
+        return Err("native chat model changed before reasoning commit".into());
+    }
+    if guard.conversation != conversation_snapshot
+        || guard
+            .chat_session
+            .as_ref()
+            .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+    {
+        return Err("sovereign conversation changed during native reasoning".into());
+    }
 
     let request_id = guard.next_chat_request_id;
     guard.next_chat_request_id = guard
