@@ -485,8 +485,8 @@ fn streamed_ntp97_shards_reload_through_canonical_thin_capsule() {
             .collect::<Vec<_>>()
     );
 
-    let capsule = streamed_llama_thin_capsule(*b"NTD97-STREAM-001", &streamed)
-        .expect("thin capsule");
+    let capsule =
+        streamed_llama_thin_capsule(*b"NTD97-STREAM-001", &streamed).expect("thin capsule");
     let view = CapsuleView::read(&capsule).expect("capsule");
     assert_eq!(view.kind, CapsuleKind::Thin);
     assert_eq!(
