@@ -89,7 +89,9 @@ pub use tokenizer::{
     TOKEN_TYPE_USER_DEFINED,
 };
 
-pub use ntd_core::ReasoningBudget;
+pub use ntd_core::{
+    ActionNode, CapabilityId, Intent, ReasoningBudget, SideEffectClass, TaskGraph,
+};
 use ntd_ir::IrVersion;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
