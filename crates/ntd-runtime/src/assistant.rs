@@ -338,6 +338,85 @@ impl SovereignConversationState {
             .ok()
     }
 
+    pub fn record_action_planner_status(
+        &mut self,
+        task_id: u64,
+        status: &str,
+    ) -> Result<(), ConversationStateError> {
+        if !matches!(status, "direct" | "actions" | "invalid" | "unsupported") {
+            return Err(ConversationStateError::InvalidTaskGraph);
+        }
+        if !self.cognition.state().tasks.contains_key(&task_id) {
+            return Err(ConversationStateError::TaskMismatch {
+                expected: task_id,
+                actual: 0,
+            });
+        }
+        self.cognition.state_mut().set_world_fact(
+            format!("conversation.task.{task_id}.action_planner_status"),
+            status,
+        )?;
+        Ok(())
+    }
+
+    pub fn action_planner_status_for_task(&self, task_id: u64) -> Option<&str> {
+        let key = format!("conversation.task.{task_id}.action_planner_status");
+        self.cognition
+            .state()
+            .world
+            .get(&key)
+            .map(|fact| fact.value.as_str())
+    }
+
+    pub fn record_verified_action_count(
+        &mut self,
+        task_id: u64,
+        count: usize,
+    ) -> Result<(), ConversationStateError> {
+        if !self.cognition.state().tasks.contains_key(&task_id) {
+            return Err(ConversationStateError::TaskMismatch {
+                expected: task_id,
+                actual: 0,
+            });
+        }
+        self.cognition.state_mut().set_world_fact(
+            format!("conversation.task.{task_id}.verified_action_count"),
+            count.to_string(),
+        )?;
+        Ok(())
+    }
+
+    pub fn verified_action_count_for_task(&self, task_id: u64) -> Option<usize> {
+        let key = format!("conversation.task.{task_id}.verified_action_count");
+        self.cognition
+            .state()
+            .world
+            .get(&key)?
+            .value
+            .parse::<usize>()
+            .ok()
+    }
+
+    pub fn replace_active_prompt_tokens(
+        &mut self,
+        task_id: u64,
+        prompt_tokens: Vec<u32>,
+    ) -> Result<(), ConversationStateError> {
+        if prompt_tokens.is_empty() || prompt_tokens.len() > MAX_TOKENS {
+            return Err(ConversationStateError::InvalidActiveTurn);
+        }
+        let active = self
+            .active
+            .as_mut()
+            .ok_or(ConversationStateError::MissingActiveTurn)?;
+        ensure_task(active.task_id, task_id)?;
+        if !active.generated_tokens.is_empty() || !active.generated_text.is_empty() {
+            return Err(ConversationStateError::InvalidActiveTurn);
+        }
+        active.prompt_tokens = prompt_tokens;
+        Ok(())
+    }
+
     pub fn record_reasoning_profile(
         &mut self,
         task_id: u64,
@@ -922,6 +1001,36 @@ mod tests {
             Some(ReasoningBudget::Deep)
         );
         assert_eq!(restored.recalled_memory_items_for_task(task), Some(4));
+    }
+
+    #[test]
+    fn action_planner_and_verified_result_state_survive_ncs97_checkpoint() {
+        let mut state = SovereignConversationState::new(identity());
+        let task = state
+            .begin_turn("model.test", 1, "observe device", vec![1, 2], 8)
+            .expect("begin");
+        state
+            .record_action_planner_status(task, "direct")
+            .expect("status");
+        state
+            .record_verified_action_count(task, 0)
+            .expect("verified count");
+        state
+            .replace_active_prompt_tokens(task, vec![3, 4, 5])
+            .expect("replace prompt");
+
+        let encoded = encode_conversation_checkpoint(&state).expect("encode");
+        let restored = decode_conversation_checkpoint(&encoded).expect("decode");
+
+        assert_eq!(
+            restored.action_planner_status_for_task(task),
+            Some("direct")
+        );
+        assert_eq!(restored.verified_action_count_for_task(task), Some(0));
+        assert_eq!(
+            restored.active().expect("active").prompt_tokens,
+            vec![3, 4, 5]
+        );
     }
 
     #[test]
