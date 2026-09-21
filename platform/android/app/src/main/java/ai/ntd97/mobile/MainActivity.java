@@ -12,19 +12,34 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     public static final String EXTRA_OPEN_APPROVAL = "open_approval";
     private static final int NOTIFICATION_PERMISSION_REQUEST = 97;
     private static final int MICROPHONE_PERMISSION_REQUEST = 98;
+    private static final int CHAT_MAX_NEW_TOKENS = 64;
 
     private NtdAvatarGLSurfaceView avatarView;
     private TextView statusView;
+    private TextView transcriptView;
+    private ScrollView transcriptScroll;
+    private EditText composerView;
+    private Button sendButton;
+    private Button stopButton;
     private LinearLayout approvalPanel;
     private final NtdAudioController audioController = new NtdAudioController();
+    private final ExecutorService chatExecutor = Executors.newSingleThreadExecutor();
+    private final StringBuilder transcript = new StringBuilder();
+    private volatile long activeChatRequestId = -1L;
+    private volatile boolean chatCancelRequested;
     private boolean voiceActive;
 
     @Override
@@ -45,22 +60,83 @@ public final class MainActivity extends Activity {
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
-        controls.setPadding(24, 24, 24, 24);
+        controls.setPadding(dp(16), dp(16), dp(16), dp(16));
+        controls.setBackgroundColor(Color.argb(210, 12, 12, 20));
 
         statusView = new TextView(this);
         statusView.setTextColor(Color.WHITE);
-        statusView.setTextSize(16.0f);
+        statusView.setTextSize(15.0f);
         controls.addView(statusView);
+
+        transcriptView = new TextView(this);
+        transcriptView.setTextColor(Color.WHITE);
+        transcriptView.setTextSize(15.0f);
+        transcriptView.setPadding(dp(8), dp(8), dp(8), dp(8));
+
+        transcriptScroll = new ScrollView(this);
+        transcriptScroll.setFillViewport(true);
+        transcriptScroll.addView(
+                transcriptView,
+                new ScrollView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
+        controls.addView(
+                transcriptScroll,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(220)));
+
+        LinearLayout composerRow = new LinearLayout(this);
+        composerRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        composerView = new EditText(this);
+        composerView.setHint("Ask NTD97");
+        composerView.setHintTextColor(Color.LTGRAY);
+        composerView.setTextColor(Color.WHITE);
+        composerView.setSingleLine(false);
+        composerView.setMaxLines(4);
+        composerRow.addView(
+                composerView,
+                new LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1.0f));
+
+        sendButton = new Button(this);
+        sendButton.setText("Send");
+        sendButton.setOnClickListener(view -> submitChat());
+        composerRow.addView(sendButton);
+
+        stopButton = new Button(this);
+        stopButton.setText("Stop");
+        stopButton.setEnabled(false);
+        stopButton.setOnClickListener(view -> cancelChat());
+        composerRow.addView(stopButton);
+        controls.addView(composerRow);
+
+        LinearLayout actionRow = new LinearLayout(this);
+        actionRow.setOrientation(LinearLayout.HORIZONTAL);
 
         Button overlay = new Button(this);
         overlay.setText("Floating assistant");
         overlay.setOnClickListener(view -> openOverlay());
-        controls.addView(overlay);
+        actionRow.addView(
+                overlay,
+                new LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1.0f));
 
         Button voice = new Button(this);
         voice.setText("Voice");
         voice.setOnClickListener(view -> toggleVoice());
-        controls.addView(voice);
+        actionRow.addView(
+                voice,
+                new LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1.0f));
+        controls.addView(actionRow);
 
         if (BuildConfig.DEBUG) {
             Button physicalValidation = new Button(this);
@@ -92,6 +168,7 @@ public final class MainActivity extends Activity {
 
         setContentView(root);
         restoreFromUi();
+        appendTranscript("NTD97 local chat ready.\n");
     }
 
     @Override
@@ -108,6 +185,12 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        long requestId = activeChatRequestId;
+        NtdRuntimeHost host = NtdSessionController.runtime();
+        if (host != null && requestId >= 0) {
+            host.cancelChat(requestId);
+        }
+        chatExecutor.shutdownNow();
         audioController.close();
         super.onDestroy();
     }
@@ -123,6 +206,102 @@ public final class MainActivity extends Activity {
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             toggleVoice();
         }
+    }
+
+    private void submitChat() {
+        String prompt = composerView.getText().toString().trim();
+        if (prompt.isEmpty() || activeChatRequestId >= 0) {
+            return;
+        }
+
+        NtdRuntimeHost host = NtdSessionController.runtime();
+        if (host == null) {
+            statusView.setText("Native runtime unavailable");
+            return;
+        }
+
+        composerView.setText("");
+        sendButton.setEnabled(false);
+        stopButton.setEnabled(true);
+        chatCancelRequested = false;
+        appendTranscript("\nYou: " + prompt + "\nNTD97: ");
+        statusView.setText("Loading native model...");
+
+        chatExecutor.execute(() -> {
+            if (!host.chatReady()) {
+                finishChatUi("No verified native chat model installed", false);
+                return;
+            }
+
+            long requestId = host.submitChat(prompt, CHAT_MAX_NEW_TOKENS);
+            if (requestId < 0) {
+                finishChatUi("Native chat request rejected", false);
+                return;
+            }
+            activeChatRequestId = requestId;
+            if (chatCancelRequested) {
+                host.cancelChat(requestId);
+            }
+
+            runOnUiThread(() -> statusView.setText("Generating locally..."));
+            streamChat(host, requestId);
+        });
+    }
+
+    private void streamChat(NtdRuntimeHost host, long requestId) {
+        while (!Thread.currentThread().isInterrupted()) {
+            NtdRuntimeHost.ChatEvent event = host.nextChatEvent(requestId);
+            if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+                if (!event.text.isEmpty()) {
+                    runOnUiThread(() -> appendTranscript(event.text));
+                }
+                continue;
+            }
+            if (event.kind == NtdRuntimeHost.ChatEvent.COMPLETE) {
+                finishChatUi("Native response complete", true);
+                return;
+            }
+            if (event.kind == NtdRuntimeHost.ChatEvent.CANCELLED) {
+                finishChatUi("Generation cancelled", true);
+                return;
+            }
+            finishChatUi(
+                    event.text.isEmpty() ? "Native generation failed" : event.text,
+                    true);
+            return;
+        }
+
+        host.cancelChat(requestId);
+        finishChatUi("Generation interrupted", true);
+    }
+
+    private void cancelChat() {
+        chatCancelRequested = true;
+        long requestId = activeChatRequestId;
+        NtdRuntimeHost host = NtdSessionController.runtime();
+        if (host != null && requestId >= 0) {
+            host.cancelChat(requestId);
+        }
+        statusView.setText("Cancelling native generation...");
+    }
+
+    private void finishChatUi(String status, boolean terminateAssistantLine) {
+        activeChatRequestId = -1L;
+        runOnUiThread(() -> {
+            if (terminateAssistantLine) {
+                appendTranscript("\n");
+            }
+            statusView.setText(status);
+            sendButton.setEnabled(true);
+            stopButton.setEnabled(false);
+        });
+    }
+
+    private void appendTranscript(String text) {
+        transcript.append(text);
+        transcriptView.setText(transcript.toString());
+        transcriptScroll.post(
+                () -> transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN));
     }
 
     private void restoreFromUi() {
@@ -142,7 +321,9 @@ public final class MainActivity extends Activity {
         }
         NtdRuntimeHost.AvatarState state = host.avatarState();
         avatarView.setAvatarState(state);
-        statusView.setText(state.status);
+        if (activeChatRequestId < 0) {
+            statusView.setText(state.status);
+        }
     }
 
     private void resolveApproval(boolean approved) {
@@ -212,5 +393,9 @@ public final class MainActivity extends Activity {
                     new String[]{Manifest.permission.POST_NOTIFICATIONS},
                     NOTIFICATION_PERMISSION_REQUEST);
         }
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 }
