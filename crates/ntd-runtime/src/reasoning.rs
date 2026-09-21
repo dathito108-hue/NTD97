@@ -7,10 +7,7 @@ use crate::{
 };
 
 pub trait NativeReasoningProbe {
-    fn probe(
-        &mut self,
-        context: CognitiveContext<'_>,
-    ) -> Result<CognitiveObservation, String>;
+    fn probe(&mut self, context: CognitiveContext<'_>) -> Result<CognitiveObservation, String>;
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -95,13 +92,7 @@ where
     let mut planner = BudgetedReasoningPlanner;
     let mut executor = NativeReasoningExecutor::new(probe);
     let mut verifier = NativeReasoningVerifier;
-    runtime.advance(
-        task_id,
-        signals,
-        &mut planner,
-        &mut executor,
-        &mut verifier,
-    )
+    runtime.advance(task_id, signals, &mut planner, &mut executor, &mut verifier)
 }
 
 #[cfg(test)]
@@ -116,10 +107,7 @@ mod tests {
     }
 
     impl NativeReasoningProbe for Probe {
-        fn probe(
-            &mut self,
-            context: CognitiveContext<'_>,
-        ) -> Result<CognitiveObservation, String> {
+        fn probe(&mut self, context: CognitiveContext<'_>) -> Result<CognitiveObservation, String> {
             self.calls = self.calls.saturating_add(1);
             Ok(CognitiveObservation {
                 summary: format!("probe {}", context.iteration),
