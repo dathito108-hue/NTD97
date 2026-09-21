@@ -4,7 +4,7 @@ use ntd_ir::TensorOp;
 use ntd_runtime::{
     npu_provider, plan_tensor_placement, vulkan_provider, AdaptiveExecutionProvider, AutotuneTable,
     ComputePolicy, CpuReferenceMobileProvider, CpuReferenceProvider, CpuTiledProvider,
-    DeviceCapabilities, MobileExecutionProvider, ProviderKind, ProviderMeasurement,
+    DeviceCapabilities, ProviderKind, ProviderMeasurement,
     QuantizationProfile, ResourceSnapshot, TensorPlacementPlan, ThermalState,
 };
 
