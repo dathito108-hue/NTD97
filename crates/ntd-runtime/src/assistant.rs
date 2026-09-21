@@ -20,6 +20,8 @@ const MAX_TOKENS: usize = 1_000_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveConversationTurn {
     pub task_id: u64,
+    pub model_asset_id: String,
+    pub model_version: u32,
     pub user_message: String,
     pub prompt_tokens: Vec<u32>,
     pub generated_tokens: Vec<u32>,
@@ -117,12 +119,18 @@ impl SovereignConversationState {
 
     pub fn begin_turn(
         &mut self,
+        model_asset_id: impl Into<String>,
+        model_version: u32,
         user_message: impl Into<String>,
         prompt_tokens: Vec<u32>,
         max_new_tokens: usize,
     ) -> Result<u64, ConversationStateError> {
         if self.active.is_some() {
             return Err(ConversationStateError::ActiveTurnExists);
+        }
+        let model_asset_id = model_asset_id.into();
+        if model_asset_id.trim().is_empty() || model_version == 0 {
+            return Err(ConversationStateError::InvalidActiveTurn);
         }
         let user_message = user_message.into();
         if user_message.trim().is_empty() {
@@ -143,6 +151,8 @@ impl SovereignConversationState {
         self.cognition.start_external_task(task_id)?;
         self.active = Some(ActiveConversationTurn {
             task_id,
+            model_asset_id,
+            model_version,
             user_message,
             prompt_tokens,
             generated_tokens: Vec::with_capacity(max_new_tokens.min(4096)),
@@ -302,6 +312,8 @@ pub fn encode_conversation_checkpoint(
         Some(active) => {
             push_u8(&mut payload, 1);
             push_u64(&mut payload, active.task_id);
+            push_string(&mut payload, &active.model_asset_id)?;
+            push_u32(&mut payload, active.model_version);
             push_string(&mut payload, &active.user_message)?;
             push_u64(&mut payload, len_u64(active.max_new_tokens)?);
             push_tokens(&mut payload, &active.prompt_tokens)?;
@@ -387,6 +399,8 @@ pub fn decode_conversation_checkpoint(
         0 => None,
         1 => {
             let task_id = cursor.u64()?;
+            let model_asset_id = cursor.string()?;
+            let model_version = cursor.u32()?;
             let user_message = cursor.string()?;
             let max_new_tokens =
                 usize::try_from(cursor.u64()?).map_err(|_| ConversationStateError::Overflow)?;
@@ -395,6 +409,8 @@ pub fn decode_conversation_checkpoint(
             let generated_text = cursor.string()?;
             Some(ActiveConversationTurn {
                 task_id,
+                model_asset_id,
+                model_version,
                 user_message,
                 prompt_tokens,
                 generated_tokens,
@@ -440,6 +456,9 @@ fn validate_active(
         return Ok(());
     };
     if active.task_id == 0
+        || active.model_asset_id.trim().is_empty()
+        || active.model_asset_id.len() > MAX_TEXT_BYTES
+        || active.model_version == 0
         || active.user_message.trim().is_empty()
         || active.user_message.len() > MAX_TEXT_BYTES
         || active.prompt_tokens.is_empty()
@@ -597,7 +616,7 @@ mod tests {
     fn completed_turn_becomes_cognitive_task_and_sovereign_memory() {
         let mut state = SovereignConversationState::new(identity());
         let task = state
-            .begin_turn("remember this", vec![1, 2, 3], 4)
+            .begin_turn("model.test", 1, "remember this", vec![1, 2, 3], 4)
             .expect("begin");
         state
             .append_generated(task, 7, "remembered")
@@ -625,7 +644,7 @@ mod tests {
     fn cancelled_turn_does_not_commit_partial_conversation() {
         let mut state = SovereignConversationState::new(identity());
         let task = state
-            .begin_turn("cancel me", vec![1], 8)
+            .begin_turn("model.test", 1, "cancel me", vec![1], 8)
             .expect("begin");
         state.append_generated(task, 2, "partial").expect("append");
         state.cancel_turn(task, "user cancelled").expect("cancel");
@@ -648,13 +667,13 @@ mod tests {
     fn checkpoint_round_trip_preserves_active_generation_prefix() {
         let mut state = SovereignConversationState::new(identity());
         let first = state
-            .begin_turn("first", vec![10, 11], 4)
+            .begin_turn("model.test", 1, "first", vec![10, 11], 4)
             .expect("first");
         state.append_generated(first, 12, "answer").expect("append");
         state.complete_turn(first).expect("complete");
 
         let active = state
-            .begin_turn("second", vec![20, 21], 8)
+            .begin_turn("model.test", 1, "second", vec![20, 21], 8)
             .expect("active");
         state.append_generated(active, 22, "par").expect("append");
         state.append_generated(active, 23, "tial").expect("append");
