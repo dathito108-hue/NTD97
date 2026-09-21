@@ -100,19 +100,27 @@ GGUF v3
   -> native generative loader
 ```
 
-This proves the native conversion plumbing and graph execution contract. It does **not** yet prove source-equivalent text behavior for a real model.
+The synthetic fixture proves the native conversion plumbing and graph execution contract.
+
+The pinned real `stories260K.gguf` reference now goes further: a branch-only evidence gate
+verifies the exact GGUF SHA, lowers it to streamed NTP97 shards, packages and activates a
+signed Thin NCC97 asset, compares seven source tokenizer traces against the native LLaMA
+SPM tokenizer, and greedily generates the full 128-token GGUF context through lazy native
+tensor resolution. The normalized source and NTD97 outputs are both 322 bytes with
+SHA-256 `594a911ebb2ecfeb608919bf157887e82d0090507fa187d45b2b7e23e5e8f583`.
+The source runtime exists only inside the validation job and is not a production dependency.
 
 ## Remaining activation blockers
 
 M11 deliberately remains in progress because:
 
-- LLaMA-style SentencePiece metadata now lowers into NCC97 tokenizer v0.2 and executes natively with score-ordered BPE merges, U+2581 space normalization, byte fallback, explicit policy overrides, and canonical source defaults when optional SPM policy keys are omitted; the pinned `stories260K.gguf` reference is structurally compatible, but its tokenizer still needs source-vs-NTD97 differential validation;
-- canonical GPT-2 (`tokenizer.ggml.pre="gpt-2"`) now lowers into NCC97 tokenizer v0.3 and executes natively with Unicode-category pre-tokenization, GPT-2 byte-to-Unicode mapping, ranked BPE merges and source BOS/EOS policy; non-canonical BPE pre-tokenizers remain fail-closed;
-- a representative real GGUF has not yet passed source-vs-NIR97 semantic-equivalence testing;
+- LLaMA-style SentencePiece metadata lowers into NCC97 tokenizer v0.2 and executes natively with score-ordered BPE merges, U+2581 space normalization, byte fallback, explicit policy overrides and canonical source defaults; the pinned real `stories260K` tokenizer now matches the source tokenizer ID-for-ID over the fixed differential corpus;
+- canonical GPT-2 (`tokenizer.ggml.pre="gpt-2"`) lowers into NCC97 tokenizer v0.3 and executes natively with Unicode-category pre-tokenization, GPT-2 byte-to-Unicode mapping, ranked BPE merges and source BOS/EOS policy; representative real GPT-2 differential evidence and non-canonical BPE pre-tokenizers remain separate support work;
+- representative real LLaMA source-vs-NIR97 execution is now proven for pinned `stories260K.gguf` over its full declared 128-token context, including signed Thin NCC97 activation and lazy shard execution;
 - file-backed intake emits each converted tensor immediately as a content-addressed NTP97 shard; Thin NCC97 packages now sign external tensor references, verify each shard by length/hash before activation, persist through the canonical native asset store, and execute through a lazy file-backed `ValueId` resolver that releases graph values after their last use. Retained model-weight RAM therefore no longer grows with total model size, while peak import/activation memory remains bounded by the largest tensor transcode/encode/resolve operation;
 - Android has not yet loaded and generated with the converted real native package.
 
-The conversion plan therefore keeps activation blocked even when structural parsing/lowering/package verification succeeds. The first pinned real-model target is documented in `docs/M11_STORIES260K_REFERENCE.md`; for its metadata profile, omitted SPM policy keys no longer introduce a structural blocker.
+The generic conversion plan remains conservative for arbitrary source artifacts even when structural parsing/lowering/package verification succeeds. The first pinned real-model target and its recorded equivalence evidence are documented in `docs/M11_STORIES260K_REFERENCE.md`.
 
 ## Completion gate
 
