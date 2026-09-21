@@ -13,8 +13,8 @@ pub use lower::{
 pub use reader::{parse_gguf, parse_gguf_source};
 pub use storage::{FileGgufSource, GgufByteSource, SliceGgufSource};
 pub use transcode::{
-    ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, transcode_tensor,
-    TranscodedTensor,
+    ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, gguf_tensor_bytes_from_source,
+    transcode_tensor, transcode_tensor_from_source, TranscodedTensor,
 };
 
 pub const GGUF_MAGIC: [u8; 4] = *b"GGUF";
