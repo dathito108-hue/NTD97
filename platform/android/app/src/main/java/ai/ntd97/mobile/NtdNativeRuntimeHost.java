@@ -129,6 +129,16 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     }
 
     @Override
+    public int chatReasoningBudget(long requestId) {
+        return nativeChatReasoningBudget(requestId);
+    }
+
+    @Override
+    public int chatRecalledMemoryItems(long requestId) {
+        return nativeChatRecalledMemoryItems(requestId);
+    }
+
+    @Override
     public byte[] chatCheckpoint() {
         byte[] checkpoint = nativeChatCheckpoint();
         return checkpoint == null ? new byte[0] : checkpoint;
@@ -316,6 +326,10 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static native boolean nativeCancelChat(long requestId);
 
     private static native int nativeChatStatus(long requestId);
+
+    private static native int nativeChatReasoningBudget(long requestId);
+
+    private static native int nativeChatRecalledMemoryItems(long requestId);
 
     private static native byte[] nativeChatCheckpoint();
 
