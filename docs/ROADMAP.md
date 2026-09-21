@@ -378,11 +378,13 @@ Current implementation:
 - prior paused/failed conversation state escalates the next preflight through the existing Recovery signal;
 - budget-dependent sovereign memory recall is compiled back into the final bounded prompt while recent dialogue is preserved ahead of lower-ranked memory;
 - selected reasoning budget, complexity/uncertainty signals and retained-memory count are persisted in cognitive world state and survive NCS97 restore;
-- Android real-model acceptance requires adaptive reasoning selection, nonzero memory recall on an overlapping follow-up turn, NCS97 restore, cancellation and lifecycle/reboot regression.
+- Android real-model acceptance requires adaptive reasoning selection, nonzero memory recall on an overlapping follow-up turn, NCS97 restore, cancellation and lifecycle/reboot regression;
+- selected Reflex/Standard/Deep/Recovery budget now drives the canonical CognitiveRuntime Planner -> Executor -> Verifier loop before response generation;
+- the cognitive executor advances a private real-model deliberation token chain through verified NIR97 inference while keeping those internal tokens out of the user transcript and conversation prompt;
+- accepted Work observations increment the same sovereign CognitiveTask, and the exact deliberation count is persisted in cognitive world state and NCS97 continuity;
+- Android acceptance verifies exact budget-to-depth mapping (Reflex=1, Standard=2, Deep=4, Recovery=3) before and after checkpoint restore.
 
 Still required before M12 completion:
-
-- use the selected reasoning budget to drive a real multi-iteration planner/verifier loop rather than only preflight/context policy;
 - materialize non-empty task graphs from model-grounded intent where governed actions are required;
 - synthesize final assistant answers from verified action results;
 - end-to-end offline acceptance covering native reasoning + memory + task graph + verified response in one user turn.
