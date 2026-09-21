@@ -636,7 +636,7 @@ impl<'a> SourceTensorTable<'a> {
 
     fn add(
         &self,
-        builder: &mut GraphBuilder,
+        builder: &mut GraphBuilder<'_>,
         consumed: &mut BTreeSet<String>,
         name: &str,
         expected_source_dimensions: &[u64],
@@ -676,18 +676,20 @@ fn reject_unconsumed_model_tensors(
     Ok(())
 }
 
-struct GraphBuilder {
+struct GraphBuilder<'a> {
     next_value: u32,
     next_node: u32,
     next_tensor: u32,
     inputs: Vec<ValueDecl>,
     nodes: Vec<Node>,
     tensors: Vec<NativeTensor>,
+    tensor_shards: Vec<TensorShardRef>,
+    tensor_sink: Option<&'a mut dyn TensorShardSink>,
     bindings: Vec<LlamaTensorBinding>,
 }
 
-impl GraphBuilder {
-    fn new() -> Self {
+impl<'a> GraphBuilder<'a> {
+    fn new(tensor_sink: Option<&'a mut dyn TensorShardSink>) -> Self {
         Self {
             next_value: 0,
             next_node: 0,
@@ -695,6 +697,8 @@ impl GraphBuilder {
             inputs: Vec::new(),
             nodes: Vec::new(),
             tensors: Vec::new(),
+            tensor_shards: Vec::new(),
+            tensor_sink,
             bindings: Vec::new(),
         }
     }
@@ -729,7 +733,7 @@ impl GraphBuilder {
         let tensor_id = self.next_tensor;
         self.next_tensor = self.next_tensor.checked_add(1).ok_or(GgufError::Overflow)?;
         let byte_len = u64::try_from(payload.len()).map_err(|_| GgufError::LimitExceeded)?;
-        self.tensors.push(NativeTensor {
+        let tensor = NativeTensor {
             descriptor: TensorDescriptor {
                 id: tensor_id,
                 dtype,
@@ -739,7 +743,12 @@ impl GraphBuilder {
             graph_value: Some(value),
             quantization: QuantizationMetadata::None,
             payload,
-        });
+        };
+        if let Some(sink) = self.tensor_sink.as_deref_mut() {
+            self.tensor_shards.push(sink.store_tensor(&tensor)?);
+        } else {
+            self.tensors.push(tensor);
+        }
         self.bindings.push(LlamaTensorBinding {
             source_name: source_name.to_owned(),
             tensor_id,
