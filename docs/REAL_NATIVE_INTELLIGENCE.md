@@ -101,7 +101,7 @@ This proves the native conversion plumbing and graph execution contract. It does
 
 M11 deliberately remains in progress because:
 
-- the current NCC97 vocabulary tokenizer is not yet a source-equivalent SentencePiece/GPT-2 BPE implementation;
+- GGUF tokenizer source metadata is now preserved for native lowering, including SentencePiece scores/token types, GPT-2 merge ranks, pre-tokenizer identity and add-BOS/add-EOS flags; however, the current NCC97/runtime vocabulary tokenizer is not yet a source-equivalent SentencePiece/GPT-2 BPE implementation;
 - a representative real GGUF has not yet passed source-vs-NIR97 semantic-equivalence testing;
 - common K-quant families such as Q4_K/Q5_K/Q6_K are not yet decoded;
 - large-file import still needs a streaming/mapped path rather than whole-file memory loading;
