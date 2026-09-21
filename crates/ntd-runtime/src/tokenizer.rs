@@ -531,11 +531,7 @@ impl TextTokenizer for LlamaSpmTokenizer {
         self.encode(text, add_special_tokens)
     }
 
-    fn decode_text(
-        &self,
-        token_ids: &[u32],
-        skip_special: bool,
-    ) -> Result<String, TokenizerError> {
+    fn decode_text(&self, token_ids: &[u32], skip_special: bool) -> Result<String, TokenizerError> {
         self.decode(token_ids, skip_special)
     }
 }
