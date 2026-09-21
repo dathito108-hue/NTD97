@@ -529,9 +529,10 @@ impl AdaptiveExecutionProvider {
         snapshot: ResourceSnapshot,
         policy: ComputePolicy,
     ) -> Self {
+        let snapshot = snapshot.normalized(&device);
         Self {
             device,
-            snapshot: snapshot.normalized(&device),
+            snapshot,
             policy,
             autotune: AutotuneTable::default(),
             providers: Vec::new(),
