@@ -74,6 +74,7 @@ pub struct PlannedAction {
     pub id: ActionId,
     pub node_id: u32,
     pub capability: CapabilityId,
+    pub capability_version: u32,
     pub side_effect: SideEffectClass,
     pub verification_required: bool,
     pub action: TypedAction,
@@ -319,6 +320,7 @@ impl ActionFabric {
                 id: action_id,
                 node_id: node.id,
                 capability: node.capability.clone(),
+                capability_version: descriptor.version,
                 side_effect: node.side_effect,
                 verification_required: node.verification_required
                     || descriptor.verification_required,
@@ -774,7 +776,9 @@ pub(crate) fn validate_fabric_state(
             }
             max_action_id = max_action_id.max(action.id.0);
             let descriptor = registry.validate_action(&action.capability, &action.action)?;
-            if descriptor.side_effect != action.side_effect {
+            if descriptor.version != action.capability_version
+                || descriptor.side_effect != action.side_effect
+            {
                 return Err(ActionFabricError::InvalidState);
             }
             if descriptor.verification_required && !action.verification_required {
