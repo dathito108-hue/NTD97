@@ -5,6 +5,7 @@ mod descriptors;
 mod hash;
 mod ir_codec;
 mod native_tensor;
+mod tokenizer;
 
 pub use binary::{
     CapsuleBuilder, CapsuleError, CapsuleKind, CapsuleView, ChunkSource, ChunkSpec,
@@ -27,6 +28,13 @@ pub use native_tensor::{
     push_tensor_descriptor_section, ContentStore, MemoryContentStore, NativeProgram, NativeTensor,
     NativeTensorError, QuantizationMetadata, NATIVE_TENSOR_HEADER_LEN, NATIVE_TENSOR_MAGIC,
     NATIVE_TENSOR_MAJOR, NATIVE_TENSOR_MINOR, NO_GRAPH_BINDING,
+};
+pub use tokenizer::{
+    decode_native_tokenizer, encode_native_tokenizer, load_native_generative_program,
+    push_native_tokenizer_section, NativeGenerativeError, NativeGenerativeProgram,
+    NativeTokenizerDescriptor, NativeTokenizerError, NATIVE_TOKENIZER_FORMAT,
+    NATIVE_TOKENIZER_HEADER_LEN, NATIVE_TOKENIZER_MAGIC, NATIVE_TOKENIZER_MAJOR,
+    NATIVE_TOKENIZER_MINOR, NO_SPECIAL_TOKEN,
 };
 
 use ntd_ir::IrVersion;
