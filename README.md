@@ -69,23 +69,21 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Major Block E — Tool, Internet + Device Action Fabric**
+**Major Block F — Android Continuity + Interactive 3D Assistant (core/shell implemented, APK binding gate pending)**
 
-NTD97 now turns the same persistent cognitive task into governed typed actions:
+NTD97 now has a portable mobile shell around the same sovereign cognition/action identity:
 
 ```text
-CognitiveTask / TaskGraph
-  -> CapabilityRegistry
-  -> typed Web / Browser / File / Device / App action
-  -> authority gate
-  -> replaceable platform/tool adapter
-  -> verification
-  -> commit / retry / rollback
-  -> deterministic TAF97 action journal
-  -> NCC97 State continuity
+SIK97 cognition + TAF97 actions + capability snapshot
+  -> deterministic MCS97 mobile continuity
+  -> OS-aware wake policy
+  -> Android AtomicFile / JobScheduler / reboot / foreground paths
+  -> approval + local PCM voice
+  -> avatar state
+  -> in-app / floating OpenGL ES 3D surface
 ```
 
-Interrupted actions preserve stable ActionIds and capability versions, but adapters and permissions are reattached/re-authorized after restore. No HTTP/browser/Android SDK or hosted AI service is part of the sovereign runtime.
+Process-death/reboot tests prove a committed action is not replayed after restore. Android source fails closed when no packaged local runtime host exists; Android Gradle/native-provider packaging remains the current M6 release gate.
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
 See:
@@ -100,6 +98,7 @@ See:
 - `docs/ADAPTIVE_MOBILE_COMPUTE_RUNTIME.md`
 - `docs/COGNITIVE_RUNTIME_SOVEREIGN_MEMORY.md`
 - `docs/TOOL_INTERNET_DEVICE_ACTION_FABRIC.md`
+- `docs/ANDROID_CONTINUITY_3D_ASSISTANT.md`
 - `docs/COGNITIVE_CAPSULE.md`
 - `docs/SOVEREIGN_MODEL.md`
 - `docs/CONTINUITY_3D.md`
