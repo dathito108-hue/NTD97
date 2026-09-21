@@ -790,6 +790,15 @@ fn llama_spm_omitted_policy_metadata_inherits_canonical_source_defaults() {
     model.metadata.remove("tokenizer.ggml.add_bos_token");
     model.metadata.remove("tokenizer.ggml.add_eos_token");
 
+    let source_tokenizer = model.tokenizer().expect("tokenizer");
+    let policy = source_tokenizer
+        .resolved_llama_spm_policy()
+        .expect("resolved llama policy");
+    assert!(policy.inherited_defaults);
+    assert!(policy.add_space_prefix);
+    assert!(policy.add_bos_token);
+    assert!(!policy.add_eos_token);
+
     let lowered = lower_llama_model(&bytes, &model).expect("lower with source defaults");
     let NativeTokenizerModel::LlamaSpm {
         add_space_prefix,
@@ -810,6 +819,15 @@ fn llama_spm_omitted_policy_metadata_inherits_canonical_source_defaults() {
 fn llama_spm_explicit_policy_metadata_overrides_source_defaults() {
     let bytes = fixture();
     let model = GgufModel::parse(&bytes).expect("parse");
+    let source_tokenizer = model.tokenizer().expect("tokenizer");
+    let policy = source_tokenizer
+        .resolved_llama_spm_policy()
+        .expect("resolved llama policy");
+    assert!(!policy.inherited_defaults);
+    assert!(!policy.add_space_prefix);
+    assert!(!policy.add_bos_token);
+    assert!(!policy.add_eos_token);
+
     let lowered = lower_llama_model(&bytes, &model).expect("lower");
 
     let NativeTokenizerModel::LlamaSpm {
