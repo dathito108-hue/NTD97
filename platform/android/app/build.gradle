@@ -15,7 +15,7 @@ android {
         targetSdk 35
         versionCode 1
         versionName "0.1.0"
-        buildConfigField "String", "NTD_GIT_SHA", "\\\"" + ntdGitSha + "\\\""
+        buildConfigField "String", "NTD_GIT_SHA", '"' + ntdGitSha + '"'
         buildConfigField "boolean", "NTD_SOVEREIGNTY_AUDIT_PASSED", ntdSovereigntyAuditPassed
 
         ndk {
