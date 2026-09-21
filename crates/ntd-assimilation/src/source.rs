@@ -130,6 +130,13 @@ pub struct NativeSection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalNativeSection {
+    pub kind: SectionKind,
+    pub logical_len: u64,
+    pub hash: Digest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegressionProbe {
     GraphRoundTrip,
     AdapterDigest(Digest),
@@ -168,33 +175,45 @@ pub enum NativeCandidate {
         sections: Vec<NativeSection>,
         regressions: Vec<RegressionCase>,
     },
+    StreamedIntelligence {
+        asset_id: String,
+        version: u32,
+        graph: Graph,
+        sections: Vec<NativeSection>,
+        external_sections: Vec<ExternalNativeSection>,
+        regressions: Vec<RegressionCase>,
+    },
 }
 
 impl NativeCandidate {
     pub fn asset_id(&self) -> &str {
         match self {
-            Self::Capability { asset_id, .. } | Self::Intelligence { asset_id, .. } => asset_id,
+            Self::Capability { asset_id, .. }
+            | Self::Intelligence { asset_id, .. }
+            | Self::StreamedIntelligence { asset_id, .. } => asset_id,
         }
     }
 
     pub fn version(&self) -> u32 {
         match self {
-            Self::Capability { version, .. } | Self::Intelligence { version, .. } => *version,
+            Self::Capability { version, .. }
+            | Self::Intelligence { version, .. }
+            | Self::StreamedIntelligence { version, .. } => *version,
         }
     }
 
     pub fn kind(&self) -> AssetKind {
         match self {
             Self::Capability { .. } => AssetKind::Capability,
-            Self::Intelligence { .. } => AssetKind::Intelligence,
+            Self::Intelligence { .. } | Self::StreamedIntelligence { .. } => AssetKind::Intelligence,
         }
     }
 
     pub fn regressions(&self) -> &[RegressionCase] {
         match self {
-            Self::Capability { regressions, .. } | Self::Intelligence { regressions, .. } => {
-                regressions
-            }
+            Self::Capability { regressions, .. }
+            | Self::Intelligence { regressions, .. }
+            | Self::StreamedIntelligence { regressions, .. } => regressions
         }
     }
 
@@ -234,6 +253,9 @@ impl NativeCandidate {
             }
             Self::Intelligence {
                 graph, sections, ..
+            }
+            | Self::StreamedIntelligence {
+                graph, sections, ..
             } => {
                 graph
                     .validate()
@@ -257,6 +279,21 @@ impl NativeCandidate {
                     if section.kind != SectionKind::Tensors && !kinds.insert(section.kind as u16) {
                         return Err(AssimilationError::InvalidCandidate(
                             "duplicate singleton native section".into(),
+                        ));
+                    }
+                }
+
+                if let Self::StreamedIntelligence {
+                    external_sections, ..
+                } = self
+                {
+                    if external_sections.is_empty()
+                        || external_sections.iter().any(|section| {
+                            section.kind != SectionKind::Tensors || section.logical_len == 0
+                        })
+                    {
+                        return Err(AssimilationError::InvalidCandidate(
+                            "invalid external tensor section set".into(),
                         ));
                     }
                 }
