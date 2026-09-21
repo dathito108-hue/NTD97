@@ -4,8 +4,8 @@ use ntd_core::{Intent, ReasoningBudget, TaskGraph};
 
 use crate::{
     decode_cognitive_checkpoint, encode_cognitive_checkpoint, CheckpointError, CognitiveError,
-    CognitiveIdentity, CognitiveRuntime, CognitiveSignals, ConversationRole, ConversationTurn,
-    MemoryError, MemoryKind, TaskStatus,
+    CognitiveCycleReport, CognitiveIdentity, CognitiveRuntime, CognitiveSignals, ConversationRole,
+    ConversationTurn, MemoryError, MemoryKind, TaskStatus,
 };
 
 pub const NCS97_MAGIC: [u8; 6] = *b"NCS97\0";
@@ -287,6 +287,36 @@ impl SovereignConversationState {
         Ok(())
     }
 
+    pub fn record_reasoning_cycle_report(
+        &mut self,
+        task_id: u64,
+        report: &CognitiveCycleReport,
+    ) -> Result<(), ConversationStateError> {
+        if report.task_id != task_id {
+            return Err(ConversationStateError::TaskMismatch {
+                expected: task_id,
+                actual: report.task_id,
+            });
+        }
+        if !self.cognition.state().tasks.contains_key(&task_id) {
+            return Err(ConversationStateError::TaskMismatch {
+                expected: task_id,
+                actual: 0,
+            });
+        }
+
+        let prefix = format!("conversation.task.{task_id}");
+        self.cognition.state_mut().set_world_fact(
+            format!("{prefix}.reasoning_iterations"),
+            report.iterations.to_string(),
+        )?;
+        self.cognition.state_mut().set_world_fact(
+            format!("{prefix}.reasoning_verification_failures"),
+            report.verification_failures.to_string(),
+        )?;
+        Ok(())
+    }
+
     pub fn reasoning_budget_for_task(&self, task_id: u64) -> Option<ReasoningBudget> {
         let key = format!("conversation.task.{task_id}.reasoning_budget");
         let value = self.cognition.state().world.get(&key)?.value.as_str();
@@ -297,6 +327,28 @@ impl SovereignConversationState {
             "recovery" => Some(ReasoningBudget::Recovery),
             _ => None,
         }
+    }
+
+    pub fn reasoning_iterations_for_task(&self, task_id: u64) -> Option<u32> {
+        let key = format!("conversation.task.{task_id}.reasoning_iterations");
+        self.cognition
+            .state()
+            .world
+            .get(&key)?
+            .value
+            .parse::<u32>()
+            .ok()
+    }
+
+    pub fn reasoning_verification_failures_for_task(&self, task_id: u64) -> Option<u32> {
+        let key = format!("conversation.task.{task_id}.reasoning_verification_failures");
+        self.cognition
+            .state()
+            .world
+            .get(&key)?
+            .value
+            .parse::<u32>()
+            .ok()
     }
 
     pub fn recalled_memory_items_for_task(&self, task_id: u64) -> Option<usize> {
@@ -786,6 +838,36 @@ mod tests {
             Some(ReasoningBudget::Deep)
         );
         assert_eq!(restored.recalled_memory_items_for_task(task), Some(4));
+    }
+
+    #[test]
+    fn reasoning_cycle_report_survives_ncs97_checkpoint() {
+        let mut state = SovereignConversationState::new(identity());
+        let task = state
+            .begin_turn("model.test", 1, "reason first", vec![1, 2], 8)
+            .expect("begin");
+        state
+            .record_reasoning_cycle_report(
+                task,
+                &CognitiveCycleReport {
+                    task_id: task,
+                    budget: ReasoningBudget::Deep,
+                    iterations: 4,
+                    status: TaskStatus::Running,
+                    verification_failures: 1,
+                    last_observation: Some("verified probe".into()),
+                },
+            )
+            .expect("report");
+
+        let encoded = encode_conversation_checkpoint(&state).expect("encode");
+        let restored = decode_conversation_checkpoint(&encoded).expect("decode");
+
+        assert_eq!(restored.reasoning_iterations_for_task(task), Some(4));
+        assert_eq!(
+            restored.reasoning_verification_failures_for_task(task),
+            Some(1)
+        );
     }
 
     #[test]
