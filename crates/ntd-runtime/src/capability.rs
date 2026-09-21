@@ -227,9 +227,7 @@ impl TypedAction {
             Self::WebFetch { url } => nonempty(url)?,
             Self::BrowserObserve { target } => nonempty(target)?,
             Self::BrowserInteract {
-                target,
-                operation,
-                ..
+                target, operation, ..
             } => {
                 nonempty(target)?;
                 nonempty(operation)?;
@@ -238,9 +236,7 @@ impl TypedAction {
             Self::FileWrite { path, .. } => nonempty(path)?,
             Self::DeviceObserve { surface } => nonempty(surface)?,
             Self::DeviceInteract {
-                surface,
-                operation,
-                ..
+                surface, operation, ..
             } => {
                 nonempty(surface)?;
                 nonempty(operation)?;
@@ -324,10 +320,7 @@ impl CapabilityRegistry {
         Ok(())
     }
 
-    pub fn descriptor(
-        &self,
-        id: &CapabilityId,
-    ) -> Result<&CapabilityDescriptor, CapabilityError> {
+    pub fn descriptor(&self, id: &CapabilityId) -> Result<&CapabilityDescriptor, CapabilityError> {
         self.descriptors
             .get(&id.0)
             .ok_or_else(|| CapabilityError::MissingCapability(id.clone()))
