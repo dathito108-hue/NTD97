@@ -98,7 +98,12 @@ impl SovereignMemory {
         }
 
         for (id, record) in &records {
-            if *id != record.id || record.content.is_empty() || record.importance > 1000 {
+            if *id == 0
+                || *id != record.id
+                || record.content.trim().is_empty()
+                || record.importance > 1000
+                || !record.tags.windows(2).all(|pair| pair[0] < pair[1])
+            {
                 return Err(MemoryError::Overflow);
             }
         }
@@ -198,7 +203,7 @@ impl SovereignMemory {
             .filter(|record| kind_filter.is_empty() || kind_filter.contains(&record.kind))
             .filter_map(|record| {
                 let score = score_record(record, &query_terms, &query_tags);
-                (score > 0 || query_terms.is_empty() && query_tags.is_empty())
+                (score > 0 || (query_terms.is_empty() && query_tags.is_empty()))
                     .then_some((record.id, score))
             })
             .collect::<Vec<_>>();
