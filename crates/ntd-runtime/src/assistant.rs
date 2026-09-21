@@ -4,7 +4,8 @@ use ntd_core::{Intent, TaskGraph};
 
 use crate::{
     decode_cognitive_checkpoint, encode_cognitive_checkpoint, CheckpointError, CognitiveError,
-    CognitiveIdentity, CognitiveRuntime, ConversationRole, ConversationTurn, MemoryKind, TaskStatus,
+    CognitiveIdentity, CognitiveRuntime, ConversationRole, ConversationTurn, MemoryError, MemoryKind,
+    TaskStatus,
 };
 
 pub const NCS97_MAGIC: [u8; 6] = *b"NCS97\0";
@@ -54,6 +55,7 @@ pub enum ConversationStateError {
     Overflow,
     Cognitive(CognitiveError),
     Checkpoint(CheckpointError),
+    Memory(MemoryError),
 }
 
 impl From<CognitiveError> for ConversationStateError {
@@ -65,6 +67,12 @@ impl From<CognitiveError> for ConversationStateError {
 impl From<CheckpointError> for ConversationStateError {
     fn from(value: CheckpointError) -> Self {
         Self::Checkpoint(value)
+    }
+}
+
+impl From<MemoryError> for ConversationStateError {
+    fn from(value: MemoryError) -> Self {
+        Self::Memory(value)
     }
 }
 
@@ -168,18 +176,18 @@ impl SovereignConversationState {
     pub fn complete_turn(&mut self, task_id: u64) -> Result<(), ConversationStateError> {
         let active = self
             .active
-            .take()
+            .as_ref()
+            .cloned()
             .ok_or(ConversationStateError::MissingActiveTurn)?;
         ensure_task(active.task_id, task_id)?;
         if active.generated_text.trim().is_empty() {
-            self.active = Some(active);
             return Err(ConversationStateError::EmptyAssistantResponse);
         }
 
-        self.cognition
-            .complete_external_task(task_id, active.generated_text.clone())?;
-        let tick = self.cognition.state().tick;
-        self.cognition.state_mut().memory.store(
+        let mut cognition = self.cognition.clone();
+        cognition.complete_external_task(task_id, active.generated_text.clone())?;
+        let tick = cognition.state().tick;
+        cognition.state_mut().memory.store(
             MemoryKind::Episodic,
             format!(
                 "user: {}\nassistant: {}",
@@ -190,11 +198,14 @@ impl SovereignConversationState {
             tick,
         )?;
 
-        self.turns
-            .push(ConversationTurn::user(active.user_message));
-        self.turns
-            .push(ConversationTurn::assistant(active.generated_text));
-        validate_turns(&self.turns)?;
+        let mut turns = self.turns.clone();
+        turns.push(ConversationTurn::user(active.user_message));
+        turns.push(ConversationTurn::assistant(active.generated_text));
+        validate_turns(&turns)?;
+
+        self.cognition = cognition;
+        self.turns = turns;
+        self.active = None;
         Ok(())
     }
 
@@ -205,10 +216,14 @@ impl SovereignConversationState {
     ) -> Result<(), ConversationStateError> {
         let active = self
             .active
-            .take()
+            .as_ref()
             .ok_or(ConversationStateError::MissingActiveTurn)?;
         ensure_task(active.task_id, task_id)?;
-        self.cognition.pause_external_task(task_id, reason)?;
+
+        let mut cognition = self.cognition.clone();
+        cognition.pause_external_task(task_id, reason)?;
+        self.cognition = cognition;
+        self.active = None;
         Ok(())
     }
 
@@ -574,7 +589,7 @@ mod tests {
     use super::*;
 
     fn identity() -> CognitiveIdentity {
-        CognitiveIdentity(*b"NTD97-CHATSTATE")
+        CognitiveIdentity(*b"NTD97-CHATSTATE1")
     }
 
     #[test]
