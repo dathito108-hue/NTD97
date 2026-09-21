@@ -274,6 +274,7 @@ pub enum RemoteMessage {
         transfer_id: u64,
         offset: u64,
     },
+    CapabilityQuery,
 }
 
 pub fn encode_message(message: &RemoteMessage) -> Result<Vec<u8>, PcFabricError> {
@@ -321,6 +322,7 @@ pub fn encode_message(message: &RemoteMessage) -> Result<Vec<u8>, PcFabricError>
             push_u64(&mut payload, *offset);
             (5u8, payload)
         }
+        RemoteMessage::CapabilityQuery => (6u8, Vec::new()),
     };
 
     let payload_len = len_u32(payload.len())?;
@@ -384,6 +386,7 @@ pub fn decode_message(bytes: &[u8]) -> Result<RemoteMessage, PcFabricError> {
             transfer_id: cursor.u64()?,
             offset: cursor.u64()?,
         },
+        6 => RemoteMessage::CapabilityQuery,
         _ => return Err(PcFabricError::InvalidMessage),
     };
     if !cursor.is_finished() {
