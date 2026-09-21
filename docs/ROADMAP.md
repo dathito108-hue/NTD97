@@ -53,8 +53,8 @@ Delivered contract:
 
 - NTD97 IR 0.2 additive `CausalAttention` semantic;
 - CPU reference Gather, RotaryPosition and CausalAttention;
-- canonical `ntd97.tokenizer.vocab.v1` tokenizer payload inside NCC97 descriptor framing;
-- deterministic longest-prefix native vocabulary tokenizer;
+- canonical `ntd97.tokenizer.v2` payload with backward decoding of `ntd97.tokenizer.vocab.v1`;
+- deterministic native vocabulary tokenizer plus LLaMA-style SentencePiece score-ordered BPE with byte fallback;
 - source-independent `GraphGenerator` autoregressive decode loop;
 - greedy and seeded stochastic sampling with temperature/top-k;
 - logits/probability distribution contracts;
@@ -315,7 +315,8 @@ Current implementation:
 - exact GGUF tensor-boundary validation;
 - direct F32/F16/BF16 materialization plus Q4_0/Q8_0 native transcode to NTD97-owned F32;
 - native tokenizer section, tensor descriptor table and NTP97 tensor shard emission;
-- preservation and validation of GGUF tokenizer semantic metadata (SentencePiece scores/token types, GPT-2 merge ranks, pre-tokenizer identity and add-BOS/add-EOS flags) as input to the next source-equivalent native tokenizer step;
+- preservation and validation of GGUF tokenizer semantic metadata;
+- native LLaMA-style SentencePiece execution carried through GGUF -> NCC97 v0.2 -> runtime, including score-ordered merges, U+2581 space normalization, byte fallback and source add-space/BOS/EOS policy;
 - Forge-native intelligence candidate creation;
 - signed NCC97 package verification through the canonical native generative loader;
 - deterministic tiny-LLaMA GGUF -> NIR97/NCC97 -> GraphGenerator regression path;
@@ -323,7 +324,7 @@ Current implementation:
 
 Still required before M11 completion:
 
-- source-equivalent real tokenizer semantics for supported SentencePiece/GPT-2 BPE models;
+- representative real LLaMA tokenizer source-vs-NTD97 differential validation and native GPT-2 pre-tokenizer/BPE execution;
 - representative real-model source-vs-NIR97 semantic-equivalence execution;
 - common mobile GGUF K-quant transcodes such as Q4_K/Q5_K/Q6_K;
 - streaming/mapped large-file import path;

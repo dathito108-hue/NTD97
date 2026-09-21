@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use ntd_ir::{Graph, ValueId};
 
 use crate::{
-    ExecutionError, ExecutionProvider, GraphExecutor, Tensor, TensorError, TokenizerError,
-    VocabularyTokenizer,
+    ExecutionError, ExecutionProvider, GraphExecutor, Tensor, TensorError, TextTokenizer,
+    TokenizerError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,11 +184,11 @@ where
         })
     }
 
-    pub fn generate_text(
+    pub fn generate_text<T: TextTokenizer>(
         &self,
-        tokenizer: &VocabularyTokenizer,
+        tokenizer: &T,
         prompt: &str,
-        add_bos: bool,
+        add_special_tokens: bool,
         mut config: GenerationConfig,
     ) -> Result<GeneratedText, GenerationError> {
         if tokenizer.vocab_size() != self.vocab_size {
@@ -196,7 +196,7 @@ where
         }
 
         let prompt_tokens = tokenizer
-            .encode(prompt, add_bos)
+            .encode_text(prompt, add_special_tokens)
             .map_err(GenerationError::Tokenizer)?;
         if config.eos_token.is_none() {
             config.eos_token = tokenizer.eos_token();
@@ -204,7 +204,7 @@ where
 
         let generated = self.generate_tokens(&prompt_tokens, config)?;
         let text = tokenizer
-            .decode(&generated.generated_tokens, true)
+            .decode_text(&generated.generated_tokens, true)
             .map_err(GenerationError::Tokenizer)?;
 
         Ok(GeneratedText {

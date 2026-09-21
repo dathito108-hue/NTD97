@@ -161,14 +161,14 @@ fn conversion_plan_distinguishes_supported_transcode_from_unsupported_types() {
 }
 
 #[test]
-fn conversion_plan_keeps_real_tokenizer_semantics_as_activation_blocker() {
+fn conversion_plan_rejects_incomplete_llama_tokenizer_semantics() {
     let model = GgufModel::parse(&fixture()).expect("parse");
     let plan = GgufConversionPlan::from_model(&model).expect("plan");
     assert!(!plan.activation_ready());
     assert!(plan
         .blockers
         .iter()
-        .any(|item| { item.contains("source-equivalent tokenization") }));
+        .any(|item| item.contains("missing scores/token types")));
 }
 
 #[test]
@@ -200,6 +200,10 @@ fn preserves_sentencepiece_semantic_metadata_for_native_lowering() {
         "tokenizer.ggml.pre".into(),
         GgufValue::String("default".into()),
     );
+    model.metadata.insert(
+        "tokenizer.ggml.add_space_prefix".into(),
+        GgufValue::Bool(false),
+    );
     model
         .metadata
         .insert("tokenizer.ggml.add_bos_token".into(), GgufValue::Bool(true));
@@ -212,18 +216,12 @@ fn preserves_sentencepiece_semantic_metadata_for_native_lowering() {
     assert_eq!(tokenizer.scores, Some(vec![-1.0, -2.0, -3.0]));
     assert_eq!(tokenizer.token_types, Some(vec![2, 1, 1]));
     assert_eq!(tokenizer.pre_tokenizer.as_deref(), Some("default"));
+    assert_eq!(tokenizer.add_space_prefix, Some(false));
     assert_eq!(tokenizer.add_bos_token, Some(true));
     assert_eq!(tokenizer.add_eos_token, Some(false));
 
     let plan = GgufConversionPlan::from_model(&model).expect("plan");
-    assert!(plan
-        .blockers
-        .iter()
-        .any(|item| item.contains("source metadata is preserved")));
-    assert!(!plan
-        .blockers
-        .iter()
-        .any(|item| item.contains("missing scores/token types")));
+    assert!(!plan.blockers.iter().any(|item| item.contains("tokenizer")));
 }
 
 #[test]
@@ -251,6 +249,10 @@ fn preserves_gpt2_merge_ranks_and_rejects_malformed_semantic_arrays() {
         .blockers
         .iter()
         .any(|item| item.contains("missing merge ranks")));
+    assert!(plan
+        .blockers
+        .iter()
+        .any(|item| item.contains("native GPT-2")));
 
     model.metadata.insert(
         "tokenizer.ggml.scores".into(),

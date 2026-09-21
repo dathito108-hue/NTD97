@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use ntd_capsule::{
     load_native_generative_program, push_graph_section, push_native_tensor_shard,
     push_native_tokenizer_section, push_tensor_descriptor_section, CapsuleBuilder, CapsuleKind,
-    CapsuleView, MemoryContentStore, NativeTensor, NativeTokenizerDescriptor, QuantizationMetadata,
-    TensorDescriptor,
+    CapsuleView, MemoryContentStore, NativeTensor, NativeTokenizerDescriptor, NativeTokenizerModel,
+    QuantizationMetadata, TensorDescriptor,
 };
 use ntd_ir::{
     DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
@@ -96,6 +96,7 @@ fn full_ncc97_package_generates_text_without_external_model_runtime() {
         bos_token: None,
         eos_token: Some(3),
         unknown_token: None,
+        model: NativeTokenizerModel::Vocabulary,
     };
 
     let mut builder = CapsuleBuilder::new(CapsuleKind::Full, *b"NTD97-GEN-CPU-01");
