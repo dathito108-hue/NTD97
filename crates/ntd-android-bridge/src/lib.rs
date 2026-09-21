@@ -28,11 +28,15 @@ use ntd_mobile_shell::{
 };
 use ntd_runtime::{
     choose_reasoning_budget, decode_conversation_checkpoint, encode_conversation_checkpoint,
-    memory_recall_limit_for_budget, model_inference_signals, run_budgeted_reasoning_cycle,
-    sample_token, CognitiveContext, CognitiveIdentity, CognitiveObservation, CpuReferenceProvider,
-    DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
-    NativeChatPromptCompiler, NativeReasoningProbe, ResourceSnapshot, SamplingMode,
-    SovereignConversationState, TaskStatus, ThermalState,
+    execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
+    parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
+    ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
+    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, CapabilityAdapter,
+    CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
+    CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
+    GenerationConfig, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer, NativeChatPromptCompiler,
+    NativeReasoningProbe, ResourceSnapshot, SamplingMode, SideEffectClass,
+    SovereignConversationState, TaskStatus, ThermalState, TypedAction,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
@@ -50,6 +54,7 @@ const CHAT_STATUS_RUNNING: i32 = 1;
 const CHAT_STATUS_COMPLETE: i32 = 2;
 const CHAT_STATUS_CANCELLED: i32 = 3;
 const CHAT_STATUS_FAILED: i32 = 4;
+const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
 
 struct NativeChatModel {
     asset_id: String,
@@ -125,6 +130,84 @@ impl NativeReasoningProbe for NativeModelReasoningProbe<'_> {
                 format!("top-margin:{:.6}", inference.top_margin),
             ],
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NativeActionPlanningOutcome {
+    Direct,
+    Actions(AssistantActionPlan),
+    Invalid,
+}
+
+struct AndroidResourceAdapter {
+    snapshot: ResourceSnapshot,
+}
+
+impl CapabilityAdapter for AndroidResourceAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::DeviceObserve { surface } = action else {
+            return Err("Android resource adapter only supports device.observe".into());
+        };
+
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "available_ram_bytes".into(),
+            self.snapshot.available_ram_bytes.to_string(),
+        );
+        fields.insert(
+            "battery_percent".into(),
+            self.snapshot.battery_percent.to_string(),
+        );
+        fields.insert("charging".into(), self.snapshot.charging.to_string());
+        fields.insert(
+            "thermal".into(),
+            format!("{:?}", self.snapshot.thermal).to_lowercase(),
+        );
+        fields.insert(
+            "latency_budget_ms".into(),
+            self.snapshot.latency_budget_ms.to_string(),
+        );
+        fields.insert("surface".into(), surface.clone());
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified local device observation for {surface}"),
+                value: ActionValue::Fields(fields),
+                evidence: vec!["android-resource-snapshot".into()],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct AndroidResourceVerifier;
+
+impl ActionVerifier for AndroidResourceVerifier {
+    fn verify(
+        &mut self,
+        descriptor: &CapabilityDescriptor,
+        action: &TypedAction,
+        output: &ActionOutput,
+    ) -> ActionVerification {
+        if descriptor.id.0 != "device.observe"
+            || !matches!(action, TypedAction::DeviceObserve { .. })
+            || output.summary.trim().is_empty()
+            || !output
+                .evidence
+                .iter()
+                .any(|item| item == "android-resource-snapshot")
+        {
+            return ActionVerification::Reject {
+                reason: "device observation lacks trusted local evidence".into(),
+            };
+        }
+        ActionVerification::Accept
     }
 }
 
