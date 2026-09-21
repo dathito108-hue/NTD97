@@ -293,7 +293,7 @@ Required contract:
 
 - clean-room GGUF v3 intake in Rust with no llama.cpp/third-party model runtime dependency;
 - safe file-backed GGUF byte source with bounded metadata/table parsing and per-tensor range reads;
-- content-addressed NTP97 tensor shard staging with Thin NCC97 external references, releasing converted tensor payloads after each shard is persisted;
+- content-addressed NTP97 tensor shard staging with signed Thin NCC97 external references, releasing converted tensor payloads after each shard is persisted;
 - bounded parsing of typed metadata, arrays, tensor tables, alignment and tokenizer metadata;
 - fail-closed rejection of malformed, unsupported-version, duplicate or structurally invalid inputs;
 - explicit conversion plan separating directly materializable tensors from tensors requiring native transcode;
@@ -317,10 +317,16 @@ Current implementation:
 - exact GGUF tensor-boundary validation;
 - direct F32/F16/BF16 materialization plus clean-room Q4_0/Q8_0/Q4_K/Q5_K/Q6_K native transcode to NTD97-owned F32;
 - native tokenizer section, tensor descriptor table and NTP97 tensor shard emission;
+- canonical generative manifest carrying token-input, distribution-output and vocabulary bootstrap metadata;
 - preservation and validation of GGUF tokenizer semantic metadata;
 - native LLaMA-style SentencePiece execution carried through GGUF -> NCC97 v0.2 -> runtime, including score-ordered merges, U+2581 space normalization, byte fallback and source add-space/BOS/EOS policy;
+- native canonical GPT-2 Unicode pre-tokenization + byte-level ranked BPE carried through GGUF -> NCC97 v0.3 -> runtime;
+- file-backed bounded GGUF source reads, streamed content-addressed tensor staging and signed Thin NCC97 packaging;
+- external Thin tensor references covered by the native package signature and length/hash verification;
+- lazy `ValueId` tensor resolution from verified NTP97 shards with graph-value release after final use;
+- Thin-package commit/rollback through the canonical native asset store;
 - Forge-native intelligence candidate creation;
-- signed NCC97 package verification through the canonical native generative loader;
+- signed Full/Thin NCC97 verification through the canonical native package boundary;
 - deterministic tiny-LLaMA GGUF -> NIR97/NCC97 -> GraphGenerator regression path;
 - unsupported source semantics, unconsumed tensors and unsupported GGML types remain fail-closed.
 
@@ -328,7 +334,6 @@ Still required before M11 completion:
 
 - representative real LLaMA/GPT-2 tokenizer source-vs-NTD97 differential validation, plus additional BPE pre-tokenizers such as Qwen2/LLaMA3 only when their exact semantics are implemented;
 - representative real-model source-vs-NIR97 semantic-equivalence execution;
-- signed Thin NCC97 activation with lazy/file-backed native tensor resolution;
 - Android loading/generation using the resulting real native model.
 
 Exit: at least one real supported external model can be imported once, converted to signed NTD97-native NCC97 assets, then loaded and used for local text generation without the source model runtime or a hosted AI backend.
