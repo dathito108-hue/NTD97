@@ -6,7 +6,7 @@ use ntd_ir::{DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl,
 use ntd_runtime::{
     npu_provider, vulkan_provider, AdaptiveExecutionProvider, AutotuneTable,
     CpuReferenceMobileProvider, CpuReferenceProvider, CpuTiledProvider, DeviceCapabilities,
-    ExecutionProvider, GraphExecutor, ProviderKind, ProviderMeasurement, ResourceSnapshot, Tensor,
+    GraphExecutor, ProviderKind, ProviderMeasurement, ResourceSnapshot, Tensor,
     ThermalState,
 };
 
