@@ -11,9 +11,7 @@ use ntd_ir::{
     DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
 };
 
-use super::{
-    llama_spm_blocker, transcode_tensor, GgufError, GgufModel, GgufTensorInfo, GgufValue,
-};
+use super::{llama_spm_blocker, transcode_tensor, GgufError, GgufModel, GgufTensorInfo, GgufValue};
 use crate::{NativeCandidate, NativeSection, RegressionCase, RegressionProbe};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,9 +68,7 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
 
     let score_bits = source_tokenizer
         .scores
-        .ok_or_else(|| {
-            GgufError::UnsupportedModelFeature("missing LLaMA tokenizer scores".into())
-        })?
+        .ok_or_else(|| GgufError::UnsupportedModelFeature("missing LLaMA tokenizer scores".into()))?
         .into_iter()
         .map(f32::to_bits)
         .collect::<Vec<_>>();
@@ -82,12 +78,12 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
     let add_space_prefix = source_tokenizer.add_space_prefix.ok_or_else(|| {
         GgufError::UnsupportedModelFeature("missing LLaMA add-space-prefix policy".into())
     })?;
-    let add_bos_token = source_tokenizer.add_bos_token.ok_or_else(|| {
-        GgufError::UnsupportedModelFeature("missing LLaMA add-BOS policy".into())
-    })?;
-    let add_eos_token = source_tokenizer.add_eos_token.ok_or_else(|| {
-        GgufError::UnsupportedModelFeature("missing LLaMA add-EOS policy".into())
-    })?;
+    let add_bos_token = source_tokenizer
+        .add_bos_token
+        .ok_or_else(|| GgufError::UnsupportedModelFeature("missing LLaMA add-BOS policy".into()))?;
+    let add_eos_token = source_tokenizer
+        .add_eos_token
+        .ok_or_else(|| GgufError::UnsupportedModelFeature("missing LLaMA add-EOS policy".into()))?;
 
     let tokenizer = NativeTokenizerDescriptor {
         tokens: source_tokenizer.tokens,
