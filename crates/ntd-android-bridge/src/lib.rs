@@ -27,9 +27,10 @@ use ntd_mobile_shell::{
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
 use ntd_runtime::{
-    ConversationTurn, CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator,
-    LlamaSpmConfig, LlamaSpmTokenizer, NativeChatPromptCompiler, ResourceSnapshot, SamplingMode,
-    ThermalState,
+    decode_conversation_checkpoint, encode_conversation_checkpoint, CognitiveIdentity,
+    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
+    LlamaSpmTokenizer, NativeChatPromptCompiler, ResourceSnapshot, SamplingMode,
+    SovereignConversationState, ThermalState,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
@@ -65,11 +66,7 @@ enum NativeChatSessionStatus {
 
 struct NativeChatSession {
     request_id: u64,
-    user_message: String,
-    all_tokens: Vec<u32>,
-    generated_tokens: Vec<u32>,
-    generated_text: String,
-    max_new_tokens: usize,
+    task_id: u64,
     cancel: Arc<AtomicBool>,
     status: NativeChatSessionStatus,
 }
@@ -80,7 +77,7 @@ struct NativeState {
     input_peak_milli: u16,
     chat_model: Option<Arc<NativeChatModel>>,
     chat_session: Option<NativeChatSession>,
-    chat_history: Vec<ConversationTurn>,
+    conversation: SovereignConversationState,
     next_chat_request_id: u64,
 }
 
@@ -98,7 +95,7 @@ impl Default for NativeState {
             input_peak_milli: 0,
             chat_model: None,
             chat_session: None,
-            chat_history: Vec::new(),
+            conversation: SovereignConversationState::new(CognitiveIdentity(*b"NTD97-ASSISTANT1")),
             next_chat_request_id: 1,
         }
     }
