@@ -175,10 +175,11 @@ impl CognitiveState {
         if intent.max_steps == 0 {
             return Err(CognitiveError::InvalidStepBudget);
         }
-        if let Some(goal_id) = goal_id {
-            if !self.goals.contains_key(&goal_id) {
+        match goal_id {
+            Some(goal_id) if !self.goals.contains_key(&goal_id) => {
                 return Err(CognitiveError::MissingGoal(goal_id));
             }
+            _ => {}
         }
 
         let id = self.next_task_id;
@@ -621,11 +622,9 @@ impl CognitiveRuntime {
                     .get(&task_id)
                     .ok_or(CognitiveError::MissingTask(task_id))?
                     .goal_id;
-                if let Some(goal_id) = goal_id {
-                    if let Some(goal) = self.state.goals.get_mut(&goal_id) {
-                        goal.status = GoalStatus::Completed;
-                        goal.updated_tick = self.state.tick;
-                    }
+                if let Some(goal) = goal_id.and_then(|id| self.state.goals.get_mut(&id)) {
+                    goal.status = GoalStatus::Completed;
+                    goal.updated_tick = self.state.tick;
                 }
                 self.state.memory.store(
                     MemoryKind::Episodic,
@@ -668,11 +667,9 @@ impl CognitiveRuntime {
         task.updated_tick = self.state.tick;
         task.last_observation = Some(reason.to_owned());
 
-        if let Some(goal_id) = goal_id {
-            if let Some(goal) = self.state.goals.get_mut(&goal_id) {
-                goal.status = GoalStatus::Failed;
-                goal.updated_tick = self.state.tick;
-            }
+        if let Some(goal) = goal_id.and_then(|id| self.state.goals.get_mut(&id)) {
+            goal.status = GoalStatus::Failed;
+            goal.updated_tick = self.state.tick;
         }
 
         self.state.memory.store(
@@ -744,10 +741,11 @@ fn validate_state(state: &CognitiveState) -> Result<(), CognitiveError> {
         {
             return Err(CognitiveError::Overflow);
         }
-        if let Some(goal_id) = task.goal_id {
-            if !state.goals.contains_key(&goal_id) {
+        match task.goal_id {
+            Some(goal_id) if !state.goals.contains_key(&goal_id) => {
                 return Err(CognitiveError::MissingGoal(goal_id));
             }
+            _ => {}
         }
     }
 
