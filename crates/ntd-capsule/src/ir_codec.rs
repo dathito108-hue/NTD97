@@ -256,16 +256,14 @@ fn decode_node(cursor: &mut Cursor<'_>) -> Result<Node, IrCodecError> {
     let output_count = cursor.u32()?;
     let attr_len = cursor.u32()?;
 
-    let mut inputs = Vec::with_capacity(
-        usize::try_from(input_count).map_err(|_| IrCodecError::Overflow)?,
-    );
+    let mut inputs =
+        Vec::with_capacity(usize::try_from(input_count).map_err(|_| IrCodecError::Overflow)?);
     for _ in 0..input_count {
         inputs.push(ValueId(cursor.u32()?));
     }
 
-    let mut outputs = Vec::with_capacity(
-        usize::try_from(output_count).map_err(|_| IrCodecError::Overflow)?,
-    );
+    let mut outputs =
+        Vec::with_capacity(usize::try_from(output_count).map_err(|_| IrCodecError::Overflow)?);
     for _ in 0..output_count {
         outputs.push(decode_value_decl(cursor)?);
     }
