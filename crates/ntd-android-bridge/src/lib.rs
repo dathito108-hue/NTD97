@@ -704,6 +704,40 @@ fn chat_status(request_id: u64) -> i32 {
     }
 }
 
+fn chat_reasoning_budget(request_id: u64) -> i32 {
+    let guard = lock_state();
+    let Some(session) = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
+    else {
+        return 0;
+    };
+    match guard.conversation.reasoning_budget_for_task(session.task_id) {
+        Some(ntd_core::ReasoningBudget::Reflex) => 1,
+        Some(ntd_core::ReasoningBudget::Standard) => 2,
+        Some(ntd_core::ReasoningBudget::Deep) => 3,
+        Some(ntd_core::ReasoningBudget::Recovery) => 4,
+        None => 0,
+    }
+}
+
+fn chat_recalled_memory_items(request_id: u64) -> i32 {
+    let guard = lock_state();
+    let Some(session) = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
+    else {
+        return 0;
+    };
+    guard
+        .conversation
+        .recalled_memory_items_for_task(session.task_id)
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or(0)
+}
+
 fn cancel_chat(request_id: u64) -> bool {
     let (task_id, cancel) = {
         let guard = lock_state();
@@ -1061,6 +1095,32 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeNextChatE
             java_bytes(&env, &encode_chat_event(CHAT_EVENT_ERROR, None, &error))
         }
     }
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatReasoningBudget(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jint {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    chat_reasoning_budget(request_id)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatRecalledMemoryItems(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jint {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    chat_recalled_memory_items(request_id)
 }
 
 #[allow(unsafe_code)]
