@@ -101,8 +101,7 @@ impl VocabularyTokenizer {
 
                 match best {
                     Some((best_len, best_id))
-                        if best_len > token.len()
-                            || (best_len == token.len() && best_id < id) => {}
+                        if best_len > token.len() || (best_len == token.len() && best_id < id) => {}
                     _ => best = Some((token.len(), id)),
                 }
             }
@@ -137,8 +136,7 @@ impl VocabularyTokenizer {
                 continue;
             }
 
-            let index =
-                usize::try_from(*id).map_err(|_| TokenizerError::InvalidTokenId(*id))?;
+            let index = usize::try_from(*id).map_err(|_| TokenizerError::InvalidTokenId(*id))?;
             let token = self
                 .tokens
                 .get(index)
@@ -163,9 +161,7 @@ impl VocabularyTokenizer {
     }
 
     fn is_special(&self, id: u32) -> bool {
-        self.bos_token == Some(id)
-            || self.eos_token == Some(id)
-            || self.unknown_token == Some(id)
+        self.bos_token == Some(id) || self.eos_token == Some(id) || self.unknown_token == Some(id)
     }
 }
 
@@ -192,7 +188,10 @@ mod tests {
 
     #[test]
     fn longest_match_is_deterministic() {
-        assert_eq!(tokenizer().encode("aba", false).expect("encode"), vec![1, 0]);
+        assert_eq!(
+            tokenizer().encode("aba", false).expect("encode"),
+            vec![1, 0]
+        );
     }
 
     #[test]
@@ -205,11 +204,6 @@ mod tests {
     #[test]
     fn round_trip_skips_special_tokens() {
         let tokenizer = tokenizer();
-        assert_eq!(
-            tokenizer
-                .decode(&[3, 0, 2, 4], true)
-                .expect("decode"),
-            "ab"
-        );
+        assert_eq!(tokenizer.decode(&[3, 0, 2, 4], true).expect("decode"), "ab");
     }
 }
