@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     decode_descriptor_frame, encode_descriptor_frame, load_native_program, sha256, CapsuleBuilder,
     CapsuleView, ChunkStorageView, ContentStore, DescriptorError, DescriptorFrame,
-    DescriptorFrameKind, Digest, NativeProgram, NativeTensorError, SectionKind,
+    DescriptorFrameKind, Digest, NativeGenerativeManifest, NativeGenerativeManifestError,
+    NativeProgram, NativeTensorError, SectionKind, decode_native_generative_manifest,
 };
 
 pub const NATIVE_TOKENIZER_FORMAT: &str = "ntd97.tokenizer.v2";
@@ -55,6 +56,7 @@ pub struct NativeTokenizerDescriptor {
 pub struct NativeGenerativeProgram {
     pub program: NativeProgram,
     pub tokenizer: NativeTokenizerDescriptor,
+    pub manifest: Option<NativeGenerativeManifest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +90,8 @@ pub enum NativeGenerativeError {
     Tokenizer(NativeTokenizerError),
     MissingTokenizer,
     MultipleTokenizers,
+    Manifest(NativeGenerativeManifestError),
+    MultipleGenerativeManifests,
     MissingExternalContent(Digest),
     ExternalLengthMismatch { expected: u64, actual: u64 },
     ExternalIntegrityMismatch(Digest),
@@ -362,7 +366,47 @@ pub fn load_native_generative_program<S: ContentStore>(
 
     let tokenizer = decode_native_tokenizer(bytes).map_err(NativeGenerativeError::Tokenizer)?;
 
-    Ok(NativeGenerativeProgram { program, tokenizer })
+    let manifest_chunks = capsule
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.kind == SectionKind::GenerativeManifest)
+        .collect::<Vec<_>>();
+    let manifest = match manifest_chunks.as_slice() {
+        [] => None,
+        [chunk] => {
+            let bytes = match chunk.storage {
+                ChunkStorageView::Embedded(bytes) => bytes,
+                ChunkStorageView::External => {
+                    let bytes = store
+                        .get(&chunk.hash)
+                        .ok_or(NativeGenerativeError::MissingExternalContent(chunk.hash))?;
+                    let actual =
+                        u64::try_from(bytes.len()).map_err(|_| NativeGenerativeError::Overflow)?;
+                    if actual != chunk.logical_len {
+                        return Err(NativeGenerativeError::ExternalLengthMismatch {
+                            expected: chunk.logical_len,
+                            actual,
+                        });
+                    }
+                    if sha256(bytes) != chunk.hash {
+                        return Err(NativeGenerativeError::ExternalIntegrityMismatch(chunk.hash));
+                    }
+                    bytes
+                }
+            };
+            Some(
+                decode_native_generative_manifest(bytes)
+                    .map_err(NativeGenerativeError::Manifest)?,
+            )
+        }
+        _ => return Err(NativeGenerativeError::MultipleGenerativeManifests),
+    };
+
+    Ok(NativeGenerativeProgram {
+        program,
+        tokenizer,
+        manifest,
+    })
 }
 
 fn validate_tokenizer(tokenizer: &NativeTokenizerDescriptor) -> Result<(), NativeTokenizerError> {
