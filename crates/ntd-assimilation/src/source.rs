@@ -213,7 +213,7 @@ impl NativeCandidate {
         match self {
             Self::Capability { regressions, .. }
             | Self::Intelligence { regressions, .. }
-            | Self::StreamedIntelligence { regressions, .. } => regressions
+            | Self::StreamedIntelligence { regressions, .. } => regressions,
         }
     }
 
