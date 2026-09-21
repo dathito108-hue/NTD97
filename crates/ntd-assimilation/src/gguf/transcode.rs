@@ -457,9 +457,11 @@ fn decode_q6_k(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<Vec<f32>, GgufEr
                 let scale_pair = lane / 16;
                 let high = qh[qh_base + lane];
                 let q1 = i32::from((ql[ql_base + lane] & 0x0f) | ((high & 0x03) << 4)) - 32;
-                let q2 = i32::from((ql[ql_base + lane + 32] & 0x0f) | (((high >> 2) & 0x03) << 4)) - 32;
+                let q2 =
+                    i32::from((ql[ql_base + lane + 32] & 0x0f) | (((high >> 2) & 0x03) << 4)) - 32;
                 let q3 = i32::from((ql[ql_base + lane] >> 4) | (((high >> 4) & 0x03) << 4)) - 32;
-                let q4 = i32::from((ql[ql_base + lane + 32] >> 4) | (((high >> 6) & 0x03) << 4)) - 32;
+                let q4 =
+                    i32::from((ql[ql_base + lane + 32] >> 4) | (((high >> 6) & 0x03) << 4)) - 32;
 
                 let s1 = f32::from(scales[scale_base + scale_pair] as i8);
                 let s2 = f32::from(scales[scale_base + scale_pair + 2] as i8);
