@@ -2,7 +2,7 @@
 
 use ntd_ir::DType;
 
-use super::{GgufError, GgufModel, GgufTensorInfo};
+use super::{GgufByteSource, GgufError, GgufModel, GgufTensorInfo, SliceGgufSource};
 
 const GGML_TYPE_F32: u32 = 0;
 const GGML_TYPE_F16: u32 = 1;
@@ -71,8 +71,48 @@ pub fn gguf_tensor_bytes<'a>(
     file.get(start..end).ok_or(GgufError::Truncated)
 }
 
+pub fn gguf_tensor_bytes_from_source(
+    source: &dyn GgufByteSource,
+    model: &GgufModel,
+    tensor: &GgufTensorInfo,
+) -> Result<Vec<u8>, GgufError> {
+    let file_len = source.byte_len()?;
+    if file_len != model.file_len {
+        return Err(GgufError::InvalidTensor);
+    }
+
+    let len = ggml_tensor_byte_len(tensor)?;
+    let start = model
+        .data_offset
+        .checked_add(tensor.data_offset)
+        .ok_or(GgufError::Overflow)?;
+    let end = start.checked_add(len).ok_or(GgufError::Overflow)?;
+    if end > file_len {
+        return Err(GgufError::Truncated);
+    }
+
+    source.read_exact_at(
+        start,
+        usize::try_from(len).map_err(|_| GgufError::LimitExceeded)?,
+    )
+}
+
 pub fn transcode_tensor(
     file: &[u8],
+    model: &GgufModel,
+    tensor: &GgufTensorInfo,
+    transpose_2d: bool,
+) -> Result<TranscodedTensor, GgufError> {
+    transcode_tensor_from_source(
+        &SliceGgufSource::new(file),
+        model,
+        tensor,
+        transpose_2d,
+    )
+}
+
+pub fn transcode_tensor_from_source(
+    source: &dyn GgufByteSource,
     model: &GgufModel,
     tensor: &GgufTensorInfo,
     transpose_2d: bool,
@@ -84,7 +124,15 @@ pub fn transcode_tensor(
         return Err(GgufError::InvalidTensor);
     }
 
-    let bytes = gguf_tensor_bytes(file, model, tensor)?;
+    let bytes = gguf_tensor_bytes_from_source(source, model, tensor)?;
+    transcode_tensor_payload(tensor, &bytes, transpose_2d)
+}
+
+fn transcode_tensor_payload(
+    tensor: &GgufTensorInfo,
+    bytes: &[u8],
+    transpose_2d: bool,
+) -> Result<TranscodedTensor, GgufError> {
     match tensor.ggml_type {
         GGML_TYPE_F32 => transcode_unquantized(tensor, bytes, DType::F32, 4, transpose_2d),
         GGML_TYPE_F16 => transcode_unquantized(tensor, bytes, DType::F16, 2, transpose_2d),
