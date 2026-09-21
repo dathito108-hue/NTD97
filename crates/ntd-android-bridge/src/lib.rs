@@ -474,7 +474,7 @@ fn real_model_probe(
 
     let resolver = FileBackedTensorResolver::from_activation(shard_store, &activation);
     let generator = GraphGenerator::new(
-        activation.graph,
+        activation.graph.clone(),
         CpuReferenceProvider,
         BTreeMap::new(),
         activation.manifest.token_input,
