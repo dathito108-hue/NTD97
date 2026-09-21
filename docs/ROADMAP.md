@@ -11,16 +11,16 @@ The roadmap is milestone-based. Architecture changes should be made only when an
 - minimal CI;
 - no inherited AMPER code.
 
-## M1 — NCC97 Native Intelligence Format
+## M1 — NCC97 Native Intelligence + Assimilation Format
 
 - binary header and manifest;
 - chunk index;
 - mmap/streaming reader;
 - integrity verification;
 - thin/full/state export;
-- first GGUF + SafeTensors import experiments.
+- first GGUF + SafeTensors import experiments;\n- NTD97 IR v0 contract;\n- atomic assimilation transaction;\n- verify that imported intelligence no longer needs its source runtime for native execution.
 
-Exit: a capsule can be created, validated, opened and round-tripped.
+Exit: a capsule can be created, validated, opened and round-tripped; one supported external intelligence source can be assimilated into native NTD97 state and reopened without its source runtime.
 
 ## M2 — Adaptive Mobile Runtime
 
@@ -40,7 +40,7 @@ Exit: deterministic test graph executes through the same provider contract used 
 - task graph compiler;
 - executor/verifier split;
 - short-response policy;
-- persistent checkpoints.
+- persistent checkpoints;\n- persistent world/goal state;\n- cold-process reconstruction of the same cognitive identity.
 
 Exit: one runtime can switch from low-latency reflex behavior to deeper iterative planning without changing backend identity.
 
@@ -54,16 +54,16 @@ Exit: one runtime can switch from low-latency reflex behavior to deeper iterativ
 
 Exit: tasks can discover and use tools from one capability graph.
 
-## M5 — Android Interaction Fabric
+## M5 — Android Interaction + 3D Embodiment + 24/7 Continuity
 
 - Android app shell;
 - screen/observation pipeline;
 - permitted AccessibilityService automation;
 - foreground/background task continuity;
 - notifications and user approvals;
-- media/voice interfaces.
+- media/voice interfaces;\n- interactive 3D avatar scene;\n- adaptive 3D renderer with expression/gaze/lip-sync/gesture state;\n- user-authorized floating assistant surface where the OS permits it;\n- persistent active-task service policy;\n- scheduled/retry wake path;\n- reboot/process-death restoration;\n- state reconstruction and checkpoint verification.
 
-Exit: NTD97 can perform verified multi-app tasks on a supported Android phone.
+Exit: NTD97 can perform verified multi-app tasks, present an interactive 3D assistant, survive UI exit/process death/reboot at the logical task level, and resume eligible work under Android execution rules.
 
 ## M6 — Paired PC Fabric
 
@@ -86,13 +86,13 @@ Exit: the phone can delegate a typed task to a trusted PC and verify the returne
 
 Exit: a missing capability can be acquired or developed without mutating the core runtime irreversibly.
 
-## M8 — Memory + Portable Intelligence
+## M8 — Sovereign Memory + Portable Intelligence
 
 - episodic/semantic/procedural stores;
 - adapter/delta learning hooks;
 - thin/full/state capsule backup;
 - restore across devices;
-- encrypted user-owned state.
+- encrypted user-owned state;\n- content-addressed NTD97-owned memory format;\n- full sovereign offline restore test.
 
 Exit: intelligence state can be backed up and restored independently of the app install.
 
@@ -108,13 +108,13 @@ Exit: intelligence state can be backed up and restored independently of the app 
 
 Exit: device profiles automatically select the fastest verified configuration that fits resource constraints.
 
-## M10 — General Mobile Agent Validation
+## M10 — Sovereign General Mobile Agent Validation
 
 - long-horizon task suites;
 - app/browser/file/PC mixed tasks;
 - failure recovery;
 - offline degradation;
 - security boundaries;
-- reproducible benchmarks.
+- reproducible benchmarks;\n- 24/7 continuity soak tests;\n- offline boot + restore + local task suite;\n- no-third-party-AI-dependency audit.
 
 Exit: measurable capability, latency, reliability and recovery targets are met on a representative device matrix.
