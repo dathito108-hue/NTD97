@@ -96,8 +96,7 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
         config.head_count_kv as f32,
         config.head_dim as f32,
     ])?;
-    let flatten_shape =
-        builder.add_constant_f32_vector(&[0.0, config.embedding_length as f32])?;
+    let flatten_shape = builder.add_constant_f32_vector(&[0.0, config.embedding_length as f32])?;
 
     let token_embedding = add_source_tensor(
         &mut builder,
@@ -109,8 +108,12 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
         &[u64::from(config.embedding_length), vocab_u64],
         false,
     )?;
-    let mut hidden =
-        builder.add_node(TensorOp::Gather, vec![token_embedding, token_input], DType::F32, 2)?;
+    let mut hidden = builder.add_node(
+        TensorOp::Gather,
+        vec![token_embedding, token_input],
+        DType::F32,
+        2,
+    )?;
 
     let kv_width = config
         .head_dim
@@ -237,18 +240,23 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
         let q = builder.add_node(TensorOp::Reshape, vec![q, query_shape], DType::F32, 3)?;
         let k = builder.add_node(TensorOp::Reshape, vec![k, kv_shape], DType::F32, 3)?;
         let v = builder.add_node(TensorOp::Reshape, vec![v, kv_shape], DType::F32, 3)?;
-        let q =
-            builder.add_node(TensorOp::RotaryPosition, vec![q, positions], DType::F32, 3)?;
-        let k =
-            builder.add_node(TensorOp::RotaryPosition, vec![k, positions], DType::F32, 3)?;
+        let q = builder.add_node(TensorOp::RotaryPosition, vec![q, positions], DType::F32, 3)?;
+        let k = builder.add_node(TensorOp::RotaryPosition, vec![k, positions], DType::F32, 3)?;
         let attention =
             builder.add_node(TensorOp::CausalAttention, vec![q, k, v], DType::F32, 3)?;
-        let attention =
-            builder.add_node(TensorOp::Reshape, vec![attention, flatten_shape], DType::F32, 2)?;
-        let attention =
-            builder.add_node(TensorOp::MatMul, vec![attention, attn_output], DType::F32, 2)?;
-        let residual =
-            builder.add_node(TensorOp::Add, vec![hidden, attention], DType::F32, 2)?;
+        let attention = builder.add_node(
+            TensorOp::Reshape,
+            vec![attention, flatten_shape],
+            DType::F32,
+            2,
+        )?;
+        let attention = builder.add_node(
+            TensorOp::MatMul,
+            vec![attention, attn_output],
+            DType::F32,
+            2,
+        )?;
+        let residual = builder.add_node(TensorOp::Add, vec![hidden, attention], DType::F32, 2)?;
 
         let ffn_input = builder.add_node(
             TensorOp::RmsNorm,
@@ -256,8 +264,7 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
             DType::F32,
             2,
         )?;
-        let gate =
-            builder.add_node(TensorOp::MatMul, vec![ffn_input, ffn_gate], DType::F32, 2)?;
+        let gate = builder.add_node(TensorOp::MatMul, vec![ffn_input, ffn_gate], DType::F32, 2)?;
         let gate = builder.add_node(TensorOp::Silu, vec![gate], DType::F32, 2)?;
         let up = builder.add_node(TensorOp::MatMul, vec![ffn_input, ffn_up], DType::F32, 2)?;
         let gated = builder.add_node(TensorOp::Mul, vec![gate, up], DType::F32, 2)?;
@@ -387,8 +394,8 @@ impl LlamaConfig {
         let block_count = required_u32(model, "llama.block_count")?;
         let feed_forward_length = required_u32(model, "llama.feed_forward_length")?;
         let head_count = required_u32(model, "llama.attention.head_count")?;
-        let head_count_kv = optional_u32(model, "llama.attention.head_count_kv")?
-            .unwrap_or(head_count);
+        let head_count_kv =
+            optional_u32(model, "llama.attention.head_count_kv")?.unwrap_or(head_count);
         let rms_epsilon = required_f32(model, "llama.attention.layer_norm_rms_epsilon")?;
 
         if context_length == 0
@@ -582,10 +589,7 @@ impl GraphBuilder {
         });
 
         let tensor_id = self.next_tensor;
-        self.next_tensor = self
-            .next_tensor
-            .checked_add(1)
-            .ok_or(GgufError::Overflow)?;
+        self.next_tensor = self.next_tensor.checked_add(1).ok_or(GgufError::Overflow)?;
         let byte_len = u64::try_from(payload.len()).map_err(|_| GgufError::LimitExceeded)?;
         self.tensors.push(NativeTensor {
             descriptor: TensorDescriptor {
@@ -622,7 +626,8 @@ impl GraphBuilder {
         if values.is_empty() || values.iter().any(|value| !value.is_finite()) {
             return Err(GgufError::InvalidTensor);
         }
-        let mut payload = Vec::with_capacity(values.len().checked_mul(4).ok_or(GgufError::Overflow)?);
+        let mut payload =
+            Vec::with_capacity(values.len().checked_mul(4).ok_or(GgufError::Overflow)?);
         for value in values {
             payload.extend_from_slice(&value.to_le_bytes());
         }
