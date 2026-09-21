@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ntd_core::{ActionNode, CapabilityId, SideEffectClass, TaskGraph};
+use ntd_core::{CapabilityId, SideEffectClass, TaskGraph};
 
 use crate::{
     ActionOutput, AuthorityGrant, CapabilityDescriptor, CapabilityError, CapabilityRegistry,
@@ -857,15 +857,14 @@ pub(crate) fn validate_fabric_state(
             }
         }
 
-        if plan.status == ActionPlanStatus::Completed {
-            if plan.cursor != plan.actions.len()
+        if plan.status == ActionPlanStatus::Completed
+            && (plan.cursor != plan.actions.len()
                 || !plan
                     .actions
                     .iter()
-                    .all(|action| action.status == ActionStatus::Committed)
-            {
-                return Err(ActionFabricError::InvalidState);
-            }
+                    .all(|action| action.status == ActionStatus::Committed))
+        {
+            return Err(ActionFabricError::InvalidState);
         }
         if plan.cursor < plan.actions.len() {
             let current = &plan.actions[plan.cursor];
@@ -907,6 +906,7 @@ pub(crate) fn validate_fabric_state(
 mod tests {
     use super::*;
     use crate::{AuthorityScope, CapabilityDomain};
+    use ntd_core::ActionNode;
 
     struct EchoAdapter;
 
