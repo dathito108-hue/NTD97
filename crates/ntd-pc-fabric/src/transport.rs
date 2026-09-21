@@ -26,7 +26,8 @@ pub fn write_length_prefixed_frame<W: Write>(
 pub fn read_length_prefixed_frame<R: Read>(reader: &mut R) -> Result<Vec<u8>, PcFabricError> {
     let mut len_bytes = [0u8; 4];
     reader.read_exact(&mut len_bytes)?;
-    let len = usize::try_from(u32::from_le_bytes(len_bytes)).map_err(|_| PcFabricError::Overflow)?;
+    let len =
+        usize::try_from(u32::from_le_bytes(len_bytes)).map_err(|_| PcFabricError::Overflow)?;
     if len == 0 || len > DEFAULT_MAX_TRANSPORT_FRAME {
         return Err(PcFabricError::InvalidFrame);
     }

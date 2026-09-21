@@ -113,8 +113,7 @@ pub struct ArtifactAssembler {
 impl ArtifactAssembler {
     pub fn new(descriptor: ArtifactDescriptor) -> Result<Self, PcFabricError> {
         descriptor.validate()?;
-        let capacity =
-            usize::try_from(descriptor.length).map_err(|_| PcFabricError::Overflow)?;
+        let capacity = usize::try_from(descriptor.length).map_err(|_| PcFabricError::Overflow)?;
         Ok(Self {
             descriptor,
             bytes: Vec::with_capacity(capacity),
@@ -175,10 +174,8 @@ mod tests {
         let bytes = (0..200_000u32)
             .flat_map(u32::to_le_bytes)
             .collect::<Vec<_>>();
-        let sender =
-            ArtifactSender::new(7, "build.bin", bytes.clone(), 32 * 1024).expect("sender");
-        let mut receiver =
-            ArtifactAssembler::new(sender.descriptor().clone()).expect("receiver");
+        let sender = ArtifactSender::new(7, "build.bin", bytes.clone(), 32 * 1024).expect("sender");
+        let mut receiver = ArtifactAssembler::new(sender.descriptor().clone()).expect("receiver");
 
         for chunk in sender.chunks().expect("chunks") {
             receiver.push(chunk).expect("push");
@@ -189,10 +186,8 @@ mod tests {
 
     #[test]
     fn tampered_artifact_is_rejected() {
-        let sender =
-            ArtifactSender::new(8, "result.txt", b"trusted".to_vec(), 4).expect("sender");
-        let mut receiver =
-            ArtifactAssembler::new(sender.descriptor().clone()).expect("receiver");
+        let sender = ArtifactSender::new(8, "result.txt", b"trusted".to_vec(), 4).expect("sender");
+        let mut receiver = ArtifactAssembler::new(sender.descriptor().clone()).expect("receiver");
         let mut chunks = sender.chunks().expect("chunks");
         chunks[0].data[0] ^= 1;
 
@@ -200,9 +195,6 @@ mod tests {
             receiver.push(chunk).expect("push");
         }
 
-        assert_eq!(
-            receiver.finish(),
-            Err(PcFabricError::ArtifactHashMismatch)
-        );
+        assert_eq!(receiver.finish(), Err(PcFabricError::ArtifactHashMismatch));
     }
 }

@@ -6,7 +6,8 @@ use ntd_runtime::{
 
 use crate::{
     decode_message, encode_message, ArtifactAssembler, ArtifactDescriptor, PcFabricError,
-    RemoteAction, RemoteCapability, RemoteMessage, RemoteRequest, RemoteResultStatus, SecureSession,
+    RemoteAction, RemoteCapability, RemoteMessage, RemoteRequest, RemoteResultStatus,
+    SecureSession,
 };
 
 pub trait PairedPcTransport {
@@ -104,10 +105,7 @@ where
         }
     }
 
-    fn pull_artifact(
-        &mut self,
-        descriptor: ArtifactDescriptor,
-    ) -> Result<Vec<u8>, PcFabricError> {
+    fn pull_artifact(&mut self, descriptor: ArtifactDescriptor) -> Result<Vec<u8>, PcFabricError> {
         let mut assembler = ArtifactAssembler::new(descriptor.clone())?;
         while assembler.next_offset() < descriptor.length {
             let response = self.exchange_message(RemoteMessage::ArtifactPull {
@@ -159,7 +157,9 @@ where
         action_id: ActionId,
         action: &TypedAction,
     ) -> Result<AdapterResult, String> {
-        let remote_action = self.map_action(action).map_err(|error| format!("{error:?}"))?;
+        let remote_action = self
+            .map_action(action)
+            .map_err(|error| format!("{error:?}"))?;
         let request = RemoteRequest::new(
             action_id.0,
             self.capability.clone(),
@@ -199,10 +199,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        cell::RefCell,
-        rc::Rc,
-    };
+    use std::{cell::RefCell, rc::Rc};
 
     use ntd_core::SideEffectClass;
     use ntd_runtime::{ActionOutput, ActionValue};
@@ -292,14 +289,9 @@ mod tests {
         let transport = LoopbackTransport {
             agent: Rc::clone(&agent),
         };
-        let mut adapter = PairedPcAdapter::new(
-            "workstation",
-            "pc.system.observe",
-            1,
-            session,
-            transport,
-        )
-        .expect("adapter");
+        let mut adapter =
+            PairedPcAdapter::new("workstation", "pc.system.observe", 1, session, transport)
+                .expect("adapter");
 
         let capabilities = adapter.discover_capabilities().expect("discover");
         assert_eq!(capabilities[0].id, "pc.system.observe");

@@ -89,7 +89,9 @@ impl DesktopAgent {
 
         let response = match message {
             RemoteMessage::CapabilityQuery => RemoteMessage::Capabilities(self.capabilities()),
-            RemoteMessage::Request(request) => RemoteMessage::Result(self.execute_request(&request)?),
+            RemoteMessage::Request(request) => {
+                RemoteMessage::Result(self.execute_request(&request)?)
+            }
             RemoteMessage::ArtifactPull {
                 transfer_id,
                 offset,
@@ -139,9 +141,7 @@ impl DesktopAgent {
                 let descriptors = self.store_artifacts(output.artifacts)?;
                 RemoteResult::completed(request, output.output, descriptors)?
             }
-            Err(PcFabricError::PolicyDenied(reason)) => {
-                RemoteResult::rejected(request, reason)?
-            }
+            Err(PcFabricError::PolicyDenied(reason)) => RemoteResult::rejected(request, reason)?,
             Err(PcFabricError::Io(reason)) => return RemoteResult::retryable(request, reason),
             Err(error) => RemoteResult::rejected(request, format!("{error:?}"))?,
         };
@@ -162,8 +162,7 @@ impl DesktopAgent {
                 .next_transfer_id
                 .checked_add(1)
                 .ok_or(PcFabricError::Overflow)?;
-            let sender =
-                ArtifactSender::new(transfer_id, name, bytes, DEFAULT_ARTIFACT_CHUNK)?;
+            let sender = ArtifactSender::new(transfer_id, name, bytes, DEFAULT_ARTIFACT_CHUNK)?;
             descriptors.push(sender.descriptor().clone());
             self.outgoing_artifacts.insert(transfer_id, sender);
         }
@@ -324,9 +323,7 @@ impl DesktopCapabilityHandler for SystemObserveHandler {
         fields.insert("family".into(), std::env::consts::FAMILY.into());
         fields.insert(
             "cwd".into(),
-            std::env::current_dir()?
-                .to_string_lossy()
-                .into_owned(),
+            std::env::current_dir()?.to_string_lossy().into_owned(),
         );
 
         Ok(DesktopHandlerOutput::new(ActionOutput {
@@ -420,7 +417,8 @@ impl DesktopCapabilityHandler for FileArtifactHandler {
             (ArtifactMode::Read, RemoteAction::ArtifactRead { path }) => {
                 let resolved = resolve_existing_path(path, &self.policy.allowed_roots, false)?;
                 let metadata = fs::metadata(&resolved)?;
-                let length = usize::try_from(metadata.len()).map_err(|_| PcFabricError::Overflow)?;
+                let length =
+                    usize::try_from(metadata.len()).map_err(|_| PcFabricError::Overflow)?;
                 if length > self.policy.max_bytes {
                     return Err(PcFabricError::PolicyDenied(
                         "artifact exceeds byte limit".into(),
@@ -437,14 +435,12 @@ impl DesktopCapabilityHandler for FileArtifactHandler {
                 fields.insert("path".into(), resolved.to_string_lossy().into_owned());
                 fields.insert("bytes".into(), bytes.len().to_string());
 
-                Ok(
-                    DesktopHandlerOutput::new(ActionOutput {
-                        summary: "remote artifact ready".into(),
-                        value: ActionValue::Fields(fields),
-                        evidence: vec!["artifact-hash-verified-on-receive".into()],
-                    })
-                    .with_artifact(name, bytes),
-                )
+                Ok(DesktopHandlerOutput::new(ActionOutput {
+                    summary: "remote artifact ready".into(),
+                    value: ActionValue::Fields(fields),
+                    evidence: vec!["artifact-hash-verified-on-receive".into()],
+                })
+                .with_artifact(name, bytes))
             }
             (ArtifactMode::Write, RemoteAction::ArtifactWrite { path, bytes }) => {
                 if !self.policy.allow_write {
@@ -593,8 +589,7 @@ mod tests {
         let frame = client.seal(&request).expect("seal");
         let reply = agent.handle_encrypted_frame(&frame).expect("handle");
         let plaintext = client.open(&reply).expect("open");
-        let RemoteMessage::Capabilities(capabilities) =
-            decode_message(&plaintext).expect("decode")
+        let RemoteMessage::Capabilities(capabilities) = decode_message(&plaintext).expect("decode")
         else {
             panic!("expected capabilities");
         };

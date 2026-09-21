@@ -87,8 +87,7 @@ impl PairingRecord {
         if peer_id_for_verify_key(&remote_verify_key) != remote_peer_id {
             return Err(PcFabricError::InvalidPairing);
         }
-        VerifyingKey::from_bytes(&remote_verify_key)
-            .map_err(|_| PcFabricError::InvalidPairing)?;
+        VerifyingKey::from_bytes(&remote_verify_key).map_err(|_| PcFabricError::InvalidPairing)?;
 
         Ok(Self {
             remote_peer_id,

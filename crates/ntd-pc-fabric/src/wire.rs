@@ -161,12 +161,7 @@ impl RemoteResult {
         output: ActionOutput,
         artifacts: Vec<ArtifactDescriptor>,
     ) -> Result<Self, PcFabricError> {
-        Self::new(
-            request,
-            RemoteResultStatus::Completed,
-            output,
-            artifacts,
-        )
+        Self::new(request, RemoteResultStatus::Completed, output, artifacts)
     }
 
     pub fn retryable(
@@ -270,10 +265,7 @@ pub enum RemoteMessage {
     Request(RemoteRequest),
     Result(RemoteResult),
     ArtifactChunk(ArtifactChunk),
-    ArtifactPull {
-        transfer_id: u64,
-        offset: u64,
-    },
+    ArtifactPull { transfer_id: u64, offset: u64 },
     CapabilityQuery,
 }
 
@@ -830,14 +822,18 @@ impl<'a> Cursor<'a> {
     fn u32(&mut self) -> Result<u32, PcFabricError> {
         let bytes = self.take(4)?;
         Ok(u32::from_le_bytes(
-            bytes.try_into().map_err(|_| PcFabricError::InvalidMessage)?,
+            bytes
+                .try_into()
+                .map_err(|_| PcFabricError::InvalidMessage)?,
         ))
     }
 
     fn u64(&mut self) -> Result<u64, PcFabricError> {
         let bytes = self.take(8)?;
         Ok(u64::from_le_bytes(
-            bytes.try_into().map_err(|_| PcFabricError::InvalidMessage)?,
+            bytes
+                .try_into()
+                .map_err(|_| PcFabricError::InvalidMessage)?,
         ))
     }
 
