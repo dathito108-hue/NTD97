@@ -69,22 +69,23 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Major Block G — Paired PC Fabric — complete**
+**Major Block H — Capability Forge + Native Assimilation — complete**
 
-NTD97 can now use an authenticated computer as a governed capability node without transferring its identity to that computer:
+NTD97 can now convert supported external capability/intelligence sources into signed native assets without retaining their runtime:
 
 ```text
-Phone-owned NTD97 cognition / ActionFabric
-  -> typed Pc capability + stable ActionId
-  -> pinned mutual authentication
-  -> encrypted PCF97 session
-  -> governed desktop observe / execute / artifact handlers
-  -> verified result + SHA-256 artifact return
+External source + provenance/license
+  -> importer discovery
+  -> NativeCandidate
+  -> isolated native regression validation
+  -> NTD97 IR / capability descriptor
+  -> signed NCC97
+  -> atomic version commit / rollback
 ```
 
-The paired-PC path uses pinned Ed25519 identities, X25519 session establishment, HKDF-derived directional keys, ChaCha20-Poly1305 frames, replay protection, request/result digest binding, policy-gated desktop actions and idempotent remote execution. TAF97/MCS97 persist the additive PC action contract without making the PC part of NTD97 cognition, memory or identity.
+The canonical assimilation path preserves source digest, URI, attribution and license; rejects disallowed licenses; validates generated native adapters or NTD97 IR; signs NCC97 assets with a trusted Ed25519 identity; and commits versions atomically with rollback. Source bytes and source runtimes are not part of the committed native asset.
 
-M7 acceptance passed the canonical Rust gate and the existing Android APK/lifecycle regression gate. Current roadmap focus moves to **Major Block H — Capability Forge + Native Assimilation**.
+M8 acceptance passed the canonical Rust gate and the Android APK/lifecycle regression gate. Current roadmap focus moves to **Major Block I — Portable Sovereign Intelligence**.
 
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
@@ -102,6 +103,7 @@ See:
 - `docs/TOOL_INTERNET_DEVICE_ACTION_FABRIC.md`
 - `docs/ANDROID_CONTINUITY_3D_ASSISTANT.md`
 - `docs/PAIRED_PC_FABRIC.md`
+- `docs/CAPABILITY_FORGE_NATIVE_ASSIMILATION.md`
 - `docs/COGNITIVE_CAPSULE.md`
 - `docs/SOVEREIGN_MODEL.md`
 - `docs/CONTINUITY_3D.md`
