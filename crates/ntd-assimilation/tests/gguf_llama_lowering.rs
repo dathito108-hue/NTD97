@@ -9,7 +9,8 @@ use ntd_assimilation::{
     lower_llama_model, lower_llama_model_from_source, lower_llama_model_to_shards,
     lowered_llama_candidate, streamed_llama_thin_capsule, verify_native_package,
     verify_native_package_with_shards, AssimilationIdentity, FileBackedTensorResolver,
-    FileTensorShardStore, ForgeSandbox, GgufByteSource, GgufError, GgufModel, GgufValueType,
+    FileTensorShardStore, ForgeSandbox, GgufByteSource, GgufConversionPlan, GgufError, GgufModel,
+    GgufValueType,
     LicenseRecord, NativeAssetStore, NativeValidationSandbox, SliceGgufSource, SourcePackage,
     StreamedPackageSpec, GGUF_MAGIC, GGUF_VERSION,
 };
@@ -798,6 +799,16 @@ fn llama_spm_omitted_policy_metadata_inherits_canonical_source_defaults() {
     assert!(policy.add_space_prefix);
     assert!(policy.add_bos_token);
     assert!(!policy.add_eos_token);
+
+    let plan = GgufConversionPlan::from_model(&model).expect("conversion plan");
+    assert_eq!(plan.unsupported_tensor_count, 0);
+    assert_eq!(
+        plan.blockers,
+        vec![
+            "representative real-model source-vs-NIR97 semantic equivalence is required before activation"
+                .to_owned()
+        ]
+    );
 
     let lowered = lower_llama_model(&bytes, &model).expect("lower with source defaults");
     let NativeTokenizerModel::LlamaSpm {
