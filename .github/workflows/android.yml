@@ -6,6 +6,9 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/ntd-android-bridge/**"
+      - "crates/ntd-assimilation/**"
+      - "crates/ntd-capsule/**"
+      - "crates/ntd-ir/**"
       - "crates/ntd-mobile-shell/**"
       - "crates/ntd-runtime/**"
       - "crates/ntd-validation/**"
@@ -20,6 +23,9 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/ntd-android-bridge/**"
+      - "crates/ntd-assimilation/**"
+      - "crates/ntd-capsule/**"
+      - "crates/ntd-ir/**"
       - "crates/ntd-mobile-shell/**"
       - "crates/ntd-runtime/**"
       - "crates/ntd-validation/**"
@@ -33,7 +39,7 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       NDK_VERSION: "27.0.12077973"
 
@@ -60,6 +66,28 @@ jobs:
         with:
           toolchain: 1.80.1
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Build pinned real native model evidence package
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output stories260K.gguf \
+            "https://huggingface.co/ggml-org/tiny-llamas/resolve/main/stories260K.gguf?download=true"
+          printf '%s  %s\n' \
+            '047bf46455a544931cff6fef14d7910154c56afbc23ab1c5e56a72e69912c04b' \
+            'stories260K.gguf' | sha256sum --check --strict
+
+          cargo run -p ntd-assimilation --bin stories260k-android-package -- \
+            stories260K.gguf android-real-model
+
+          test -f android-real-model/model.ncc97
+          test -f android-real-model/verify-key.bin
+          test -f android-real-model/expected-token-ids.txt
+          test "$(find android-real-model/ntp97-shards -maxdepth 1 -type f | wc -l)" -eq 52
+
+          rm -rf platform/android/app/src/debug/assets/ntd97-real-model
+          mkdir -p platform/android/app/src/debug/assets
+          cp -R android-real-model platform/android/app/src/debug/assets/ntd97-real-model
 
       - name: Build native NTD97 runtime bridge
         run: |

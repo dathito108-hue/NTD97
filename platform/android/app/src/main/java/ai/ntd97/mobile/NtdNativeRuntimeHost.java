@@ -24,6 +24,23 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
         return new NtdNativeRuntimeHost(context);
     }
 
+    static byte[] runRealModelProbe(
+            String capsulePath,
+            String shardRoot,
+            byte[] verifyKey,
+            String expectedTokenIds) {
+        if (!ensureLoaded()) {
+            return "android_real_model=failed\nerror=native library unavailable\n"
+                    .getBytes(StandardCharsets.UTF_8);
+        }
+        byte[] result = nativeRealModelProbe(
+                capsulePath,
+                shardRoot,
+                verifyKey,
+                expectedTokenIds);
+        return result == null ? new byte[0] : result;
+    }
+
     private static synchronized boolean ensureLoaded() {
         if (!loadAttempted) {
             loadAttempted = true;
@@ -192,6 +209,12 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
         buffer.get(bytes);
         return new String(bytes, StandardCharsets.UTF_8);
     }
+
+    private static native byte[] nativeRealModelProbe(
+            String capsulePath,
+            String shardRoot,
+            byte[] verifyKey,
+            String expectedTokenIds);
 
     private static native byte[] nativeRestoreAndVerify(byte[] mcs97, String wakeReason);
 

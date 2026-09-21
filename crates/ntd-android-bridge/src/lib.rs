@@ -2,6 +2,8 @@
 #![allow(non_snake_case)]
 
 use std::{
+    collections::BTreeMap,
+    fs,
     ptr::null_mut,
     sync::{Mutex, OnceLock},
 };
@@ -11,12 +13,20 @@ use jni::{
     sys::{jboolean, jbyteArray, jint, jlong},
     JNIEnv,
 };
+use ntd_assimilation::{
+    activate_thin_generative_capsule, verify_native_package_with_shards, AssetKind,
+    FileBackedTensorResolver, FileTensorShardStore, NativePackage,
+};
+use ntd_capsule::{sha256, NativeTokenizerModel};
 use ntd_mobile_shell::{
     decode_mobile_continuity_bundle, encode_mobile_continuity_bundle,
     restore_mobile_continuity_bundle, AvatarController, AvatarSurface, LipSyncState,
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
-use ntd_runtime::{ResourceSnapshot, ThermalState};
+use ntd_runtime::{
+    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
+    LlamaSpmTokenizer, ResourceSnapshot, SamplingMode, ThermalState,
+};
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
     DeviceEvidence, EvidenceClass, PhysicalEvidenceRecord,
@@ -381,6 +391,179 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativePullSpeak
     _sample_rate_hz: jint,
 ) -> jbyteArray {
     java_bytes(&env, &[])
+}
+
+const STORIES260K_ASSET_ID: &str = "model.ntd97.stories260k";
+const STORIES260K_VERSION: u32 = 1;
+const STORIES260K_CONTEXT_LIMIT: usize = 128;
+const STORIES260K_ANDROID_PROBE_TOKENS: usize = 16;
+
+fn format_token_ids(tokens: &[u32]) -> String {
+    tokens
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn digest_hex(digest: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut out, "{byte:02x}").expect("write digest");
+    }
+    out
+}
+
+fn real_model_probe(
+    capsule_path: &str,
+    shard_root: &str,
+    verify_key: &[u8],
+    expected_token_ids: &str,
+) -> Result<String, String> {
+    let verify_key: [u8; 32] = verify_key
+        .try_into()
+        .map_err(|_| "verify key must contain exactly 32 bytes".to_owned())?;
+    let native_capsule =
+        fs::read(capsule_path).map_err(|error| format!("read native capsule: {error}"))?;
+    let capsule_hash = sha256(&native_capsule);
+    let package = NativePackage {
+        asset_id: STORIES260K_ASSET_ID.to_owned(),
+        version: STORIES260K_VERSION,
+        kind: AssetKind::Intelligence,
+        native_capsule,
+        capsule_hash,
+        capability: None,
+    };
+    let shard_store = FileTensorShardStore::open(shard_root)
+        .map_err(|error| format!("open shards: {error:?}"))?;
+
+    verify_native_package_with_shards(&package, &verify_key, &shard_store)
+        .map_err(|error| format!("verify signed package: {error:?}"))?;
+    let activation = activate_thin_generative_capsule(&package.native_capsule, &shard_store)
+        .map_err(|error| format!("activate package: {error:?}"))?;
+
+    let NativeTokenizerModel::LlamaSpm {
+        score_bits,
+        token_types,
+        add_space_prefix,
+        add_bos_token,
+        add_eos_token,
+    } = &activation.tokenizer.model
+    else {
+        return Err("real model tokenizer is not LLaMA SPM".into());
+    };
+    let tokenizer = LlamaSpmTokenizer::new(
+        activation.tokenizer.tokens.clone(),
+        score_bits.clone(),
+        token_types.clone(),
+        LlamaSpmConfig {
+            bos_token: activation.tokenizer.bos_token,
+            eos_token: activation.tokenizer.eos_token,
+            unknown_token: activation.tokenizer.unknown_token,
+            add_space_prefix: *add_space_prefix,
+            add_bos_token: *add_bos_token,
+            add_eos_token: *add_eos_token,
+        },
+    )
+    .map_err(|error| format!("build tokenizer: {error:?}"))?;
+    let bos = tokenizer
+        .bos_token()
+        .ok_or_else(|| "real model tokenizer has no BOS token".to_owned())?;
+
+    let resolver = FileBackedTensorResolver::from_activation(shard_store, &activation);
+    let generator = GraphGenerator::new(
+        activation.graph.clone(),
+        CpuReferenceProvider,
+        BTreeMap::new(),
+        activation.manifest.token_input,
+        usize::try_from(activation.manifest.distribution_output)
+            .map_err(|_| "distribution output does not fit usize".to_owned())?,
+        usize::try_from(activation.manifest.vocabulary_size)
+            .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
+    )
+    .map_err(|error| format!("build graph generator: {error:?}"))?;
+    let generated = generator
+        .generate_tokens_with_resolver(
+            &resolver,
+            &[bos],
+            GenerationConfig {
+                max_new_tokens: STORIES260K_ANDROID_PROBE_TOKENS,
+                context_limit: STORIES260K_CONTEXT_LIMIT,
+                eos_token: Some(bos),
+                distribution: DistributionKind::Logits,
+                sampling: SamplingMode::Greedy,
+            },
+        )
+        .map_err(|error| format!("native generation: {error:?}"))?;
+
+    let actual_ids = format_token_ids(&generated.generated_tokens);
+    if actual_ids != expected_token_ids.trim() {
+        return Err(format!(
+            "token divergence: expected={} actual={actual_ids}",
+            expected_token_ids.trim()
+        ));
+    }
+    let text = tokenizer
+        .decode_after(Some(bos), &generated.generated_tokens, true)
+        .map_err(|error| format!("decode generated text: {error:?}"))?;
+    let text_hash = sha256(text.as_bytes());
+
+    Ok(format!(
+        "signature=ok\nactivation=ok\ngenerated_token_count={}\ngenerated_token_ids={}\ngenerated_text_bytes={}\ngenerated_text_sha256={}\nandroid_real_model=PASS\n",
+        generated.generated_tokens.len(),
+        actual_ids,
+        text.len(),
+        digest_hex(&text_hash)
+    ))
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeRealModelProbe(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    capsule_path: JString<'_>,
+    shard_root: JString<'_>,
+    verify_key: JByteArray<'_>,
+    expected_token_ids: JString<'_>,
+) -> jbyteArray {
+    let Some(capsule_path) = java_string(&mut env, &capsule_path) else {
+        return java_bytes(
+            &env,
+            b"android_real_model=failed\nerror=invalid capsule path\n",
+        );
+    };
+    let Some(shard_root) = java_string(&mut env, &shard_root) else {
+        return java_bytes(
+            &env,
+            b"android_real_model=failed\nerror=invalid shard root\n",
+        );
+    };
+    let Some(expected_token_ids) = java_string(&mut env, &expected_token_ids) else {
+        return java_bytes(
+            &env,
+            b"android_real_model=failed\nerror=invalid expected token ids\n",
+        );
+    };
+    let verify_key = match env.convert_byte_array(&verify_key) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return java_bytes(
+                &env,
+                b"android_real_model=failed\nerror=invalid verify key\n",
+            )
+        }
+    };
+
+    match real_model_probe(&capsule_path, &shard_root, &verify_key, &expected_token_ids) {
+        Ok(result) => java_bytes(&env, result.as_bytes()),
+        Err(error) => java_bytes(
+            &env,
+            format!("android_real_model=failed\nerror={error}\n").as_bytes(),
+        ),
+    }
 }
 
 fn java_string(env: &mut JNIEnv<'_>, value: &JString<'_>) -> Option<String> {
