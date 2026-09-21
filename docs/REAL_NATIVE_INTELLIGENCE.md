@@ -43,6 +43,8 @@ The reader rejects malformed headers, future versions, duplicate metadata/tensor
 
 GGUF intake now also supports a safe file-backed `GgufByteSource`. Metadata and tensor tables are parsed through bounded range reads, while tensor payloads are fetched only when the lowering/transcode path consumes that tensor. The compatibility `&[u8]` path remains a wrapper over the same source contract, and the `gguf-intake` CLI no longer loads the complete source file with `fs::read`.
 
+For canonical LLaMA/SPM tokenizers, omitted `add_space_prefix`, `add_bos_token` and `add_eos_token` keys are resolved using the source-runtime defaults `true / true / false`. Explicit GGUF metadata always overrides those defaults. The resolved values and whether defaults were inherited are surfaced by `gguf-intake` for auditability. Other tokenizer families do not inherit these LLaMA/SPM defaults.
+
 ## Conversion planning
 
 `GgufConversionPlan` classifies F32/F16/BF16 tensors as directly representable and Q4_0/Q8_0/Q4_K/Q5_K/Q6_K as supported native transcodes. These quantized formats are decoded clean-room into NTD97-owned F32 payloads first so semantic correctness is established before mobile requantization; every other GGML tensor encoding remains fail-closed until an explicit decoder exists.
@@ -104,13 +106,13 @@ This proves the native conversion plumbing and graph execution contract. It does
 
 M11 deliberately remains in progress because:
 
-- LLaMA-style SentencePiece metadata now lowers into NCC97 tokenizer v0.2 and executes natively with score-ordered BPE merges, U+2581 space normalization, byte fallback, and source BOS/EOS policy; a representative real tokenizer still needs source-vs-NTD97 differential validation;
+- LLaMA-style SentencePiece metadata now lowers into NCC97 tokenizer v0.2 and executes natively with score-ordered BPE merges, U+2581 space normalization, byte fallback, explicit policy overrides, and canonical source defaults when optional SPM policy keys are omitted; the pinned `stories260K.gguf` reference is structurally compatible, but its tokenizer still needs source-vs-NTD97 differential validation;
 - canonical GPT-2 (`tokenizer.ggml.pre="gpt-2"`) now lowers into NCC97 tokenizer v0.3 and executes natively with Unicode-category pre-tokenization, GPT-2 byte-to-Unicode mapping, ranked BPE merges and source BOS/EOS policy; non-canonical BPE pre-tokenizers remain fail-closed;
 - a representative real GGUF has not yet passed source-vs-NIR97 semantic-equivalence testing;
 - file-backed intake emits each converted tensor immediately as a content-addressed NTP97 shard; Thin NCC97 packages now sign external tensor references, verify each shard by length/hash before activation, persist through the canonical native asset store, and execute through a lazy file-backed `ValueId` resolver that releases graph values after their last use. Retained model-weight RAM therefore no longer grows with total model size, while peak import/activation memory remains bounded by the largest tensor transcode/encode/resolve operation;
 - Android has not yet loaded and generated with the converted real native package.
 
-The conversion plan therefore keeps activation blocked even when structural parsing/lowering/package verification succeeds.
+The conversion plan therefore keeps activation blocked even when structural parsing/lowering/package verification succeeds. The first pinned real-model target is documented in `docs/M11_STORIES260K_REFERENCE.md`; for its metadata profile, omitted SPM policy keys no longer introduce a structural blocker.
 
 ## Completion gate
 
