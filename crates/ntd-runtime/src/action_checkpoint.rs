@@ -680,6 +680,62 @@ mod tests {
     }
 
     #[test]
+    fn paired_pc_action_round_trips_in_taf97_minor_two() {
+        let mut registry = CapabilityRegistry::new();
+        registry
+            .register(
+                CapabilityDescriptor::new(
+                    CapabilityId("pc.process.execute".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ExternalWrite,
+                )
+                .expect("descriptor"),
+            )
+            .expect("register");
+
+        let state = ActionFabricState {
+            next_plan_id: 2,
+            next_action_id: 2,
+            plans: BTreeMap::from([(
+                1,
+                ActionPlanState {
+                    id: ActionPlanId(1),
+                    task_id: 11,
+                    cursor: 0,
+                    status: ActionPlanStatus::Ready,
+                    actions: vec![PlannedAction {
+                        id: ActionId(1),
+                        node_id: 1,
+                        capability: CapabilityId("pc.process.execute".into()),
+                        capability_version: 1,
+                        side_effect: SideEffectClass::ExternalWrite,
+                        verification_required: true,
+                        action: TypedAction::PcExecute {
+                            peer: "workstation".into(),
+                            program: "cargo".into(),
+                            args: vec!["test".into(), "--workspace".into()],
+                            working_dir: Some("/workspace".into()),
+                        },
+                        status: ActionStatus::Prepared,
+                        attempts: 0,
+                        output: None,
+                        resume_token: None,
+                        rollback_token: None,
+                        last_error: None,
+                    }],
+                },
+            )]),
+        };
+
+        let encoded = encode_action_fabric_checkpoint(&registry, &state).expect("encode");
+        assert_eq!(
+            decode_action_fabric_checkpoint(&registry, &encoded).expect("decode"),
+            state
+        );
+    }
+
+    #[test]
     fn checkpoint_round_trips_action_state() {
         let registry = registry();
         let state = ActionFabricState {
