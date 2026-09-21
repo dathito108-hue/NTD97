@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use crate::{
     decode_descriptor_frame, encode_descriptor_frame, load_native_program, sha256, CapsuleBuilder,
@@ -210,19 +210,18 @@ fn validate_tokenizer(tokenizer: &NativeTokenizerDescriptor) -> Result<(), Nativ
         return Err(NativeTokenizerError::EmptyVocabulary);
     }
 
-    let mut seen = BTreeSet::new();
+    let mut seen = BTreeMap::new();
     for (index, token) in tokenizer.tokens.iter().enumerate() {
         let id = u32::try_from(index).map_err(|_| NativeTokenizerError::Overflow)?;
         if token.is_empty() {
             return Err(NativeTokenizerError::EmptyToken(id));
         }
-        if let Some(first) = seen.iter().position(|prior: &Vec<u8>| prior == token) {
+        if let Some(first) = seen.insert(token.clone(), id) {
             return Err(NativeTokenizerError::DuplicateToken {
-                first: u32::try_from(first).map_err(|_| NativeTokenizerError::Overflow)?,
+                first,
                 second: id,
             });
         }
-        seen.insert(token.clone());
     }
 
     let token_count =
