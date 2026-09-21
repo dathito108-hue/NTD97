@@ -28,10 +28,11 @@ use ntd_mobile_shell::{
 };
 use ntd_runtime::{
     choose_reasoning_budget, decode_conversation_checkpoint, encode_conversation_checkpoint,
-    memory_recall_limit_for_budget, model_inference_signals, CognitiveIdentity,
-    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
-    LlamaSpmTokenizer, NativeChatPromptCompiler, ResourceSnapshot, SamplingMode,
-    SovereignConversationState, ThermalState,
+    memory_recall_limit_for_budget, model_inference_signals, run_budgeted_reasoning_cycle,
+    sample_token, CognitiveContext, CognitiveIdentity, CognitiveObservation, CpuReferenceProvider,
+    DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
+    NativeChatPromptCompiler, NativeReasoningProbe, ResourceSnapshot, SamplingMode,
+    SovereignConversationState, TaskStatus, ThermalState,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
@@ -57,6 +58,80 @@ struct NativeChatModel {
     resolver: FileBackedTensorResolver,
     tokenizer: LlamaSpmTokenizer,
     context_limit: usize,
+}
+
+struct NativeModelReasoningProbe<'a> {
+    generator: GraphGenerator<CpuReferenceProvider>,
+    resolver: &'a FileBackedTensorResolver,
+    scratch_tokens: Vec<u32>,
+    context_limit: usize,
+}
+
+impl<'a> NativeModelReasoningProbe<'a> {
+    fn new(
+        model: &'a NativeChatModel,
+        prompt_tokens: Vec<u32>,
+    ) -> Result<Self, String> {
+        let generator = GraphGenerator::new(
+            model.activation.graph.clone(),
+            CpuReferenceProvider,
+            BTreeMap::new(),
+            model.activation.manifest.token_input,
+            usize::try_from(model.activation.manifest.distribution_output)
+                .map_err(|_| "distribution output does not fit usize".to_owned())?,
+            usize::try_from(model.activation.manifest.vocabulary_size)
+                .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
+        )
+        .map_err(|error| format!("build native reasoning generator: {error:?}"))?;
+
+        Ok(Self {
+            generator,
+            resolver: &model.resolver,
+            scratch_tokens: prompt_tokens,
+            context_limit: model.context_limit,
+        })
+    }
+}
+
+impl NativeReasoningProbe for NativeModelReasoningProbe<'_> {
+    fn probe(
+        &mut self,
+        context: CognitiveContext<'_>,
+    ) -> Result<CognitiveObservation, String> {
+        let distribution = self
+            .generator
+            .next_distribution_with_resolver(
+                self.resolver,
+                &self.scratch_tokens,
+                self.context_limit,
+            )
+            .map_err(|error| format!("native reasoning forward: {error:?}"))?;
+        let inference = model_inference_signals(&distribution)
+            .map_err(|error| format!("native reasoning signal analysis: {error:?}"))?;
+        let next = sample_token(
+            &distribution,
+            DistributionKind::Logits,
+            SamplingMode::Greedy,
+            usize::try_from(context.iteration)
+                .map_err(|_| "reasoning iteration does not fit usize".to_owned())?,
+        )
+        .map_err(|error| format!("native reasoning token selection: {error:?}"))?;
+        let token =
+            u32::try_from(next).map_err(|_| "reasoning token does not fit u32".to_owned())?;
+        self.scratch_tokens.push(token);
+
+        Ok(CognitiveObservation {
+            summary: format!(
+                "native probe token={token} entropy={:.6} margin={:.6}",
+                inference.normalized_entropy, inference.top_margin
+            ),
+            evidence: vec![
+                format!("native-token:{token}"),
+                format!("entropy:{:.6}", inference.normalized_entropy),
+                format!("top-margin:{:.6}", inference.top_margin),
+            ],
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -662,6 +737,24 @@ fn submit_chat_reserved(
     conversation
         .record_reasoning_profile(task_id, budget, signals, compiled.retained_memory_items)
         .map_err(|error| format!("record sovereign reasoning profile: {error:?}"))?;
+
+    let mut probe = NativeModelReasoningProbe::new(model, compiled.token_ids.clone())?;
+    let report = run_budgeted_reasoning_cycle(
+        conversation.cognition_mut(),
+        task_id,
+        signals,
+        &mut probe,
+    )
+    .map_err(|error| format!("run budgeted native reasoning cycle: {error:?}"))?;
+    if report.budget != budget || report.status != TaskStatus::Running {
+        return Err(format!(
+            "native reasoning cycle did not remain runnable: budget={:?} status={:?}",
+            report.budget, report.status
+        ));
+    }
+    conversation
+        .record_reasoning_cycle_report(task_id, &report)
+        .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
 
     let request_id = guard.next_chat_request_id;
     guard.next_chat_request_id = guard
