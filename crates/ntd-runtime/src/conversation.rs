@@ -74,8 +74,8 @@ impl NativeChatPromptCompiler {
     ) -> Result<CompiledChatPrompt, ChatPromptError> {
         validate_inputs(history, memory, user_message, max_prompt_tokens)?;
 
-        for retained_memory in (0..=memory.len()).rev() {
-            for dropped_history in (0..=history.len()).step_by(2) {
+        for dropped_history in (0..=history.len()).step_by(2) {
+            for retained_memory in (0..=memory.len()).rev() {
                 let retained_history = &history[dropped_history..];
                 let retained_memory_items = &memory[..retained_memory];
                 let text = render_prompt(retained_history, retained_memory_items, user_message);
