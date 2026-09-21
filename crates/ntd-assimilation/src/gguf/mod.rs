@@ -223,14 +223,18 @@ impl GgufModel {
 pub enum GgufTensorDisposition {
     NativeF32,
     NativeF16,
-    RequiresTranscode(u32),
+    NativeBf16,
+    SupportedTranscode(u32),
+    Unsupported(u32),
 }
 
 pub fn tensor_disposition(ggml_type: u32) -> GgufTensorDisposition {
     match ggml_type {
         0 => GgufTensorDisposition::NativeF32,
         1 => GgufTensorDisposition::NativeF16,
-        other => GgufTensorDisposition::RequiresTranscode(other),
+        30 => GgufTensorDisposition::NativeBf16,
+        2 | 8 => GgufTensorDisposition::SupportedTranscode(ggml_type),
+        other => GgufTensorDisposition::Unsupported(other),
     }
 }
 
@@ -243,6 +247,7 @@ pub struct GgufConversionPlan {
     pub tensor_count: usize,
     pub direct_tensor_count: usize,
     pub transcode_tensor_count: usize,
+    pub unsupported_tensor_count: usize,
     pub alignment: u32,
     pub blockers: Vec<String>,
 }
@@ -257,11 +262,40 @@ impl GgufConversionPlan {
             .filter(|tensor| {
                 matches!(
                     tensor_disposition(tensor.ggml_type),
-                    GgufTensorDisposition::NativeF32 | GgufTensorDisposition::NativeF16
+                    GgufTensorDisposition::NativeF32
+                        | GgufTensorDisposition::NativeF16
+                        | GgufTensorDisposition::NativeBf16
                 )
             })
             .count();
-        let transcode_tensor_count = model.tensors.len().saturating_sub(direct_tensor_count);
+        let transcode_tensor_count = model
+            .tensors
+            .iter()
+            .filter(|tensor| {
+                matches!(
+                    tensor_disposition(tensor.ggml_type),
+                    GgufTensorDisposition::SupportedTranscode(_)
+                )
+            })
+            .count();
+        let unsupported_types = model
+            .tensors
+            .iter()
+            .filter_map(|tensor| match tensor_disposition(tensor.ggml_type) {
+                GgufTensorDisposition::Unsupported(kind) => Some(kind),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let unsupported_tensor_count = model
+            .tensors
+            .iter()
+            .filter(|tensor| {
+                matches!(
+                    tensor_disposition(tensor.ggml_type),
+                    GgufTensorDisposition::Unsupported(_)
+                )
+            })
+            .count();
 
         let mut blockers = Vec::new();
         if architecture != "llama" {
@@ -274,14 +308,20 @@ impl GgufConversionPlan {
                 "tokenizer '{}' has no canonical NTD97 tokenizer lowering yet",
                 tokenizer.model
             ));
-        }
-        if transcode_tensor_count > 0 {
+        } else {
             blockers.push(format!(
-                "{transcode_tensor_count} GGML tensors require native transcode"
+                "tokenizer '{}' metadata is structurally imported, but production source-equivalent tokenization is not yet verified",
+                tokenizer.model
+            ));
+        }
+        if unsupported_tensor_count > 0 {
+            blockers.push(format!(
+                "{unsupported_tensor_count} tensors use unsupported GGML types {:?}",
+                unsupported_types
             ));
         }
         blockers.push(
-            "transformer lowering must pass source-vs-NIR97 semantic equivalence before activation"
+            "representative real-model source-vs-NIR97 semantic equivalence is required before activation"
                 .into(),
         );
 
@@ -293,6 +333,7 @@ impl GgufConversionPlan {
             tensor_count: model.tensors.len(),
             direct_tensor_count,
             transcode_tensor_count,
+            unsupported_tensor_count,
             alignment: model.alignment,
             blockers,
         })
