@@ -13,7 +13,8 @@ pub use generation::{
     SamplingError, SamplingMode,
 };
 pub use mobile::{
-    npu_provider, page_windows, plan_tensor_placement, vulkan_provider, AdaptiveExecutionProvider,
+    npu_provider, page_windows, plan_tensor_placement, verify_provider_equivalence,
+    vulkan_provider, AdaptiveExecutionProvider,
     AutotuneTable, ByteRegion, ComputePolicy, CpuReferenceMobileProvider, CpuTiledProvider,
     DeviceCapabilities, MobileComputeError, MobileExecutionProvider, PageWindow, PagedByteReader,
     PowerClass, ProfiledProvider, ProviderKind, ProviderMeasurement, ProviderProfile,
