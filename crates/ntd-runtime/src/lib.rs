@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+mod action_checkpoint;
+mod action_fabric;
+mod capability;
 mod checkpoint;
 mod cognition;
 mod executor;
@@ -9,6 +12,19 @@ mod mobile;
 mod tensor;
 mod tokenizer;
 
+pub use action_checkpoint::{
+    decode_action_fabric_checkpoint, encode_action_fabric_checkpoint, ActionCheckpointError,
+    TAF97_HEADER_LEN, TAF97_MAGIC, TAF97_MAJOR, TAF97_MINOR,
+};
+pub use action_fabric::{
+    ActionFabric, ActionFabricError, ActionFabricState, ActionId, ActionPlanId, ActionPlanState,
+    ActionPlanStatus, ActionStatus, ActionStepReport, ActionVerification, ActionVerifier,
+    AdapterResult, CapabilityAdapter, PlannedAction,
+};
+pub use capability::{
+    ActionOutput, ActionValue, AuthorityGrant, AuthorityScope, CapabilityDescriptor,
+    CapabilityDomain, CapabilityError, CapabilityRegistry, TypedAction,
+};
 pub use checkpoint::{
     decode_cognitive_checkpoint, encode_cognitive_checkpoint, CheckpointError, SIK97_HEADER_LEN,
     SIK97_MAGIC, SIK97_MAJOR, SIK97_MINOR,
