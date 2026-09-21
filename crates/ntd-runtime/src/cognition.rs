@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use ntd_core::{Intent, ReasoningBudget, TaskGraph};
 
 use crate::{
-    choose_reasoning_budget, CognitiveSignals, MemoryError, MemoryKind, MemoryQuery, SovereignMemory,
+    choose_reasoning_budget, CognitiveSignals, MemoryError, MemoryKind, MemoryQuery,
+    SovereignMemory,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -480,7 +481,8 @@ impl CognitiveRuntime {
                     .map_err(CognitiveError::Planner)?
             };
 
-            let observation = self.execute_directive(task_id, &directive, budget, iteration, executor)?;
+            let observation =
+                self.execute_directive(task_id, &directive, budget, iteration, executor)?;
 
             let decision = {
                 let task = self
@@ -560,15 +562,15 @@ impl CognitiveRuntime {
                     evidence,
                 })
             }
-            CognitiveDirective::RecordMemory { content, .. } => {
-                Ok(CognitiveObservation::new(format!("memory prepared: {content}")))
-            }
+            CognitiveDirective::RecordMemory { content, .. } => Ok(CognitiveObservation::new(
+                format!("memory prepared: {content}"),
+            )),
             CognitiveDirective::UpdateWorld { key, value } => Ok(CognitiveObservation::new(
                 format!("world update prepared: {key}={value}"),
             )),
-            CognitiveDirective::Complete { summary } => {
-                Ok(CognitiveObservation::new(format!("completion prepared: {summary}")))
-            }
+            CognitiveDirective::Complete { summary } => Ok(CognitiveObservation::new(format!(
+                "completion prepared: {summary}"
+            ))),
             CognitiveDirective::Work { .. } => {
                 let task = self
                     .state
