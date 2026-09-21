@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-use std::{env, fs, process};
+use std::{env, process};
 
-use ntd_assimilation::{GgufConversionPlan, GgufModel};
+use ntd_assimilation::{FileGgufSource, GgufConversionPlan, GgufModel};
 
 fn main() {
     let mut args = env::args();
@@ -16,14 +16,14 @@ fn main() {
         process::exit(2);
     }
 
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
+    let source = match FileGgufSource::open(&path) {
+        Ok(source) => source,
         Err(error) => {
-            eprintln!("failed to read {path}: {error}");
+            eprintln!("failed to open {path}: {error:?}");
             process::exit(1);
         }
     };
-    let model = match GgufModel::parse(&bytes) {
+    let model = match GgufModel::parse_source(&source) {
         Ok(model) => model,
         Err(error) => {
             eprintln!("GGUF intake rejected: {error:?}");
