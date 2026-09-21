@@ -2,12 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use ntd_ir::{DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType};
+use ntd_ir::{
+    DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
+};
 use ntd_runtime::{
     npu_provider, vulkan_provider, AdaptiveExecutionProvider, AutotuneTable,
     CpuReferenceMobileProvider, CpuReferenceProvider, CpuTiledProvider, DeviceCapabilities,
-    GraphExecutor, ProviderKind, ProviderMeasurement, ResourceSnapshot, Tensor,
-    ThermalState,
+    GraphExecutor, ProviderKind, ProviderMeasurement, ResourceSnapshot, Tensor, ThermalState,
 };
 
 fn tensor_decl(id: u32, rank: u8) -> ValueDecl {
@@ -62,7 +63,11 @@ fn inputs() -> BTreeMap<ValueId, Tensor> {
     ])
 }
 
-fn snapshot(available_ram_bytes: u64, battery_percent: u8, thermal: ThermalState) -> ResourceSnapshot {
+fn snapshot(
+    available_ram_bytes: u64,
+    battery_percent: u8,
+    thermal: ThermalState,
+) -> ResourceSnapshot {
     ResourceSnapshot {
         available_ram_bytes,
         battery_percent,
@@ -190,11 +195,8 @@ fn hot_pressure_forces_cpu_fallback_without_output_drift() {
         supports_npu: true,
     };
     let policy = ntd_runtime::ComputePolicy::for_device(&device);
-    let mut adaptive = AdaptiveExecutionProvider::new(
-        device,
-        snapshot(3 * GIB, 80, ThermalState::Hot),
-        policy,
-    );
+    let mut adaptive =
+        AdaptiveExecutionProvider::new(device, snapshot(3 * GIB, 80, ThermalState::Hot), policy);
 
     adaptive.register(vulkan_provider(
         CpuReferenceProvider,
