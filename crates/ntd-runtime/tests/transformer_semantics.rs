@@ -61,3 +61,71 @@ fn causal_attention_supports_grouped_query_heads() {
     assert_eq!(output.shape(), &[1, 2, 2]);
     assert_eq!(output.data(), &[3.0, 4.0, 3.0, 4.0]);
 }
+
+
+#[test]
+fn reshape_can_infer_one_dynamic_dimension() {
+    let input = Tensor::new(vec![2, 3], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).expect("input");
+    let shape = Tensor::new(vec![2], vec![-1.0, 2.0]).expect("shape");
+    let output = CpuReferenceProvider
+        .execute(TensorOp::Reshape, &[&input, &shape])
+        .expect("reshape")
+        .remove(0);
+    assert_eq!(output.shape(), &[3, 2]);
+    assert_eq!(output.data(), input.data());
+}
+
+#[test]
+fn linear_consumes_out_by_in_gguf_native_layout() {
+    let input = Tensor::new(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).expect("input");
+    let weight = Tensor::new(
+        vec![3, 2],
+        vec![
+            1.0, 0.0, //
+            0.0, 1.0, //
+            1.0, 1.0,
+        ],
+    )
+    .expect("weight");
+    let output = CpuReferenceProvider
+        .execute(TensorOp::Linear, &[&input, &weight])
+        .expect("linear")
+        .remove(0);
+    assert_eq!(output.shape(), &[2, 3]);
+    assert_eq!(output.data(), &[1.0, 2.0, 3.0, 3.0, 4.0, 7.0]);
+}
+
+#[test]
+fn position_ids_follow_sequence_length() {
+    let tokens = Tensor::new(vec![4], vec![7.0, 8.0, 9.0, 10.0]).expect("tokens");
+    let positions = CpuReferenceProvider
+        .execute(TensorOp::PositionIds, &[&tokens])
+        .expect("positions")
+        .remove(0);
+    assert_eq!(positions.shape(), &[4]);
+    assert_eq!(positions.data(), &[0.0, 1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn rms_norm_and_rope_accept_model_metadata_scalars() {
+    let input = Tensor::new(vec![1, 2], vec![3.0, 4.0]).expect("input");
+    let weight = Tensor::new(vec![2], vec![1.0, 1.0]).expect("weight");
+    let epsilon = Tensor::scalar(1.0e-3);
+    let output = CpuReferenceProvider
+        .execute(TensorOp::RmsNorm, &[&input, &weight, &epsilon])
+        .expect("rms")
+        .remove(0);
+    let inv_rms = 1.0 / (((9.0f32 + 16.0) / 2.0) + 1.0e-3).sqrt();
+    assert!((output.data()[0] - 3.0 * inv_rms).abs() < 1.0e-6);
+
+    let rope_input = Tensor::new(vec![2, 1, 2], vec![1.0, 0.0, 1.0, 0.0]).expect("rope input");
+    let positions = Tensor::new(vec![2], vec![0.0, 1.0]).expect("positions");
+    let base = Tensor::scalar(1000.0);
+    let rotated = CpuReferenceProvider
+        .execute(TensorOp::RotaryPosition, &[&rope_input, &positions, &base])
+        .expect("rope")
+        .remove(0);
+    assert_eq!(rotated.shape(), &[2, 1, 2]);
+    assert!((rotated.data()[2] - 1.0f32.cos()).abs() < 1.0e-6);
+    assert!((rotated.data()[3] - 1.0f32.sin()).abs() < 1.0e-6);
+}
