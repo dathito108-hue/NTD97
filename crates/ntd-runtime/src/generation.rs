@@ -135,7 +135,9 @@ where
         }
 
         for token in prompt_tokens {
-            if usize::try_from(*token).map_or(true, |id| id >= self.vocab_size) {
+            let id = usize::try_from(*token)
+                .map_err(|_| GenerationError::TokenIdOutOfRange(*token))?;
+            if id >= self.vocab_size {
                 return Err(GenerationError::TokenIdOutOfRange(*token));
             }
         }
@@ -263,7 +265,8 @@ pub fn sample_token(
     };
 
     if let Some(k) = top_k {
-        keep_top_k(&mut weights, k.min(weights.len()))?;
+        let limit = k.min(weights.len());
+        keep_top_k(&mut weights, limit)?;
     }
 
     let sum = weights.iter().sum::<f32>();
