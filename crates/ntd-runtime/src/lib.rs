@@ -7,6 +7,7 @@ mod checkpoint;
 mod cognition;
 mod executor;
 mod generation;
+mod gpt2;
 mod memory;
 mod mobile;
 mod tensor;
@@ -41,6 +42,7 @@ pub use generation::{
     GenerationResult, GraphGenerator, KvCache, KvCacheError, KvLayerCache, PrefixCache,
     SamplingError, SamplingMode,
 };
+pub use gpt2::{Gpt2BpeConfig, Gpt2BpeTokenizer};
 pub use memory::{MemoryError, MemoryHit, MemoryKind, MemoryQuery, MemoryRecord, SovereignMemory};
 pub use mobile::{
     npu_provider, page_windows, plan_tensor_placement, verify_provider_equivalence,
