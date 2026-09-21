@@ -25,6 +25,15 @@ const PINNED_MODEL_SHA256: Digest = [
     0xc0, 0x4b,
 ];
 const SOURCE_GOLDEN_STEPS: usize = 200;
+const TOKENIZER_PROMPTS: [&str; 7] = [
+    "",
+    "hello",
+    "hello!",
+    "Once upon a time",
+    "Lily's ball.",
+    " red ball",
+    "one  two",
+];
 
 fn main() {
     if let Err(error) = run() {
@@ -38,20 +47,21 @@ fn run() -> Result<(), String> {
     let program = args
         .next()
         .unwrap_or_else(|| "stories260k-evidence".to_owned());
-    let model_path = args
-        .next()
-        .ok_or_else(|| format!("usage: {program} <stories260K.gguf> <source-output>"))?;
-    let source_output_path = args
-        .next()
-        .ok_or_else(|| format!("usage: {program} <stories260K.gguf> <source-output>"))?;
+    let usage = || {
+        format!(
+            "usage: {program} <stories260K.gguf> <source-output> <source-token-ids>"
+        )
+    };
+    let model_path = args.next().ok_or_else(&usage)?;
+    let source_output_path = args.next().ok_or_else(&usage)?;
+    let source_token_ids_path = args.next().ok_or_else(&usage)?;
     if args.next().is_some() {
-        return Err(format!(
-            "usage: {program} <stories260K.gguf> <source-output>"
-        ));
+        return Err(usage());
     }
 
     let model_path = PathBuf::from(model_path);
     let source_output_path = PathBuf::from(source_output_path);
+    let source_token_ids_path = PathBuf::from(source_token_ids_path);
     let source_bytes =
         fs::read(&model_path).map_err(|error| format!("read pinned source: {error}"))?;
     if source_bytes.len() != PINNED_MODEL_LEN {
@@ -79,6 +89,7 @@ fn run() -> Result<(), String> {
         return Err("source reference output is empty".into());
     }
     let source_output_digest = sha256(&source_output);
+    let source_token_ids = parse_source_token_ids(&source_token_ids_path)?;
 
     let source = FileGgufSource::open(&model_path)
         .map_err(|error| format!("open file-backed GGUF: {error:?}"))?;
@@ -166,6 +177,9 @@ fn run() -> Result<(), String> {
         if bos != 1 {
             return Err(format!("stories260K BOS mismatch: expected 1, got {bos}"));
         }
+
+        validate_tokenizer_equivalence(&tokenizer, &source_token_ids)?;
+        println!("stories260k_tokenizer_equivalence=PASS");
 
         let context_limit = usize::try_from(streamed.config.context_length)
             .map_err(|_| "context length does not fit usize".to_owned())?;
@@ -303,6 +317,58 @@ fn build_tokenizer(
         },
     )
     .map_err(|error| format!("build native tokenizer: {error:?}"))
+}
+
+fn parse_source_token_ids(path: &PathBuf) -> Result<Vec<Vec<u32>>, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("read source tokenizer ids: {error}"))?;
+    let lines = text.lines().collect::<Vec<_>>();
+    if lines.len() != TOKENIZER_PROMPTS.len() {
+        return Err(format!(
+            "source tokenizer trace count mismatch: expected {}, got {}",
+            TOKENIZER_PROMPTS.len(),
+            lines.len()
+        ));
+    }
+
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(case, line)| {
+            if line.trim().is_empty() {
+                return Err(format!("source tokenizer trace case {case} is empty"));
+            }
+            line.split(',')
+                .map(|value| {
+                    value.parse::<u32>().map_err(|error| {
+                        format!(
+                            "invalid source tokenizer id in case {case}: {value:?}: {error}"
+                        )
+                    })
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn validate_tokenizer_equivalence(
+    tokenizer: &LlamaSpmTokenizer,
+    source_token_ids: &[Vec<u32>],
+) -> Result<(), String> {
+    for (case, prompt) in TOKENIZER_PROMPTS.iter().enumerate() {
+        let native = tokenizer
+            .encode(prompt, true)
+            .map_err(|error| format!("native tokenizer case {case}: {error:?}"))?;
+        let source = source_token_ids
+            .get(case)
+            .ok_or_else(|| format!("missing source tokenizer case {case}"))?;
+        if &native != source {
+            return Err(format!(
+                "tokenizer mismatch case {case} prompt={prompt:?}: source={source:?} NTD97={native:?}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn evidence_shard_root() -> PathBuf {
