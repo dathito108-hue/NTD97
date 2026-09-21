@@ -58,6 +58,32 @@ pub struct NativePackage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamedPackageSpec {
+    pub asset_id: String,
+    pub version: u32,
+    pub importer_id: String,
+}
+
+impl StreamedPackageSpec {
+    pub fn new(
+        asset_id: impl Into<String>,
+        version: u32,
+        importer_id: impl Into<String>,
+    ) -> Result<Self, AssimilationError> {
+        let asset_id = asset_id.into().trim().to_owned();
+        let importer_id = importer_id.into().trim().to_owned();
+        if asset_id.is_empty() || version == 0 || importer_id.is_empty() {
+            return Err(AssimilationError::InvalidPackage);
+        }
+        Ok(Self {
+            asset_id,
+            version,
+            importer_id,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ThinPackageChunk {
     Embedded(SectionKind, Vec<u8>),
     External {
@@ -192,19 +218,13 @@ pub fn build_native_package(
 }
 
 pub fn build_streamed_native_package(
-    asset_id: impl Into<String>,
-    version: u32,
+    spec: StreamedPackageSpec,
     model: &StreamedLoweredLlamaModel,
     provenance: &ProvenanceRecord,
-    importer_id: &str,
     report: &SandboxReport,
     shard_store: &FileTensorShardStore,
     identity: &AssimilationIdentity,
 ) -> Result<NativePackage, AssimilationError> {
-    let asset_id = asset_id.into().trim().to_owned();
-    if asset_id.is_empty() || version == 0 || importer_id.trim().is_empty() {
-        return Err(AssimilationError::InvalidPackage);
-    }
     provenance.validate()?;
     model
         .graph
@@ -236,10 +256,10 @@ pub fn build_streamed_native_package(
         .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
     let provenance_bytes = encode_provenance(provenance)?;
     let log_bytes = encode_assimilation_log(
-        &asset_id,
-        version,
+        &spec.asset_id,
+        spec.version,
         AssetKind::Intelligence,
-        importer_id,
+        &spec.importer_id,
         &report.passed_regressions,
     )?;
 
@@ -280,7 +300,7 @@ pub fn build_streamed_native_package(
         encode_signature(identity.verify_key(), signature),
     ));
 
-    let capsule_id = native_capsule_id(&asset_id, version, &provenance.source_digest)?;
+    let capsule_id = native_capsule_id(&spec.asset_id, spec.version, &provenance.source_digest)?;
     let mut builder = CapsuleBuilder::new(CapsuleKind::Thin, capsule_id);
     for chunk in chunks {
         match chunk {
@@ -297,7 +317,7 @@ pub fn build_streamed_native_package(
         .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
     let package = NativePackage {
         asset_id,
-        version,
+        spec.version,
         kind: AssetKind::Intelligence,
         capsule_hash: sha256(&native_capsule),
         native_capsule,
@@ -440,10 +460,10 @@ pub fn verify_native_package_with_shards(
         match chunk.storage {
             ChunkStorageView::Embedded(bytes) => {
                 signable.push(ThinPackageChunk::Embedded(chunk.kind, bytes.to_vec()));
-                if chunk.kind == SectionKind::AssimilationLog {
-                    if log.replace(decode_assimilation_log(bytes)?).is_some() {
-                        return Err(AssimilationError::InvalidPackage);
-                    }
+                if chunk.kind == SectionKind::AssimilationLog
+                    && log.replace(decode_assimilation_log(bytes)?).is_some()
+                {
+                    return Err(AssimilationError::InvalidPackage);
                 }
             }
             ChunkStorageView::External => {
