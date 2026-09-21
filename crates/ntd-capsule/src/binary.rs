@@ -35,10 +35,7 @@ impl TryFrom<u8> for CapsuleKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChunkSource {
     Embedded(Vec<u8>),
-    External {
-        logical_len: u64,
-        hash: Digest,
-    },
+    External { logical_len: u64, hash: Digest },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,7 +227,8 @@ impl<'a> CapsuleView<'a> {
             ALIGNMENT,
         )?;
 
-        if header.manifest_offset != u64::try_from(HEADER_LEN).map_err(|_| CapsuleError::Overflow)?
+        if header.manifest_offset
+            != u64::try_from(HEADER_LEN).map_err(|_| CapsuleError::Overflow)?
             || header.manifest_len
                 != u64::try_from(MANIFEST_LEN).map_err(|_| CapsuleError::Overflow)?
             || header.index_offset
@@ -243,11 +241,8 @@ impl<'a> CapsuleView<'a> {
             return Err(CapsuleError::NonCanonicalLayout);
         }
 
-        let manifest_range = checked_range(
-            bytes.len(),
-            header.manifest_offset,
-            header.manifest_len,
-        )?;
+        let manifest_range =
+            checked_range(bytes.len(), header.manifest_offset, header.manifest_len)?;
         let index_range = checked_range(bytes.len(), header.index_offset, header.index_len)?;
 
         let manifest_bytes = &bytes[manifest_range.clone()];
@@ -502,7 +497,11 @@ fn encode_index(entries: &[IndexEntry]) -> Vec<u8> {
 
 fn decode_index(bytes: &[u8], count: u32) -> Result<Vec<IndexEntry>, CapsuleError> {
     let count = usize::try_from(count).map_err(|_| CapsuleError::Overflow)?;
-    if bytes.len() != count.checked_mul(INDEX_ENTRY_LEN).ok_or(CapsuleError::Overflow)? {
+    if bytes.len()
+        != count
+            .checked_mul(INDEX_ENTRY_LEN)
+            .ok_or(CapsuleError::Overflow)?
+    {
         return Err(CapsuleError::InvalidIndex);
     }
 
@@ -587,8 +586,7 @@ fn read_u32(src: &[u8], offset: usize) -> Result<u32, CapsuleError> {
 fn read_u64(src: &[u8], offset: usize) -> Result<u64, CapsuleError> {
     let bytes = src.get(offset..offset + 8).ok_or(CapsuleError::Truncated)?;
     Ok(u64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ]))
 }
 
@@ -687,10 +685,12 @@ mod tests {
 
         assert_eq!(
             CapsuleView::read(&bytes),
-            Err(CapsuleError::UnsupportedContract(NativeIntelligenceContract {
-                capsule: CapsuleVersion { major: 1, minor: 0 },
-                ir: IrVersion::CURRENT,
-            }))
+            Err(CapsuleError::UnsupportedContract(
+                NativeIntelligenceContract {
+                    capsule: CapsuleVersion { major: 1, minor: 0 },
+                    ir: IrVersion::CURRENT,
+                }
+            ))
         );
     }
 
