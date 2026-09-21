@@ -369,14 +369,6 @@ fn llama_spm_blocker(tokenizer: &GgufTokenizer) -> Option<String> {
             tokenizer.pre_tokenizer.as_deref().unwrap_or_default()
         ));
     }
-    if tokenizer.add_space_prefix.is_none()
-        || tokenizer.add_bos_token.is_none()
-        || tokenizer.add_eos_token.is_none()
-    {
-        return Some(
-            "llama tokenizer is missing explicit add-space-prefix/BOS/EOS policy metadata".into(),
-        );
-    }
     if tokenizer.remove_extra_whitespaces == Some(true)
         || tokenizer.normalizer_lowercase == Some(true)
         || tokenizer.normalizer_strip_accents == Some(true)
