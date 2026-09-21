@@ -285,7 +285,7 @@ M10 physical-device evidence remains a parallel hardware-validation gate. It doe
 
 A post-M10 block is complete only when its production path, deterministic regression coverage, failure behavior, sovereignty boundary and mobile integration are all present.
 
-## M11 — Major Block K: Real Native Intelligence — in progress
+## M11 — Major Block K: Real Native Intelligence — complete
 
 Goal: replace toy/reference intelligence with importable, executable, source-runtime-independent model intelligence that actually exercises the NTD97 generative stack.
 
@@ -324,6 +324,9 @@ Current implementation:
 - native LLaMA-style SentencePiece execution carried through GGUF -> NCC97 v0.2 -> runtime, including score-ordered merges, U+2581 space normalization, byte fallback and source add-space/BOS/EOS policy;
 - real `tok512` source-vs-NTD97 tokenizer differential PASS over seven fixed prompt cases;
 - real `stories260K` GGUF -> streamed NTP97 -> signed Thin NCC97 -> lazy native generation equivalence PASS for all 128 declared context steps, with byte-identical normalized source/native text;
+- Android host exporter producing the same real model as a signed Thin NCC97 package with 52 NTP97 shards and a deterministic 16-token native reference;
+- Android JNI verification of package signature plus external shard integrity, Thin activation and lazy native generation;
+- Android x86_64 emulator generation PASS with exact 16-token host-reference equality and preserved lifecycle/reboot validation;
 - native canonical GPT-2 Unicode pre-tokenization + byte-level ranked BPE carried through GGUF -> NCC97 v0.3 -> runtime;
 - file-backed bounded GGUF source reads, streamed content-addressed tensor staging and signed Thin NCC97 packaging;
 - external Thin tensor references covered by the native package signature and length/hash verification;
@@ -334,12 +337,16 @@ Current implementation:
 - deterministic tiny-LLaMA GGUF -> NIR97/NCC97 -> GraphGenerator regression path;
 - unsupported source semantics, unconsumed tensors and unsupported GGML types remain fail-closed.
 
-Still required before M11 completion:
+Acceptance result:
 
-- representative real GPT-2 tokenizer/model differential validation remains desirable for the GPT-2 support path; additional BPE pre-tokenizers such as Qwen2/LLaMA3 remain fail-closed until their exact semantics are implemented;
-- Android loading/generation using the proven `stories260K` real native package.
+- pinned `stories260K.gguf` source tokenizer differential PASS;
+- pinned `stories260K.gguf` 128-step source-vs-NIR97 generation equivalence PASS;
+- signed Thin NCC97 package + 52 content-addressed NTP97 shards verified and activated natively;
+- Android x86_64 emulator signature/shard verification + 16-token real native generation PASS;
+- no GGUF/source checkpoint/llama.cpp runtime/hosted AI backend required after native package creation;
+- representative real GPT-2 differential validation and additional pre-tokenizers such as Qwen2/LLaMA3 remain future support expansion and continue fail-closed until independently proven.
 
-Exit: at least one real supported external model can be imported once, converted to signed NTD97-native NCC97 assets, then loaded and used for local text generation without the source model runtime or a hosted AI backend.
+Exit: complete. At least one real supported external model can be imported once, converted to signed NTD97-native NCC97 assets, then loaded and used for local text generation on Android without the source model runtime or a hosted AI backend.
 
 ## M12 — Major Block L: End-to-End Native Assistant Loop
 
