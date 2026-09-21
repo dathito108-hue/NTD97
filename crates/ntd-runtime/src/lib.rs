@@ -32,9 +32,11 @@ pub use assistant::{
     NCS97_MAGIC, NCS97_MAJOR, NCS97_MINOR,
 };
 pub use assistant_actions::{
-    build_verified_answer_prompt, collect_verified_action_evidence, parse_native_action_plan,
-    AssistantActionPlan, AssistantPlanDecision, AssistantPlanError, VerifiedActionEvidence,
-    VerifiedActionEvidenceError, NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
+    build_verified_answer_prompt, collect_verified_action_evidence,
+    execute_verified_assistant_plan, parse_native_action_plan, AssistantActionPlan,
+    AssistantActionRunError, AssistantPlanDecision, AssistantPlanError,
+    VerifiedActionEvidence, VerifiedActionEvidenceError, VerifiedAssistantActionRun,
+    NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
 };
 pub use capability::{
     ActionOutput, ActionValue, AuthorityGrant, AuthorityScope, CapabilityDescriptor,
