@@ -21,7 +21,8 @@ This file pins the first representative external model used for M11 real-model v
 - KV heads: 4
 - RoPE dimension count: 8
 - RMSNorm epsilon: `1e-5`
-- training context in the pinned artifact: 128
+- declared GGUF context length: 128
+- original llama2.c checkpoint max context: 512
 
 The upstream llama2.c-to-GGUF converter intentionally writes tokenizer tokens, scores,
 token types and BOS/EOS/UNK IDs, but does not write
@@ -61,20 +62,64 @@ transcode_tensor_count=0
 unsupported_tensor_count=0
 ```
 
-The conversion plan must still remain activation-blocked until source-vs-NIR97
-semantic equivalence is recorded. Structural compatibility is not numerical proof.
+## Recorded source-equivalence evidence
 
-## Next evidence gate
+The pinned artifact now has a reproducible source-equivalence gate.
 
-The next M11 gate for this exact SHA is:
+Source oracle inputs are pinned independently:
 
-1. source tokenizer IDs for fixed prompts;
-2. source logits for fixed token prefixes;
-3. NTD97 tokenizer IDs for the same prompts;
-4. NIR97 logits for the same prefixes;
-5. declared absolute/relative tolerances and max observed error;
-6. signed Thin NCC97 generation from the converted package;
-7. Android load/generation using that same signed package.
+- llama2.c repository commit: `350e04fe35433e6d2941dce5a1f53308f87058eb`;
+- `stories260K.bin` SHA-256: `b0a507e7ad0f626624f17112325e66691f9076d622e1d3274d103d00299f2696`;
+- `tok512.bin` SHA-256: `037cb335abb25d1fa9e8ecae30ed2a3a8ace9302862ebcdc05d51a6bbb10c312`.
 
-The source runtime may be used only to produce validation evidence. It must not become
-part of the canonical NTD97 runtime or shipped Android dependency.
+Tokenizer differential evidence uses seven fixed prompts covering empty input, ordinary
+words, punctuation, whitespace-prefix behavior and repeated spaces. The canonical
+llama2.c tokenizer trace SHA-256 is
+`a0f85845416e94154c7bdad1f98c288949752c0d816983a29b49cf3f9aeb56f6`.
+NTD97 produces identical token IDs for every case.
+
+The original source checkpoint has a larger maximum context than the pinned GGUF, so
+generation equivalence is compared over the GGUF-declared 128-step context rather than
+against the upstream 200-step golden. The source output is 323 bytes including the
+terminal presentation newline added by `run.c`; after applying the same final-newline
+normalization used by upstream `test_all.py`, both source and NTD97 produce:
+
+```text
+generated tokens = 128
+text bytes       = 322
+text SHA-256     = 594a911ebb2ecfeb608919bf157887e82d0090507fa187d45b2b7e23e5e8f583
+```
+
+The NTD97 side of the gate executes:
+
+```text
+pinned GGUF
+  -> file-backed GGUF parse
+  -> streamed LLaMA lowering
+  -> 52 native NTP97 shards (48 source tensors + 4 canonical NIR97 constants)
+  -> NIR97 graph round trip
+  -> signed Thin NCC97 package
+  -> package + shard verification
+  -> canonical native asset-store commit
+  -> Thin activation
+  -> lazy file-backed tensor resolution
+  -> CPU-reference native generation
+  -> source-compatible LLaMA SPM decode
+```
+
+Both `stories260k_tokenizer_equivalence=PASS` and
+`stories260k_source_equivalence=PASS` are required by the evidence workflow.
+
+This satisfies the representative real LLaMA source-vs-NIR97 equivalence gate for the
+pinned SHA. It does not authorize unsupported architectures/tokenizers or silently
+generalize equivalence to arbitrary source artifacts.
+
+## Remaining evidence gate
+
+For this exact real native package, the remaining M11 integration gate is Android
+load + local generation through the canonical JNI/mobile path. Additional tokenizer
+families, architectures and quantized models retain their own fail-closed support and
+validation requirements.
+
+The source runtime is used only as a validation oracle. It is not linked into NCC97,
+the canonical NTD97 runtime, or the shipped Android dependency graph.

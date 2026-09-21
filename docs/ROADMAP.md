@@ -320,8 +320,10 @@ Current implementation:
 - canonical generative manifest carrying token-input, distribution-output and vocabulary bootstrap metadata;
 - preservation and validation of GGUF tokenizer semantic metadata;
 - resolved canonical LLaMA/SPM policy semantics for omitted optional GGUF flags, with explicit metadata overrides and CLI-visible provenance;
-- pinned `stories260K.gguf` real-model reference profile for the first M11 equivalence target;
+- pinned `stories260K.gguf` real-model reference profile with source artifact hashes and reproducible same-step evidence;
 - native LLaMA-style SentencePiece execution carried through GGUF -> NCC97 v0.2 -> runtime, including score-ordered merges, U+2581 space normalization, byte fallback and source add-space/BOS/EOS policy;
+- real `tok512` source-vs-NTD97 tokenizer differential PASS over seven fixed prompt cases;
+- real `stories260K` GGUF -> streamed NTP97 -> signed Thin NCC97 -> lazy native generation equivalence PASS for all 128 declared context steps, with byte-identical normalized source/native text;
 - native canonical GPT-2 Unicode pre-tokenization + byte-level ranked BPE carried through GGUF -> NCC97 v0.3 -> runtime;
 - file-backed bounded GGUF source reads, streamed content-addressed tensor staging and signed Thin NCC97 packaging;
 - external Thin tensor references covered by the native package signature and length/hash verification;
@@ -334,9 +336,8 @@ Current implementation:
 
 Still required before M11 completion:
 
-- representative real LLaMA/GPT-2 tokenizer source-vs-NTD97 differential validation, plus additional BPE pre-tokenizers such as Qwen2/LLaMA3 only when their exact semantics are implemented;
-- representative real-model source-vs-NIR97 semantic-equivalence execution;
-- Android loading/generation using the resulting real native model.
+- representative real GPT-2 tokenizer/model differential validation remains desirable for the GPT-2 support path; additional BPE pre-tokenizers such as Qwen2/LLaMA3 remain fail-closed until their exact semantics are implemented;
+- Android loading/generation using the proven `stories260K` real native package.
 
 Exit: at least one real supported external model can be imported once, converted to signed NTD97-native NCC97 assets, then loaded and used for local text generation without the source model runtime or a hosted AI backend.
 
