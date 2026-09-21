@@ -626,6 +626,7 @@ mod tests {
             SideEffectClass::ReadOnly,
         )
         .expect("descriptor");
+        descriptor.resumable = true;
         descriptor.required_scopes = vec![AuthorityScope::new("network.read").expect("scope")];
         registry.register(descriptor).expect("register");
         registry
