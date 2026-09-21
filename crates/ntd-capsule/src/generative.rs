@@ -5,7 +5,7 @@ use ntd_ir::ValueId;
 use crate::{CapsuleBuilder, SectionKind};
 
 pub const NATIVE_GENERATIVE_MANIFEST_MAGIC: [u8; 6] = *b"NGM97\0";
-pub const NATIVE_GENERATIVE_MANIFEST_HEADER_LEN: usize = 24;
+pub const NATIVE_GENERATIVE_MANIFEST_HEADER_LEN: usize = 26;
 pub const NATIVE_GENERATIVE_MANIFEST_MAJOR: u16 = 0;
 pub const NATIVE_GENERATIVE_MANIFEST_MINOR: u16 = 1;
 
