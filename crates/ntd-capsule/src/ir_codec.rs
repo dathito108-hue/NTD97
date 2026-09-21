@@ -312,6 +312,7 @@ fn decode_op(family: u8, opcode: u8, attrs: &[u8]) -> Result<OpKind, IrCodecErro
                 10 => TensorOp::Silu,
                 11 => TensorOp::Reshape,
                 12 => TensorOp::Transpose,
+                13 => TensorOp::PositionIds,
                 other => {
                     return Err(IrCodecError::InvalidOpCode {
                         family,
@@ -436,6 +437,7 @@ fn tensor_op_tag(op: TensorOp) -> u8 {
         TensorOp::Silu => 10,
         TensorOp::Reshape => 11,
         TensorOp::Transpose => 12,
+        TensorOp::PositionIds => 13,
     }
 }
 
