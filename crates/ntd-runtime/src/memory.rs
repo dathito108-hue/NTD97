@@ -202,9 +202,7 @@ impl SovereignMemory {
             .values()
             .filter(|record| kind_filter.is_empty() || kind_filter.contains(&record.kind))
             .filter_map(|record| {
-                let score = score_record(record, &query_terms, &query_tags);
-                (score > 0 || (query_terms.is_empty() && query_tags.is_empty()))
-                    .then_some((record.id, score))
+                score_record(record, &query_terms, &query_tags).map(|score| (record.id, score))
             })
             .collect::<Vec<_>>();
 
@@ -230,7 +228,7 @@ fn score_record(
     record: &MemoryRecord,
     query_terms: &BTreeSet<String>,
     query_tags: &BTreeSet<String>,
-) -> u64 {
+) -> Option<u64> {
     let content_terms = normalized_terms(&record.content);
     let term_matches = query_terms.intersection(&content_terms).count() as u64;
 
@@ -241,11 +239,18 @@ fn score_record(
         .collect::<BTreeSet<_>>();
     let tag_matches = query_tags.intersection(&record_tags).count() as u64;
 
-    term_matches
-        .saturating_mul(1_000)
-        .saturating_add(tag_matches.saturating_mul(500))
-        .saturating_add(u64::from(record.importance))
-        .saturating_add(u64::from(record.recall_count.min(100)))
+    let has_query = !query_terms.is_empty() || !query_tags.is_empty();
+    if has_query && term_matches == 0 && tag_matches == 0 {
+        return None;
+    }
+
+    Some(
+        term_matches
+            .saturating_mul(1_000)
+            .saturating_add(tag_matches.saturating_mul(500))
+            .saturating_add(u64::from(record.importance))
+            .saturating_add(u64::from(record.recall_count.min(100))),
+    )
 }
 
 fn normalized_terms(text: &str) -> BTreeSet<String> {
