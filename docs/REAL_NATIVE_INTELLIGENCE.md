@@ -106,7 +106,7 @@ M11 deliberately remains in progress because:
 - LLaMA-style SentencePiece metadata now lowers into NCC97 tokenizer v0.2 and executes natively with score-ordered BPE merges, U+2581 space normalization, byte fallback, and source BOS/EOS policy; a representative real tokenizer still needs source-vs-NTD97 differential validation;
 - canonical GPT-2 (`tokenizer.ggml.pre="gpt-2"`) now lowers into NCC97 tokenizer v0.3 and executes natively with Unicode-category pre-tokenization, GPT-2 byte-to-Unicode mapping, ranked BPE merges and source BOS/EOS policy; non-canonical BPE pre-tokenizers remain fail-closed;
 - a representative real GGUF has not yet passed source-vs-NIR97 semantic-equivalence testing;
-- whole-file GGUF source loading has been removed from the file-backed intake/lowering path, but native tensor emission still accumulates converted payloads in memory; large-model import therefore still needs streaming shard emission/storage before this blocker is closed;
+- file-backed intake now emits each converted tensor immediately as a content-addressed NTP97 shard and can assemble a Thin NCC97 staging capsule with external tensor references, so retained RAM no longer grows with the total converted model size; large-model activation still needs signed Thin-package verification plus lazy/file-backed native tensor resolution, and peak memory is still bounded by the largest tensor transcode/encode operation;
 - Android has not yet loaded and generated with the converted real native package.
 
 The conversion plan therefore keeps activation blocked even when structural parsing/lowering/package verification succeeds.
