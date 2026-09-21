@@ -103,12 +103,7 @@ pub fn transcode_tensor(
     tensor: &GgufTensorInfo,
     transpose_2d: bool,
 ) -> Result<TranscodedTensor, GgufError> {
-    transcode_tensor_from_source(
-        &SliceGgufSource::new(file),
-        model,
-        tensor,
-        transpose_2d,
-    )
+    transcode_tensor_from_source(&SliceGgufSource::new(file), model, tensor, transpose_2d)
 }
 
 pub fn transcode_tensor_from_source(
