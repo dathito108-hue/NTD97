@@ -577,10 +577,8 @@ Assistant:"
 
     #[test]
     fn governed_execution_synthesizes_only_verified_committed_results() {
-        let parsed = parse_native_action_plan(
-            "NTD97_ACTIONS_V1\n1|device.observe|battery\nEND",
-        )
-        .expect("parse");
+        let parsed = parse_native_action_plan("NTD97_ACTIONS_V1\n1|device.observe|battery\nEND")
+            .expect("parse");
         let AssistantPlanDecision::Actions(plan) = parsed else {
             panic!("expected actions");
         };
@@ -633,10 +631,8 @@ Assistant:"
 
     #[test]
     fn incomplete_action_plan_never_produces_synthesis_prompt() {
-        let parsed = parse_native_action_plan(
-            "NTD97_ACTIONS_V1\n1|device.observe|battery\nEND",
-        )
-        .expect("parse");
+        let parsed = parse_native_action_plan("NTD97_ACTIONS_V1\n1|device.observe|battery\nEND")
+            .expect("parse");
         let AssistantPlanDecision::Actions(plan) = parsed else {
             panic!("expected actions");
         };
