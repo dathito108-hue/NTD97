@@ -432,7 +432,7 @@ pub fn tensor_disposition(ggml_type: u32) -> GgufTensorDisposition {
         0 => GgufTensorDisposition::NativeF32,
         1 => GgufTensorDisposition::NativeF16,
         30 => GgufTensorDisposition::NativeBf16,
-        2 | 8 => GgufTensorDisposition::SupportedTranscode(ggml_type),
+        2 | 8 | 12 | 13 | 14 => GgufTensorDisposition::SupportedTranscode(ggml_type),
         other => GgufTensorDisposition::Unsupported(other),
     }
 }
