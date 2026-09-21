@@ -238,7 +238,7 @@ impl NativeCandidate {
                 graph
                     .validate()
                     .map_err(|error| AssimilationError::InvalidCandidate(format!("{error:?}")))?;
-                let mut kinds = BTreeSet::new();
+                let mut singleton_kinds = BTreeSet::new();
                 for section in sections {
                     if section.bytes.is_empty()
                         || matches!(
@@ -248,10 +248,16 @@ impl NativeCandidate {
                                 | SectionKind::Signatures
                                 | SectionKind::AssimilationLog
                         )
-                        || !kinds.insert(section.kind as u16)
                     {
                         return Err(AssimilationError::InvalidCandidate(
                             "invalid native section set".into(),
+                        ));
+                    }
+                    if section.kind != SectionKind::Tensors
+                        && !singleton_kinds.insert(section.kind as u16)
+                    {
+                        return Err(AssimilationError::InvalidCandidate(
+                            "duplicate singleton native section".into(),
                         ));
                     }
                 }
