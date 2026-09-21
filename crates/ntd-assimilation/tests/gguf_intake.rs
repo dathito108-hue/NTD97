@@ -171,7 +171,6 @@ fn conversion_plan_keeps_real_tokenizer_semantics_as_activation_blocker() {
         .any(|item| { item.contains("source-equivalent tokenization") }));
 }
 
-
 #[test]
 fn preserves_sentencepiece_semantic_metadata_for_native_lowering() {
     let mut model = GgufModel::parse(&fixture()).expect("parse");
@@ -201,10 +200,9 @@ fn preserves_sentencepiece_semantic_metadata_for_native_lowering() {
         "tokenizer.ggml.pre".into(),
         GgufValue::String("default".into()),
     );
-    model.metadata.insert(
-        "tokenizer.ggml.add_bos_token".into(),
-        GgufValue::Bool(true),
-    );
+    model
+        .metadata
+        .insert("tokenizer.ggml.add_bos_token".into(), GgufValue::Bool(true));
     model.metadata.insert(
         "tokenizer.ggml.add_eos_token".into(),
         GgufValue::Bool(false),
