@@ -2,6 +2,7 @@
 
 mod lower;
 mod reader;
+mod storage;
 mod transcode;
 
 use std::collections::BTreeMap;
@@ -9,7 +10,8 @@ use std::collections::BTreeMap;
 pub use lower::{
     lower_llama_model, lowered_llama_candidate, LlamaConfig, LlamaTensorBinding, LoweredLlamaModel,
 };
-pub use reader::parse_gguf;
+pub use reader::{parse_gguf, parse_gguf_source};
+pub use storage::{FileGgufSource, GgufByteSource, SliceGgufSource};
 pub use transcode::{
     ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, transcode_tensor,
     TranscodedTensor,
@@ -562,6 +564,7 @@ pub enum GgufError {
     NativeLowering(String),
     InvalidBool(u8),
     InvalidUtf8,
+    Io(String),
     InvalidArrayType,
     InvalidAlignment,
     InvalidTensorAlignment,
