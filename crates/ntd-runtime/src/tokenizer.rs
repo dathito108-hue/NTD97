@@ -756,7 +756,7 @@ mod tests {
             b"he".to_vec(),
             b"ll".to_vec(),
             b"lo".to_vec(),
-            [SPM_SPACE.as_slice(), b"he"].concat(),
+            [&SPM_SPACE[..], b"he"].concat(),
         ];
         let mut scores = vec![
             -1000.0, -1000.0, -1000.0, -10.0, -5.0, -5.0, -5.0, -5.0, 2.0, 1.0, 1.5, 3.0,
