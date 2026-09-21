@@ -27,14 +27,27 @@ Exit: architecture/IR contracts compile, match canonical documentation and pass 
 
 ### Phase 003B — NCC97 Binary Capsule
 
-- deterministic binary header and manifest encoding;
-- chunk index and section descriptors;
-- content hashes and integrity verification;
-- reader/writer round-trip;
-- mmap/streaming-friendly access contract;
-- thin/full/state capsule primitives.
+- fixed deterministic binary header + manifest;
+- fixed-size chunk index and section descriptors;
+- dependency-free SHA-256 integrity primitive;
+- metadata-root and embedded-payload verification;
+- borrowed-slice reader for mmap/streaming compatibility;
+- deterministic writer;
+- Full/Thin/State capsule primitives;
+- external content-addressed chunk reference primitive;
+- tamper/truncation tests.
 
-Exit: a native capsule can be deterministically written, reopened, validated and round-tripped without implementing any external-model importer yet.
+Exit: a native capsule can be deterministically written, reopened, integrity-verified and round-tripped without implementing any external-model importer yet.
+
+### Phase 003C — NCC97 Native IR Serialization
+
+- deterministic NTD97 IR graph encoding inside Graph sections;
+- tensor descriptor schema without execution kernels;
+- tokenizer/codec descriptor framing;
+- IR graph decode + structural validation after capsule read;
+- golden-vector compatibility tests.
+
+Exit: a valid NTD97 IR graph can be encoded into NCC97, reopened and reconstructed identically before any inference backend exists.
 
 ## M2 — Adaptive Mobile Runtime
 
