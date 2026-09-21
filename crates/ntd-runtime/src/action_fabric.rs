@@ -724,7 +724,7 @@ impl ActionFabric {
     }
 }
 
-fn validate_fabric_state(
+pub(crate) fn validate_fabric_state(
     registry: &CapabilityRegistry,
     state: &ActionFabricState,
 ) -> Result<(), ActionFabricError> {
