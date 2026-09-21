@@ -222,17 +222,18 @@ pub fn restore_backup(
     backup: &PortableBackup,
     store: &mut SovereignObjectStore,
 ) -> Result<RestoredSet, PortabilityError> {
+    let mut staged = store.clone();
     for object in &backup.objects {
-        store.import(object.clone())?;
+        staged.import(object.clone())?;
     }
 
     let aad = manifest_aad(backup.kind, backup.backup_id);
-    let manifest = store.open_manifest(backup.manifest_nonce, &aad, &backup.encrypted_manifest)?;
+    let manifest = staged.open_manifest(backup.manifest_nonce, &aad, &backup.encrypted_manifest)?;
     let entries = decode_manifest(&manifest, backup.kind, backup.backup_id)?;
 
     let mut assets = Vec::with_capacity(entries.len());
     for entry in entries {
-        let capsule = store.get(&entry.digest)?;
+        let capsule = staged.get(&entry.digest)?;
         if u64::try_from(capsule.len()).map_err(|_| PortabilityError::Overflow)?
             != entry.logical_len
         {
@@ -245,6 +246,8 @@ pub fn restore_backup(
         }
         assets.push(asset);
     }
+
+    *store = staged;
     Ok(RestoredSet { assets })
 }
 

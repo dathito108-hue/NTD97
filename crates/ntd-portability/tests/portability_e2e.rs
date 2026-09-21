@@ -156,7 +156,8 @@ fn corrupted_object_is_rejected_during_sovereign_recovery() {
         &mut source_store,
     )
     .expect("backup");
-    backup.objects[0].ciphertext[0] ^= 1;
+    let last = backup.objects.len() - 1;
+    backup.objects[last].ciphertext[0] ^= 1;
 
     let mut destination = SovereignObjectStore::new(key());
     assert!(restore_backup(&backup, &mut destination).is_err());

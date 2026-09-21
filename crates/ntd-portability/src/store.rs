@@ -16,7 +16,7 @@ pub struct EncryptedObject {
     pub ciphertext: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SovereignObjectStore {
     key: BackupKey,
     objects: BTreeMap<Digest, EncryptedObject>,
