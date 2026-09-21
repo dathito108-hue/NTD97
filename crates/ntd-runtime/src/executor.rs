@@ -161,7 +161,7 @@ where
 
             for value_id in &node.inputs {
                 if let Some(remaining) = remaining_uses.get_mut(value_id) {
-                    *remaining = remaining.saturating_sub(1);
+                    *remaining = (*remaining).saturating_sub(1);
                     if *remaining == 0 && !output_ids.contains(value_id) {
                         values.remove(value_id);
                     }
