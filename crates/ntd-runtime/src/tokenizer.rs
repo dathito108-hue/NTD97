@@ -319,7 +319,18 @@ impl LlamaSpmTokenizer {
     }
 
     pub fn decode(&self, token_ids: &[u32], skip_special: bool) -> Result<String, TokenizerError> {
+        self.decode_after(None, token_ids, skip_special)
+    }
+
+    pub fn decode_after(
+        &self,
+        previous_token: Option<u32>,
+        token_ids: &[u32],
+        skip_special: bool,
+    ) -> Result<String, TokenizerError> {
         let mut bytes = Vec::new();
+        let mut previous = previous_token;
+        let mut strip_dummy_prefix = self.add_space_prefix && previous == self.bos_token;
 
         for id in token_ids {
             let index = usize::try_from(*id).map_err(|_| TokenizerError::InvalidTokenId(*id))?;
@@ -336,9 +347,12 @@ impl LlamaSpmTokenizer {
                     || token_type == TOKEN_TYPE_CONTROL
                     || token_type == TOKEN_TYPE_UNUSED)
             {
+                previous = Some(*id);
+                strip_dummy_prefix = self.add_space_prefix && previous == self.bos_token;
                 continue;
             }
 
+            let before = bytes.len();
             if token_type == TOKEN_TYPE_BYTE {
                 let byte = parse_byte_piece(token).ok_or(TokenizerError::InvalidTokenType {
                     token: *id,
@@ -348,6 +362,12 @@ impl LlamaSpmTokenizer {
             } else {
                 append_unescaped_spm(token, &mut bytes);
             }
+
+            if strip_dummy_prefix && bytes.get(before) == Some(&b' ') {
+                bytes.remove(before);
+            }
+            strip_dummy_prefix = false;
+            previous = Some(*id);
         }
 
         String::from_utf8(bytes).map_err(|_| TokenizerError::InvalidUtf8)
@@ -830,6 +850,18 @@ mod tests {
             ]
         );
         assert_eq!(tokenizer.decode(&tokens, true).expect("decode"), " hello!");
+    }
+
+    #[test]
+    fn llama_spm_decode_after_bos_strips_source_dummy_prefix() {
+        let tokenizer = spm_tokenizer();
+        let tokens = tokenizer.encode("hello!", true).expect("encode");
+        assert_eq!(
+            tokenizer
+                .decode_after(Some(1), &tokens[1..], true)
+                .expect("decode after bos"),
+            "hello!"
+        );
     }
 
     #[test]
