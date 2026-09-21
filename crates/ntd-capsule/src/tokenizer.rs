@@ -396,36 +396,52 @@ fn validate_tokenizer(tokenizer: &NativeTokenizerDescriptor) -> Result<(), Nativ
         }
     }
 
-    if let NativeTokenizerModel::LlamaSpm {
-        score_bits,
-        token_types,
-        ..
-    } = &tokenizer.model
-    {
-        if score_bits.len() != tokenizer.tokens.len() {
-            return Err(NativeTokenizerError::InvalidScoreCount {
-                expected: tokenizer.tokens.len(),
-                actual: score_bits.len(),
-            });
-        }
-        if token_types.len() != tokenizer.tokens.len() {
-            return Err(NativeTokenizerError::InvalidTokenTypeCount {
-                expected: tokenizer.tokens.len(),
-                actual: token_types.len(),
-            });
-        }
-
-        for (index, score) in score_bits.iter().enumerate() {
-            let id = u32::try_from(index).map_err(|_| NativeTokenizerError::Overflow)?;
-            if !f32::from_bits(*score).is_finite() {
-                return Err(NativeTokenizerError::NonFiniteScore(id));
-            }
-            let token_type = token_types[index];
-            if !(1..=6).contains(&token_type) {
-                return Err(NativeTokenizerError::InvalidTokenType {
-                    token: id,
-                    token_type,
+    match &tokenizer.model {
+        NativeTokenizerModel::Vocabulary => {}
+        NativeTokenizerModel::LlamaSpm {
+            score_bits,
+            token_types,
+            ..
+        } => {
+            if score_bits.len() != tokenizer.tokens.len() {
+                return Err(NativeTokenizerError::InvalidScoreCount {
+                    expected: tokenizer.tokens.len(),
+                    actual: score_bits.len(),
                 });
+            }
+            if token_types.len() != tokenizer.tokens.len() {
+                return Err(NativeTokenizerError::InvalidTokenTypeCount {
+                    expected: tokenizer.tokens.len(),
+                    actual: token_types.len(),
+                });
+            }
+
+            for (index, score) in score_bits.iter().enumerate() {
+                let id = u32::try_from(index).map_err(|_| NativeTokenizerError::Overflow)?;
+                if !f32::from_bits(*score).is_finite() {
+                    return Err(NativeTokenizerError::NonFiniteScore(id));
+                }
+                let token_type = token_types[index];
+                if !(1..=6).contains(&token_type) {
+                    return Err(NativeTokenizerError::InvalidTokenType {
+                        token: id,
+                        token_type,
+                    });
+                }
+            }
+        }
+        NativeTokenizerModel::Gpt2Bpe { merges, .. } => {
+            let mut seen = BTreeSet::new();
+            for merge in merges {
+                let Some((left, right)) = merge.split_once(' ') else {
+                    return Err(NativeTokenizerError::InvalidBpeMerge(merge.clone()));
+                };
+                if left.is_empty() || right.is_empty() || right.contains(' ') {
+                    return Err(NativeTokenizerError::InvalidBpeMerge(merge.clone()));
+                }
+                if !seen.insert(merge.clone()) {
+                    return Err(NativeTokenizerError::DuplicateBpeMerge(merge.clone()));
+                }
             }
         }
     }
@@ -487,6 +503,14 @@ impl<'a> Cursor<'a> {
         Ok(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    fn string(&mut self) -> Result<String, NativeTokenizerError> {
+        let len = usize::try_from(self.u32()?).map_err(|_| NativeTokenizerError::Overflow)?;
+        let bytes = self.take(len)?;
+        std::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .map_err(|_| NativeTokenizerError::InvalidUtf8)
+    }
+
     fn is_finished(&self) -> bool {
         self.offset == self.bytes.len()
     }
@@ -544,6 +568,51 @@ mod tests {
         assert_eq!(
             decode_native_tokenizer(&encoded).expect("decode"),
             tokenizer
+        );
+    }
+
+    #[test]
+    fn gpt2_bpe_descriptor_round_trips_merge_ranks() {
+        let tokenizer = NativeTokenizerDescriptor {
+            tokens: vec![
+                b"a".to_vec(),
+                b"b".to_vec(),
+                b"ab".to_vec(),
+                b"<eos>".to_vec(),
+            ],
+            bos_token: None,
+            eos_token: Some(3),
+            unknown_token: None,
+            model: NativeTokenizerModel::Gpt2Bpe {
+                merges: vec!["a b".into()],
+                add_bos_token: false,
+                add_eos_token: true,
+            },
+        };
+
+        let encoded = encode_native_tokenizer(&tokenizer).expect("encode");
+        assert_eq!(
+            decode_native_tokenizer(&encoded).expect("decode"),
+            tokenizer
+        );
+    }
+
+    #[test]
+    fn duplicate_gpt2_merge_is_rejected() {
+        let tokenizer = NativeTokenizerDescriptor {
+            tokens: vec![b"a".to_vec(), b"b".to_vec(), b"ab".to_vec()],
+            bos_token: None,
+            eos_token: None,
+            unknown_token: None,
+            model: NativeTokenizerModel::Gpt2Bpe {
+                merges: vec!["a b".into(), "a b".into()],
+                add_bos_token: false,
+                add_eos_token: false,
+            },
+        };
+        assert_eq!(
+            encode_native_tokenizer(&tokenizer),
+            Err(NativeTokenizerError::DuplicateBpeMerge("a b".into()))
         );
     }
 
