@@ -1,10 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::{
-    cell::RefCell,
-    collections::BTreeMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use ntd_core::{ActionNode, CapabilityId, Intent, SideEffectClass, TaskGraph};
 use ntd_runtime::{
@@ -184,9 +180,8 @@ fn descriptor(
     side_effect: SideEffectClass,
     required_scope: &str,
 ) -> CapabilityDescriptor {
-    let mut descriptor =
-        CapabilityDescriptor::new(CapabilityId(id.into()), 1, domain, side_effect)
-            .expect("descriptor");
+    let mut descriptor = CapabilityDescriptor::new(CapabilityId(id.into()), 1, domain, side_effect)
+        .expect("descriptor");
     descriptor.required_scopes = vec![scope(required_scope)];
     descriptor
 }
@@ -318,7 +313,11 @@ fn multi_surface_action_plan_resumes_after_checkpoint() {
     let mut cognition = CognitiveRuntime::new(CognitiveIdentity(*b"NTD97-COGNITION1"));
     let task_id = cognition
         .state_mut()
-        .submit_task(Intent::new("execute governed multi-surface task"), graph(), None)
+        .submit_task(
+            Intent::new("execute governed multi-surface task"),
+            graph(),
+            None,
+        )
         .expect("cognitive task");
     let task = cognition.state().tasks.get(&task_id).expect("task").clone();
 
