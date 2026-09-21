@@ -10,6 +10,7 @@ use ntd_capsule::{
 use ntd_ir::{
     DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
 };
+use ntd_runtime::{Gpt2BpeConfig, Gpt2BpeTokenizer};
 
 use super::{
     gpt2_bpe_blocker, llama_spm_blocker, transcode_tensor, GgufError, GgufModel, GgufTensorInfo,
@@ -131,6 +132,26 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
             )));
         }
     };
+    if let NativeTokenizerModel::Gpt2Bpe {
+        merges,
+        add_bos_token,
+        add_eos_token,
+    } = &tokenizer.model
+    {
+        Gpt2BpeTokenizer::new(
+            tokenizer.tokens.clone(),
+            merges.clone(),
+            Gpt2BpeConfig {
+                bos_token: tokenizer.bos_token,
+                eos_token: tokenizer.eos_token,
+                unknown_token: tokenizer.unknown_token,
+                add_bos_token: *add_bos_token,
+                add_eos_token: *add_eos_token,
+            },
+        )
+        .map_err(|error| GgufError::NativeLowering(format!("gpt2 tokenizer: {error:?}")))?;
+    }
+
     encode_native_tokenizer(&tokenizer)
         .map_err(|error| GgufError::NativeLowering(format!("tokenizer: {error:?}")))?;
     let vocabulary_size = tokenizer.tokens.len();
