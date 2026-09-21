@@ -504,7 +504,7 @@ fn add_source_tensor(
         .get(name)
         .copied()
         .ok_or_else(|| GgufError::MissingTensor(name.to_owned()))?;
-    if tensor.dimensions != expected_source_dimensions {
+    if tensor.dimensions.as_slice() != expected_source_dimensions {
         return Err(GgufError::UnsupportedModelFeature(format!(
             "tensor '{name}' shape {:?} != expected {:?}",
             tensor.dimensions, expected_source_dimensions
