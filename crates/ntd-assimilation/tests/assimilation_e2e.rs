@@ -23,7 +23,9 @@ impl SourceImporter for CapabilityImporter {
     }
 
     fn discover(&self, source: &SourcePackage) -> Result<Discovery, AssimilationError> {
-        let version = source.payload[0];
+        if source.payload.is_empty() {
+            return Err(AssimilationError::InvalidSource);
+        }
         Ok(Discovery {
             importer_id: self.id().into(),
             asset_kind: AssetKind::Capability,
