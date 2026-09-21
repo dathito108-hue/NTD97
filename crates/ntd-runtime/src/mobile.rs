@@ -225,14 +225,7 @@ pub fn page_windows(total_bytes: u64, page_bytes: u64) -> Result<Vec<PageWindow>
         return Err(MobileComputeError::InvalidPageSize);
     }
 
-    let page_count = if total_bytes == 0 {
-        0
-    } else {
-        total_bytes
-            .checked_add(page_bytes - 1)
-            .ok_or(MobileComputeError::Overflow)?
-            / page_bytes
-    };
+    let page_count = total_bytes.div_ceil(page_bytes);
 
     let capacity = usize::try_from(page_count).map_err(|_| MobileComputeError::Overflow)?;
     let mut windows = Vec::with_capacity(capacity);
