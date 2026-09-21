@@ -168,12 +168,7 @@ fn transcode_dequantized(
         values
     };
 
-    let mut payload = Vec::with_capacity(
-        values
-            .len()
-            .checked_mul(4)
-            .ok_or(GgufError::Overflow)?,
-    );
+    let mut payload = Vec::with_capacity(values.len().checked_mul(4).ok_or(GgufError::Overflow)?);
     for value in values {
         if !value.is_finite() {
             return Err(GgufError::InvalidTensor);
