@@ -49,6 +49,8 @@ Fields:
 
 Unknown non-zero reserved fields are rejected in v0.1.
 
+Offsets and lengths are canonical rather than advisory: manifest/index placement, payload alignment, embedded chunk ordering and final file length must match the single deterministic layout emitted by the writer. Extra trailing bytes are rejected.
+
 The reader validates the NCC97/IR compatibility contract before exposing chunks.
 
 ## 3. Manifest
@@ -159,4 +161,5 @@ Phase 003B passes when:
 8. payload tampering is detected;
 9. metadata tampering is detected;
 10. truncation is rejected;
-11. CI format, clippy and tests pass.
+11. non-canonical trailing/layout bytes are rejected;
+12. CI format, clippy and tests pass.
