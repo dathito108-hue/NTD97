@@ -4,8 +4,8 @@ use ntd_core::{Intent, TaskGraph};
 
 use crate::{
     decode_cognitive_checkpoint, encode_cognitive_checkpoint, CheckpointError, CognitiveError,
-    CognitiveIdentity, CognitiveRuntime, ConversationRole, ConversationTurn, MemoryError, MemoryKind,
-    TaskStatus,
+    CognitiveIdentity, CognitiveRuntime, ConversationRole, ConversationTurn, MemoryError,
+    MemoryKind, TaskStatus,
 };
 
 pub const NCS97_MAGIC: [u8; 6] = *b"NCS97\0";
