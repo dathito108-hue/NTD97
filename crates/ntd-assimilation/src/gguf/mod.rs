@@ -7,7 +7,8 @@ mod transcode;
 use std::collections::BTreeMap;
 
 pub use lower::{
-    lower_llama_model, LlamaConfig, LlamaTensorBinding, LoweredLlamaModel,
+    lower_llama_model, lowered_llama_candidate, LlamaConfig, LlamaTensorBinding,
+    LoweredLlamaModel,
 };
 pub use reader::parse_gguf;
 pub use transcode::{
