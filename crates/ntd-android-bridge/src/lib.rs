@@ -788,6 +788,133 @@ fn next_chat_event(request_id: u64) -> Result<Vec<u8>, String> {
     Ok(encode_chat_event(CHAT_EVENT_TOKEN, Some(token), &piece))
 }
 
+#[allow(clippy::too_many_arguments)]
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatModel(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    asset_id: JString<'_>,
+    version: jint,
+    capsule_path: JString<'_>,
+    shard_root: JString<'_>,
+    verify_key: JByteArray<'_>,
+    context_limit: jint,
+) -> jboolean {
+    let Some(asset_id) = java_string(&mut env, &asset_id) else {
+        return 0;
+    };
+    let Some(capsule_path) = java_string(&mut env, &capsule_path) else {
+        return 0;
+    };
+    let Some(shard_root) = java_string(&mut env, &shard_root) else {
+        return 0;
+    };
+    let Ok(version) = u32::try_from(version) else {
+        return 0;
+    };
+    let Ok(context_limit) = usize::try_from(context_limit) else {
+        return 0;
+    };
+    let verify_key = match env.convert_byte_array(&verify_key) {
+        Ok(bytes) => bytes,
+        Err(_) => return 0,
+    };
+
+    u8::from(
+        open_chat_model(
+            &asset_id,
+            version,
+            &capsule_path,
+            &shard_root,
+            &verify_key,
+            context_limit,
+        )
+        .is_ok(),
+    )
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeSubmitChat(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    prompt: JString<'_>,
+    max_new_tokens: jint,
+) -> jlong {
+    let Some(prompt) = java_string(&mut env, &prompt) else {
+        return -1;
+    };
+    let Ok(max_new_tokens) = usize::try_from(max_new_tokens) else {
+        return -1;
+    };
+    submit_chat(&prompt, max_new_tokens)
+        .ok()
+        .and_then(|request_id| i64::try_from(request_id).ok())
+        .unwrap_or(-1)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeNextChatEvent(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jbyteArray {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return java_bytes(
+            &env,
+            &encode_chat_event(CHAT_EVENT_ERROR, None, "invalid chat request id"),
+        );
+    };
+
+    match next_chat_event(request_id) {
+        Ok(event) => java_bytes(&env, &event),
+        Err(error) => {
+            {
+                let mut guard = lock_state();
+                if let Some(session) = guard
+                    .chat_session
+                    .as_mut()
+                    .filter(|session| session.request_id == request_id)
+                {
+                    session.status = NativeChatSessionStatus::Failed;
+                }
+            }
+            java_bytes(
+                &env,
+                &encode_chat_event(CHAT_EVENT_ERROR, None, &error),
+            )
+        }
+    }
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeCancelChat(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jboolean {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    u8::from(cancel_chat(request_id))
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatStatus(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jint {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return CHAT_STATUS_MISSING;
+    };
+    chat_status(request_id)
+}
+
 fn real_model_probe(
     capsule_path: &str,
     shard_root: &str,
