@@ -6,13 +6,13 @@ use std::{
     rc::Rc,
 };
 
-use ntd_core::{ActionNode, CapabilityId, SideEffectClass, TaskGraph};
+use ntd_core::{ActionNode, CapabilityId, Intent, SideEffectClass, TaskGraph};
 use ntd_runtime::{
     decode_action_fabric_checkpoint, encode_action_fabric_checkpoint, ActionFabric,
     ActionFabricError, ActionOutput, ActionPlanStatus, ActionStatus, ActionValue,
     ActionVerification, ActionVerifier, AdapterResult, AuthorityGrant, AuthorityScope,
     CapabilityAdapter, CapabilityDescriptor, CapabilityDomain, CapabilityError, CapabilityRegistry,
-    TypedAction,
+    CognitiveIdentity, CognitiveRuntime, TypedAction,
 };
 
 struct FlakySearchAdapter {
@@ -315,8 +315,15 @@ fn multi_surface_action_plan_resumes_after_checkpoint() {
         .register_adapter(CapabilityId("web.search".into()), SearchAdapter)
         .expect("search adapter");
 
+    let mut cognition = CognitiveRuntime::new(CognitiveIdentity(*b"NTD97-COGNITION1"));
+    let task_id = cognition
+        .state_mut()
+        .submit_task(Intent::new("execute governed multi-surface task"), graph(), None)
+        .expect("cognitive task");
+    let task = cognition.state().tasks.get(&task_id).expect("task").clone();
+
     let plan = fabric
-        .prepare_plan(77, &graph(), payloads())
+        .prepare_cognitive_task(&task, payloads())
         .expect("prepare");
 
     let first = fabric
@@ -379,6 +386,7 @@ fn multi_surface_action_plan_resumes_after_checkpoint() {
     assert_eq!(fifth.cursor, 4);
 
     let plan_state = restored.state().plans.get(&plan.0).expect("plan state");
+    assert_eq!(plan_state.task_id, task_id);
     assert_eq!(plan_state.actions[0].attempts, 2);
     assert!(plan_state
         .actions
