@@ -31,7 +31,7 @@ Goal: prove that native NTD97 intelligence can be loaded and executed end-to-end
 
 Delivered contract:
 
-- deterministic \`NTP97\` native tensor payload framing;
+- deterministic `NTP97` native tensor payload framing;
 - content-addressed tensor shard resolution;
 - embedded/external NCC97 tensor loading;
 - tensor descriptor-to-shard integrity binding;
@@ -41,7 +41,7 @@ Delivered contract:
 - CPU reference provider;
 - NTD97 IR graph executor;
 - NCC97 native graph/tensor program loader;
-- deterministic \`.ncc97 -> native tensors -> IR execution -> output\` integration test.
+- deterministic `.ncc97 -> native tensors -> IR execution -> output` integration test.
 
 Exit: a deterministic test graph executes entirely through NTD97-owned formats and provider contracts. No GGUF/ONNX/TFLite runtime is required or allowed in the canonical execution path.
 
@@ -72,7 +72,7 @@ Planned scope:
 
 - device capability detection;
 - optimized CPU provider;
-- Vulkan provider behind the same \`ExecutionProvider\` semantics;
+- Vulkan provider behind the same `ExecutionProvider` semantics;
 - replaceable NPU provider interface where platform support exists;
 - memory mapping/paging and tensor placement;
 - quantization profiles;
