@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod activation;
 mod forge;
 mod gguf;
 mod importer;
@@ -8,6 +9,10 @@ mod sandbox;
 mod source;
 mod store;
 
+pub use activation::{
+    activate_thin_generative_capsule, FileBackedTensorResolver, ThinActivationError,
+    ThinGenerativeActivation,
+};
 pub use forge::{CapabilityForge, ForgePolicy};
 pub use gguf::{
     ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, gguf_tensor_bytes_from_source,
