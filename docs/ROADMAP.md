@@ -141,20 +141,33 @@ Exit: NTD97 can materialize a cognitive TaskGraph into governed typed actions, e
 
 Goal: make NTD97 a persistent mobile assistant interface under operating-system limits.
 
-Planned scope:
+Implemented core/shell contract:
 
-- Android app shell;
-- foreground/background task continuity;
-- notification/approval surfaces;
-- scheduled/retry wake path;
-- process-death and reboot reconstruction;
-- voice/media interfaces;
-- interactive 3D avatar;
-- expression, gaze, lip-sync and gesture state;
-- user-authorized floating assistant surface where the OS permits it.
+- new inward-dependent `ntd-mobile-shell` crate;
+- deterministic MCS97 envelope combining SIK97 + TAF97 + capability snapshot + lifecycle metadata;
+- self-contained cold restore without rebuilding capability registry in Android;
+- task/action linkage verification across cognition and tool state;
+- durable approval and retry/backoff metadata;
+- OS-aware wake policy for interactive/foreground/persistent/approval/verify/suspend paths;
+- process-death/reboot acceptance proving committed side effects are not replayed;
+- renderer-independent avatar mode/expression/gaze/lip-sync/gesture/progress state;
+- thermal/battery-aware 60/30/15/5 FPS render policy;
+- local voice/media state machine;
+- Android device-protected AtomicFile continuity store;
+- Android JobScheduler + reboot receiver + foreground service paths;
+- generic/private approval notifications;
+- local runtime-host SPI with fail-closed behavior and no cloud fallback;
+- in-app OpenGL ES avatar;
+- permission-gated floating avatar overlay;
+- local PCM AudioRecord/AudioTrack bridge.
 
-Exit: UI exit, process death and reboot do not destroy logical task identity; eligible work resumes through platform-approved mechanisms and is represented through an interactive 3D assistant.
+Release-validation gates still open:
 
+- compile/package the Android Gradle app against an Android SDK in CI or a release build environment;
+- package a concrete local `NtdRuntimeHost` provider that binds the Android shell to the native NTD97 runtime;
+- device-test notification/foreground-service restrictions, reboot wake, overlay permission and audio lifecycle across supported Android versions.
+
+Exit remains: UI exit, process death and reboot do not destroy logical task identity; eligible work resumes through platform-approved mechanisms and is represented through the interactive 3D assistant. The core acceptance path is implemented; APK/runtime-host integration must pass before M6 is marked fully complete.
 ## M7 — Major Block G: Paired PC Fabric
 
 - mutual authentication;

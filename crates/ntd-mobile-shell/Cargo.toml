@@ -1,0 +1,13 @@
+[package]
+name = "ntd-mobile-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ntd-core = { path = "../ntd-core" }
+ntd-runtime = { path = "../ntd-runtime" }
+
+[lints]
+workspace = true

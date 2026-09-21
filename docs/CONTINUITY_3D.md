@@ -130,3 +130,18 @@ The Phase M5 continuity target is demonstrated when:
 8. execution resumes without duplicating an already-completed side effect.
 
 A second test repeats the sequence across device reboot.
+
+## Major Block F implementation
+
+The implementation now lives in `ntd-mobile-shell` plus `platform/android`.
+
+- SIK97 + TAF97 are wrapped by deterministic MCS97 mobile continuity state;
+- MCS97 carries a canonical capability descriptor snapshot for self-contained reboot restore;
+- process-death/reboot acceptance proves completed side effects are not replayed;
+- wake policy maps durable state to interactive, foreground, persistent-job, approval, verify-resume or suspend paths;
+- Android uses device-protected `AtomicFile`, JobScheduler, reboot receiver, foreground service and private approval notifications;
+- avatar state is renderer-independent and an Android OpenGL ES surface consumes it in-app or through a permission-gated overlay;
+- local PCM capture/playback is exposed without a cloud speech dependency;
+- packaged runtime providers attach through a replaceable local `NtdRuntimeHost` boundary and the shell fails closed when no provider is present.
+
+Android Gradle/native-provider packaging remains a release-validation gate and is not implied by Rust CI.
