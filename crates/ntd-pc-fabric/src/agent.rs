@@ -597,4 +597,27 @@ mod tests {
         assert_eq!(capabilities.len(), 1);
         assert_eq!(capabilities[0].id, "pc.system.observe");
     }
+
+    #[test]
+    fn desktop_policy_rejects_unallowlisted_program_and_path_escape() {
+        let root = std::env::current_dir().expect("cwd");
+        let policy = DesktopExecutionPolicy::new(
+            vec!["ntd97-approved-tool".into()],
+            vec![root.clone()],
+            1024,
+        )
+        .expect("policy");
+        let mut handler = ProcessExecutionHandler::new(policy);
+
+        let denied = handler.execute(&RemoteAction::Execute {
+            program: "ntd97-not-allowed".into(),
+            args: Vec::new(),
+            working_dir: None,
+        });
+        assert!(matches!(denied, Err(PcFabricError::PolicyDenied(_))));
+
+        let roots = canonical_roots(vec![root]).expect("roots");
+        let escaped = resolve_existing_path("..", &roots, true);
+        assert!(matches!(escaped, Err(PcFabricError::PolicyDenied(_))));
+    }
 }

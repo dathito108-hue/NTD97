@@ -926,4 +926,41 @@ mod tests {
         };
         assert!(encode_message(&RemoteMessage::Capabilities(vec![a, b])).is_err());
     }
+
+    #[test]
+    fn result_bound_to_different_request_is_rejected() {
+        let request = RemoteRequest::new(
+            11,
+            "pc.system.observe",
+            1,
+            RemoteAction::Observe {
+                surface: "system".into(),
+            },
+        )
+        .expect("request");
+        let other = RemoteRequest::new(
+            11,
+            "pc.system.observe",
+            1,
+            RemoteAction::Observe {
+                surface: "processes".into(),
+            },
+        )
+        .expect("other request");
+        let result = RemoteResult::completed(
+            &request,
+            ActionOutput {
+                summary: "observed".into(),
+                value: ActionValue::None,
+                evidence: Vec::new(),
+            },
+            Vec::new(),
+        )
+        .expect("result");
+
+        assert_eq!(
+            result.verify_against(&other),
+            Err(PcFabricError::InvalidMessage)
+        );
+    }
 }
