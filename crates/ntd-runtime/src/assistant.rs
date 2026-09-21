@@ -140,6 +140,7 @@ impl SovereignConversationState {
             TaskGraph::default(),
             None,
         )?;
+        self.cognition.start_external_task(task_id)?;
         self.active = Some(ActiveConversationTurn {
             task_id,
             user_message,
