@@ -2,9 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{
-    verify_native_package, AssimilationError, AssetKind, NativePackage,
-};
+use crate::{verify_native_package, AssetKind, AssimilationError, NativePackage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitReceipt {
@@ -43,9 +41,7 @@ impl NativeAssetStore {
 
         for package in packages {
             verify_native_package(&package, &self.trusted_verify_key)?;
-            let versions = staged_versions
-                .entry(package.asset_id.clone())
-                .or_default();
+            let versions = staged_versions.entry(package.asset_id.clone()).or_default();
             if versions.contains_key(&package.version)
                 || versions
                     .keys()

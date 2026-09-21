@@ -4,9 +4,7 @@ use std::collections::BTreeSet;
 
 use ntd_capsule::{decode_graph, encode_graph, sha256};
 
-use crate::{
-    AssimilationError, NativeCandidate, RegressionProbe,
-};
+use crate::{AssimilationError, NativeCandidate, RegressionProbe};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxReport {
@@ -17,27 +15,30 @@ pub struct SandboxReport {
 }
 
 pub trait ForgeSandbox {
-    fn validate(&mut self, candidate: &NativeCandidate) -> Result<SandboxReport, AssimilationError>;
+    fn validate(&mut self, candidate: &NativeCandidate)
+        -> Result<SandboxReport, AssimilationError>;
 }
 
 #[derive(Debug, Default)]
 pub struct NativeValidationSandbox;
 
 impl ForgeSandbox for NativeValidationSandbox {
-    fn validate(&mut self, candidate: &NativeCandidate) -> Result<SandboxReport, AssimilationError> {
+    fn validate(
+        &mut self,
+        candidate: &NativeCandidate,
+    ) -> Result<SandboxReport, AssimilationError> {
         candidate.validate()?;
         let mut passed = Vec::new();
 
         for regression in candidate.regressions() {
             match (&regression.probe, candidate) {
-                (
-                    RegressionProbe::GraphRoundTrip,
-                    NativeCandidate::Intelligence { graph, .. },
-                ) => {
-                    let encoded = encode_graph(graph)
-                        .map_err(|error| AssimilationError::SandboxRejected(format!("{error:?}")))?;
-                    let decoded = decode_graph(&encoded)
-                        .map_err(|error| AssimilationError::SandboxRejected(format!("{error:?}")))?;
+                (RegressionProbe::GraphRoundTrip, NativeCandidate::Intelligence { graph, .. }) => {
+                    let encoded = encode_graph(graph).map_err(|error| {
+                        AssimilationError::SandboxRejected(format!("{error:?}"))
+                    })?;
+                    let decoded = decode_graph(&encoded).map_err(|error| {
+                        AssimilationError::SandboxRejected(format!("{error:?}"))
+                    })?;
                     if decoded != *graph {
                         return Err(AssimilationError::SandboxRejected(
                             "graph round trip drift".into(),

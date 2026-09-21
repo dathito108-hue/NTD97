@@ -8,9 +8,7 @@ use ntd_capsule::{
 use ntd_core::{CapabilityId, SideEffectClass};
 use ntd_runtime::{AuthorityScope, CapabilityDescriptor, CapabilityDomain};
 
-use crate::{
-    AssetKind, AssimilationError, NativeCandidate, ProvenanceRecord, SandboxReport,
-};
+use crate::{AssetKind, AssimilationError, NativeCandidate, ProvenanceRecord, SandboxReport};
 
 const SIGNATURE_MAGIC: [u8; 6] = *b"NAS97\0";
 const SIGNATURE_MAJOR: u16 = 0;
@@ -87,11 +85,16 @@ pub fn build_native_package(
                 SectionKind::Capabilities,
                 encode_capability_descriptor(descriptor)?,
             ));
-            sections.push((SectionKind::Adapters, encode_adapter(&adapter.format, &adapter.bytes)?));
+            sections.push((
+                SectionKind::Adapters,
+                encode_adapter(&adapter.format, &adapter.bytes)?,
+            ));
             Some(descriptor.clone())
         }
         NativeCandidate::Intelligence {
-            graph, sections: extra, ..
+            graph,
+            sections: extra,
+            ..
         } => {
             sections.push((
                 SectionKind::Graph,
@@ -182,8 +185,8 @@ pub fn verify_native_package(
         return Err(AssimilationError::UntrustedSigner);
     }
     let message = section_signing_payload(&signable_sections)?;
-    let key = VerifyingKey::from_bytes(&verify_key)
-        .map_err(|_| AssimilationError::InvalidSignature)?;
+    let key =
+        VerifyingKey::from_bytes(&verify_key).map_err(|_| AssimilationError::InvalidSignature)?;
     key.verify(&message, &Signature::from_bytes(&signature))
         .map_err(|_| AssimilationError::InvalidSignature)?;
 
@@ -339,14 +342,9 @@ fn encode_assimilation_log(
     Ok(out)
 }
 
-fn decode_assimilation_log(
-    bytes: &[u8],
-) -> Result<(String, u32, AssetKind), AssimilationError> {
+fn decode_assimilation_log(bytes: &[u8]) -> Result<(String, u32, AssetKind), AssimilationError> {
     let mut cursor = Cursor::new(bytes);
-    if cursor.take(6)? != b"NAL97\0"
-        || cursor.u16()? != 0
-        || cursor.u16()? > 1
-    {
+    if cursor.take(6)? != b"NAL97\0" || cursor.u16()? != 0 || cursor.u16()? > 1 {
         return Err(AssimilationError::InvalidPackage);
     }
     let kind = match cursor.u8()? {
@@ -403,8 +401,7 @@ fn encode_capability_descriptor(
     out.push(u8::from(descriptor.resumable));
     push_u32(
         &mut out,
-        u32::try_from(descriptor.required_scopes.len())
-            .map_err(|_| AssimilationError::Overflow)?,
+        u32::try_from(descriptor.required_scopes.len()).map_err(|_| AssimilationError::Overflow)?,
     );
     for scope in &descriptor.required_scopes {
         push_string(&mut out, scope.as_str())?;
@@ -412,14 +409,9 @@ fn encode_capability_descriptor(
     Ok(out)
 }
 
-fn decode_capability_descriptor(
-    bytes: &[u8],
-) -> Result<CapabilityDescriptor, AssimilationError> {
+fn decode_capability_descriptor(bytes: &[u8]) -> Result<CapabilityDescriptor, AssimilationError> {
     let mut cursor = Cursor::new(bytes);
-    if cursor.take(6)? != b"NCP97\0"
-        || cursor.u16()? != 0
-        || cursor.u16()? > 1
-    {
+    if cursor.take(6)? != b"NCP97\0" || cursor.u16()? != 0 || cursor.u16()? > 1 {
         return Err(AssimilationError::InvalidPackage);
     }
     let id = CapabilityId(cursor.string()?);

@@ -2,9 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{
-    AssimilationError, Discovery, NativeCandidate, SourcePackage,
-};
+use crate::{AssimilationError, Discovery, NativeCandidate, SourcePackage};
 
 pub trait SourceImporter {
     fn id(&self) -> &str;
@@ -83,7 +81,10 @@ impl ImporterRegistry {
             .ok_or_else(|| AssimilationError::MissingImporter(media_type.into()))
     }
 
-    fn importer_for(&self, source: &SourcePackage) -> Result<&dyn SourceImporter, AssimilationError> {
+    fn importer_for(
+        &self,
+        source: &SourcePackage,
+    ) -> Result<&dyn SourceImporter, AssimilationError> {
         let id = self.importer_id_for(&source.media_type)?;
         self.importers
             .get(id)

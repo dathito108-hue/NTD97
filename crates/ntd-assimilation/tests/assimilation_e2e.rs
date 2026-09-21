@@ -1,5 +1,5 @@
 use ntd_assimilation::{
-    AssimilationError, AssimilationIdentity, AssetKind, CapabilityForge, Discovery, ForgePolicy,
+    AssetKind, AssimilationError, AssimilationIdentity, CapabilityForge, Discovery, ForgePolicy,
     ImporterRegistry, LicenseRecord, NativeAdapter, NativeAssetStore, NativeCandidate,
     NativeSection, NativeValidationSandbox, RegressionCase, RegressionProbe, SourceImporter,
     SourcePackage,
@@ -158,7 +158,11 @@ fn capability_becomes_signed_native_capsule_without_source_runtime() {
     assert_eq!(descriptor.id.0, "custom.calculator");
 
     let view = CapsuleView::read(&active.native_capsule).expect("capsule");
-    let kinds = view.chunks.iter().map(|chunk| chunk.kind).collect::<Vec<_>>();
+    let kinds = view
+        .chunks
+        .iter()
+        .map(|chunk| chunk.kind)
+        .collect::<Vec<_>>();
     assert!(kinds.contains(&SectionKind::Capabilities));
     assert!(kinds.contains(&SectionKind::Adapters));
     assert!(kinds.contains(&SectionKind::Provenance));
@@ -176,9 +180,7 @@ fn external_intelligence_normalizes_to_ntd97_ir_and_ncc97() {
     );
 
     forge.assimilate(&source, &mut store).expect("assimilate");
-    let active = store
-        .active("intelligence.external-add")
-        .expect("active");
+    let active = store.active("intelligence.external-add").expect("active");
     let view = CapsuleView::read(&active.native_capsule).expect("capsule");
     let graph_chunk = view
         .chunks
@@ -275,9 +277,7 @@ fn package_signature_rejects_tampering_and_untrusted_signer() {
     let mut tampered = package;
     let last = tampered.native_capsule.len() - 1;
     tampered.native_capsule[last] ^= 1;
-    assert!(ntd_assimilation::verify_native_package(
-        &tampered,
-        &forge.identity().verify_key()
-    )
-    .is_err());
+    assert!(
+        ntd_assimilation::verify_native_package(&tampered, &forge.identity().verify_key()).is_err()
+    );
 }
