@@ -5,6 +5,7 @@ members = [
     "crates/ntd-ir",
     "crates/ntd-capsule",
     "crates/ntd-runtime",
+    "crates/ntd-platform",
 ]
 
 [workspace.package]
