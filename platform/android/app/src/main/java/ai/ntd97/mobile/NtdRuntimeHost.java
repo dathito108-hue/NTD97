@@ -83,6 +83,10 @@ public interface NtdRuntimeHost {
         return 0;
     }
 
+    default int chatReasoningIterations(long requestId) {
+        return 0;
+    }
+
     default byte[] chatCheckpoint() {
         return new byte[0];
     }
