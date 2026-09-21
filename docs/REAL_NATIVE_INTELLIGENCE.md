@@ -102,7 +102,7 @@ This proves the native conversion plumbing and graph execution contract. It does
 M11 deliberately remains in progress because:
 
 - LLaMA-style SentencePiece metadata now lowers into NCC97 tokenizer v0.2 and executes natively with score-ordered BPE merges, U+2581 space normalization, byte fallback, and source BOS/EOS policy; a representative real tokenizer still needs source-vs-NTD97 differential validation;
-- GPT-2 BPE metadata is preserved but native pre-tokenizer/merge execution is still required;
+- canonical GPT-2 (`tokenizer.ggml.pre="gpt-2"`) now lowers into NCC97 tokenizer v0.3 and executes natively with Unicode-category pre-tokenization, GPT-2 byte-to-Unicode mapping, ranked BPE merges and source BOS/EOS policy; non-canonical BPE pre-tokenizers remain fail-closed;
 - a representative real GGUF has not yet passed source-vs-NIR97 semantic-equivalence testing;
 - common K-quant families such as Q4_K/Q5_K/Q6_K are not yet decoded;
 - large-file import still needs a streaming/mapped path rather than whole-file memory loading;

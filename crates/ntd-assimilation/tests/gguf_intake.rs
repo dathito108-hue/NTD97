@@ -225,7 +225,7 @@ fn preserves_sentencepiece_semantic_metadata_for_native_lowering() {
 }
 
 #[test]
-fn preserves_gpt2_merge_ranks_and_rejects_malformed_semantic_arrays() {
+fn canonical_gpt2_metadata_is_ready_while_other_pre_tokenizers_fail_closed() {
     let mut model = GgufModel::parse(&fixture()).expect("parse");
     model.metadata.insert(
         "tokenizer.ggml.model".into(),
@@ -241,18 +241,38 @@ fn preserves_gpt2_merge_ranks_and_rejects_malformed_semantic_arrays() {
             ],
         },
     );
+    model.metadata.insert(
+        "tokenizer.ggml.pre".into(),
+        GgufValue::String("gpt-2".into()),
+    );
+    model.metadata.insert(
+        "tokenizer.ggml.add_bos_token".into(),
+        GgufValue::Bool(false),
+    );
+    model.metadata.insert(
+        "tokenizer.ggml.add_eos_token".into(),
+        GgufValue::Bool(false),
+    );
 
     let tokenizer = model.tokenizer().expect("tokenizer");
     assert_eq!(tokenizer.merges, vec!["a b".to_owned(), "b a".to_owned()]);
+    assert_eq!(tokenizer.pre_tokenizer.as_deref(), Some("gpt-2"));
+
     let plan = GgufConversionPlan::from_model(&model).expect("plan");
     assert!(!plan
         .blockers
         .iter()
-        .any(|item| item.contains("missing merge ranks")));
+        .any(|item| item.to_ascii_lowercase().contains("gpt2")));
+
+    model.metadata.insert(
+        "tokenizer.ggml.pre".into(),
+        GgufValue::String("qwen2".into()),
+    );
+    let plan = GgufConversionPlan::from_model(&model).expect("qwen2 plan");
     assert!(plan
         .blockers
         .iter()
-        .any(|item| item.contains("native GPT-2")));
+        .any(|item| item.contains("not the canonical GPT-2 regex")));
 
     model.metadata.insert(
         "tokenizer.ggml.scores".into(),
