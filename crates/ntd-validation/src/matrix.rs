@@ -109,19 +109,11 @@ pub fn evaluate_device_profile(
     profile: &RepresentativeDevice,
 ) -> Result<DeviceMatrixReport, ValidationError> {
     let policy = ComputePolicy::for_device(&profile.capabilities);
-    let placement = plan_tensor_placement(
-        2 * GIB,
-        &profile.capabilities,
-        profile.nominal,
-        policy,
-    )
-    .map_err(|error| ValidationError::MobileCompute(format!("{error:?}")))?;
+    let placement = plan_tensor_placement(2 * GIB, &profile.capabilities, profile.nominal, policy)
+        .map_err(|error| ValidationError::MobileCompute(format!("{error:?}")))?;
 
-    let mut provider = AdaptiveExecutionProvider::new(
-        profile.capabilities.clone(),
-        profile.nominal,
-        policy,
-    );
+    let mut provider =
+        AdaptiveExecutionProvider::new(profile.capabilities.clone(), profile.nominal, policy);
     provider.register(CpuReferenceMobileProvider);
     provider.register(CpuTiledProvider::default());
 
@@ -177,10 +169,8 @@ pub fn evaluate_device_profile(
         .selected_provider(TensorOp::MatMul)
         .ok_or_else(|| ValidationError::MobileCompute("no hot provider".into()))?
         .kind;
-    let accelerator_disabled_under_heat = !matches!(
-        hot_provider,
-        ProviderKind::Vulkan | ProviderKind::Npu
-    );
+    let accelerator_disabled_under_heat =
+        !matches!(hot_provider, ProviderKind::Vulkan | ProviderKind::Npu);
 
     Ok(DeviceMatrixReport {
         profile: profile.name.clone(),

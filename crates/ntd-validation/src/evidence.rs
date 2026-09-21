@@ -72,8 +72,7 @@ impl EvidenceMatrix {
                     && entry.profile == *required
                     && !entry.device_fingerprint.trim().is_empty()
                     && entry.p95_latency_nanos <= targets.max_p95_latency_nanos
-                    && entry.energy_per_task_microjoules
-                        <= targets.max_energy_per_task_microjoules
+                    && entry.energy_per_task_microjoules <= targets.max_energy_per_task_microjoules
                     && entry.reliability_permille >= targets.min_reliability_permille
                     && entry.recovery_permille >= targets.min_recovery_permille
                     && entry.sovereignty_audit_passed

@@ -82,7 +82,12 @@ where
     }
 
     pub fn total_energy_microjoules(&self) -> Option<u64> {
-        if self.spans.is_empty() || self.spans.iter().any(|span| span.energy_microjoules.is_none()) {
+        if self.spans.is_empty()
+            || self
+                .spans
+                .iter()
+                .any(|span| span.energy_microjoules.is_none())
+        {
             return None;
         }
         Some(

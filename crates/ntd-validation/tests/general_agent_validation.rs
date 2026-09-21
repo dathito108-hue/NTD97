@@ -10,9 +10,9 @@ use ntd_core::{ActionNode, CapabilityId, SideEffectClass, TaskGraph};
 use ntd_ir::TensorOp;
 use ntd_runtime::{
     verify_provider_equivalence, ActionFabric, ActionFabricError, ActionOutput, ActionPlanStatus,
-    ActionStatus, ActionVerification, ActionVerifier, AdapterResult, AuthorityGrant, AuthorityScope,
-    CapabilityAdapter, CapabilityDescriptor, CapabilityDomain, CapabilityError, CapabilityRegistry,
-    CpuReferenceProvider, CpuTiledProvider, PrefixCache, Tensor, TypedAction,
+    ActionStatus, ActionVerification, ActionVerifier, AdapterResult, AuthorityGrant,
+    AuthorityScope, CapabilityAdapter, CapabilityDescriptor, CapabilityDomain, CapabilityError,
+    CapabilityRegistry, CpuReferenceProvider, CpuTiledProvider, PrefixCache, Tensor, TypedAction,
 };
 use ntd_validation::{
     analyze_prefix_reuse, evaluate_device_profile, representative_device_profiles,
@@ -162,9 +162,8 @@ fn descriptor(
     side_effect: SideEffectClass,
     required_scope: &str,
 ) -> CapabilityDescriptor {
-    let mut descriptor =
-        CapabilityDescriptor::new(CapabilityId(id.into()), 1, domain, side_effect)
-            .expect("descriptor");
+    let mut descriptor = CapabilityDescriptor::new(CapabilityId(id.into()), 1, domain, side_effect)
+        .expect("descriptor");
     descriptor.required_scopes = vec![scope(required_scope)];
     descriptor
 }
