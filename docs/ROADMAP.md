@@ -49,21 +49,22 @@ Exit: a deterministic test graph executes entirely through NTD97-owned formats a
 
 Goal: turn the generic native tensor/IR executor into a usable local generative model runtime while preserving NTD97 identity.
 
-Planned scope:
+Delivered contract:
 
-- canonical sequence/token semantics;
-- native tokenizer contract and implementation;
-- attention, positional and gather semantics required by the native model graph;
-- KV/state-cache representation owned by NTD97;
-- autoregressive decode loop;
-- native sampling contract;
-- bounded context/prefix reuse;
-- deterministic tiny-model golden inference;
-- source-independent native model package test;
-- importer boundary for converting supported source weights/graphs into NTD97 IR + NCC97 only.
+- NTD97 IR 0.2 additive `CausalAttention` semantic;
+- CPU reference Gather, RotaryPosition and CausalAttention;
+- canonical `ntd97.tokenizer.vocab.v1` tokenizer payload inside NCC97 descriptor framing;
+- deterministic longest-prefix native vocabulary tokenizer;
+- source-independent `GraphGenerator` autoregressive decode loop;
+- greedy and seeded stochastic sampling with temperature/top-k;
+- logits/probability distribution contracts;
+- bounded token context;
+- NTD97-owned `KvCache` and `PrefixCache` representations;
+- Full `.ncc97` native generative package loader;
+- deterministic source-independent golden text generation test;
+- importer boundary preserved: external formats must terminate at NTD97 IR + NCC97 state.
 
-Exit: an NTD97-native text model can accept tokens, execute locally and generate deterministic/reference output without a third-party model backend.
-
+Exit: an NTD97-native text model accepts tokens/text, executes locally and generates deterministic/reference output without a third-party model backend.
 ## M3 — Major Block C: Adaptive Mobile Compute Runtime
 
 Goal: make the same native model path practical across current phones.

@@ -120,9 +120,9 @@ impl ExecutionProvider for CpuReferenceProvider {
             TensorOp::MatMul | TensorOp::QuantizedMatMul => matmul(inputs)?,
             TensorOp::RmsNorm => rms_norm(inputs)?,
             TensorOp::Softmax => softmax(inputs)?,
-            TensorOp::Gather | TensorOp::RotaryPosition => {
-                return Err(TensorError::UnsupportedOp(op));
-            }
+            TensorOp::Gather => gather(inputs)?,
+            TensorOp::RotaryPosition => rotary_position(inputs)?,
+            TensorOp::CausalAttention => causal_attention(inputs)?,
         };
         Ok(vec![output])
     }
@@ -304,6 +304,139 @@ fn softmax(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
     Tensor::new(input.shape.clone(), data)
 }
 
+fn gather(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
+    require_arity(inputs, 2)?;
+    let table = inputs[0];
+    let indices = inputs[1];
+
+    if table.shape.len() != 2 || indices.shape.len() != 1 {
+        return Err(TensorError::ShapeMismatch);
+    }
+
+    let rows = table.shape[0];
+    let width = table.shape[1];
+    let mut data = Vec::with_capacity(
+        indices
+            .data
+            .len()
+            .checked_mul(width)
+            .ok_or(TensorError::InvalidShape)?,
+    );
+
+    for raw_index in &indices.data {
+        if !raw_index.is_finite() || *raw_index < 0.0 || raw_index.fract() != 0.0 {
+            return Err(TensorError::InvalidIndex);
+        }
+        let row = *raw_index as usize;
+        if row >= rows {
+            return Err(TensorError::InvalidIndex);
+        }
+        let start = row.checked_mul(width).ok_or(TensorError::InvalidShape)?;
+        let end = start.checked_add(width).ok_or(TensorError::InvalidShape)?;
+        data.extend_from_slice(&table.data[start..end]);
+    }
+
+    Tensor::new(vec![indices.data.len(), width], data)
+}
+
+fn rotary_position(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
+    require_arity(inputs, 2)?;
+    let input = inputs[0];
+    let positions = inputs[1];
+
+    if input.shape.len() != 3 || positions.shape.len() != 1 {
+        return Err(TensorError::ShapeMismatch);
+    }
+
+    let sequence = input.shape[0];
+    let heads = input.shape[1];
+    let width = input.shape[2];
+    if positions.data.len() != sequence || width == 0 || width % 2 != 0 {
+        return Err(TensorError::ShapeMismatch);
+    }
+
+    let mut data = input.data.clone();
+    for position_index in 0..sequence {
+        let position = positions.data[position_index];
+        if !position.is_finite() || position < 0.0 {
+            return Err(TensorError::InvalidIndex);
+        }
+
+        for head in 0..heads {
+            let base = (position_index * heads + head) * width;
+            for pair in 0..(width / 2) {
+                let even = pair * 2;
+                let exponent = -(even as f32) / width as f32;
+                let theta = position * 10_000.0f32.powf(exponent);
+                let cos = theta.cos();
+                let sin = theta.sin();
+                let left = input.data[base + even];
+                let right = input.data[base + even + 1];
+                data[base + even] = left * cos - right * sin;
+                data[base + even + 1] = left * sin + right * cos;
+            }
+        }
+    }
+
+    Tensor::new(input.shape.clone(), data)
+}
+
+fn causal_attention(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
+    require_arity(inputs, 3)?;
+    let query = inputs[0];
+    let key = inputs[1];
+    let value = inputs[2];
+
+    if query.shape.len() != 3 || query.shape != key.shape || query.shape != value.shape {
+        return Err(TensorError::ShapeMismatch);
+    }
+
+    let sequence = query.shape[0];
+    let heads = query.shape[1];
+    let width = query.shape[2];
+    if width == 0 {
+        return Err(TensorError::InvalidShape);
+    }
+
+    let scale = (width as f32).sqrt();
+    let mut output = vec![0.0f32; query.data.len()];
+
+    for query_position in 0..sequence {
+        for head in 0..heads {
+            let query_base = (query_position * heads + head) * width;
+            let mut scores = Vec::with_capacity(query_position + 1);
+
+            for key_position in 0..=query_position {
+                let key_base = (key_position * heads + head) * width;
+                let mut dot = 0.0f32;
+                for offset in 0..width {
+                    dot += query.data[query_base + offset] * key.data[key_base + offset];
+                }
+                scores.push(dot / scale);
+            }
+
+            let max = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let mut weights = scores
+                .iter()
+                .map(|score| (*score - max).exp())
+                .collect::<Vec<_>>();
+            let weight_sum = weights.iter().sum::<f32>();
+            for weight in &mut weights {
+                *weight /= weight_sum;
+            }
+
+            for (key_position, weight) in weights.iter().enumerate() {
+                let value_base = (key_position * heads + head) * width;
+                for offset in 0..width {
+                    output[query_base + offset] += value.data[value_base + offset] * *weight;
+                }
+            }
+        }
+    }
+
+    Tensor::new(query.shape.clone(), output)
+}
+
 fn require_arity(inputs: &[&Tensor], expected: usize) -> Result<(), TensorError> {
     if inputs.len() == expected {
         Ok(())
@@ -382,6 +515,41 @@ mod tests {
             .expect("second");
         assert_eq!(first, second);
         assert_eq!(first[0].data(), &[13.0, 16.0]);
+    }
+
+    #[test]
+    fn gather_selects_rows_in_token_order() {
+        let provider = CpuReferenceProvider;
+        let table = Tensor::new(vec![3, 2], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).expect("table");
+        let indices = Tensor::new(vec![2], vec![2.0, 0.0]).expect("indices");
+        let output = provider
+            .execute(TensorOp::Gather, &[&table, &indices])
+            .expect("gather");
+        assert_eq!(output[0].shape(), &[2, 2]);
+        assert_eq!(output[0].data(), &[5.0, 6.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn rotary_position_at_zero_is_identity() {
+        let provider = CpuReferenceProvider;
+        let input = Tensor::new(vec![1, 1, 4], vec![1.0, 2.0, 3.0, 4.0]).expect("input");
+        let positions = Tensor::new(vec![1], vec![0.0]).expect("positions");
+        let output = provider
+            .execute(TensorOp::RotaryPosition, &[&input, &positions])
+            .expect("rotary");
+        assert_eq!(output[0], input);
+    }
+
+    #[test]
+    fn single_token_causal_attention_returns_value() {
+        let provider = CpuReferenceProvider;
+        let query = Tensor::new(vec![1, 1, 2], vec![1.0, 0.0]).expect("query");
+        let key = Tensor::new(vec![1, 1, 2], vec![1.0, 0.0]).expect("key");
+        let value = Tensor::new(vec![1, 1, 2], vec![7.0, 9.0]).expect("value");
+        let output = provider
+            .execute(TensorOp::CausalAttention, &[&query, &key, &value])
+            .expect("attention");
+        assert_eq!(output[0].data(), &[7.0, 9.0]);
     }
 
     #[test]

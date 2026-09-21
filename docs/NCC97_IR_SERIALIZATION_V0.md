@@ -60,6 +60,8 @@ The header is followed by:
 
 Operation family/code values map directly to the NTD97 IR semantic enums. Unknown family/code pairs are rejected.
 
+IR 0.2 preserves all existing tensor opcode assignments and adds tensor opcode `9 = CausalAttention`. Readers that only understand IR 0.1 reject an IR 0.2 graph through the existing version gate rather than misinterpreting the new operation.
+
 Only Tool::Invoke currently carries attributes: its capability string is stored as canonical UTF-8 bytes. Operations without attributes must encode an attribute length of zero.
 
 ## 4. Decode validation

@@ -69,23 +69,23 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Major Block A — Native Intelligence Execution Foundation**
+**Major Block B — Native Generative Intelligence Runtime**
 
-The repository now contains the first end-to-end NTD97-native execution path:
+NTD97 now has the first source-independent native text-generation path:
 
 ```text
 NCC97 integrity verify
-  -> NIR97 graph
-  -> native tensor descriptors/shards
-  -> content-addressed resolution
-  -> tensor materialization/dequantization
-  -> NTD97 IR graph executor
-  -> CPU reference provider
-  -> deterministic output
+  -> NIR97 / IR 0.2
+  -> native tokenizer + native tensors
+  -> bounded token context
+  -> GraphGenerator
+  -> CPU reference Gather / Rotary / CausalAttention / tensor ops
+  -> native sampling
+  -> autoregressive next token
+  -> deterministic text output
 ```
 
-No GGUF/ONNX/TFLite runtime or hosted AI service participates in this path.
-
+A Full `.ncc97` golden package can now load and generate text twice with identical results without GGUF/ONNX/TFLite/SafeTensors runtime code or a hosted AI service.
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
 See:
@@ -96,6 +96,7 @@ See:
 - `docs/NCC97_BINARY_V0.md`
 - `docs/NCC97_IR_SERIALIZATION_V0.md`
 - `docs/NATIVE_EXECUTION_FOUNDATION.md`
+- `docs/NATIVE_GENERATIVE_RUNTIME.md`
 - `docs/COGNITIVE_CAPSULE.md`
 - `docs/SOVEREIGN_MODEL.md`
 - `docs/CONTINUITY_3D.md`

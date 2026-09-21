@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 pub const IR_MAJOR: u16 = 0;
-pub const IR_MINOR: u16 = 1;
+pub const IR_MINOR: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IrVersion {
@@ -64,6 +64,7 @@ pub enum TensorOp {
     Softmax,
     Gather,
     RotaryPosition,
+    CausalAttention,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
