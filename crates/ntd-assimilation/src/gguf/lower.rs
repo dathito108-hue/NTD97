@@ -70,14 +70,13 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
 
     let score_bits = source_tokenizer
         .scores
-        .clone()
         .ok_or_else(|| {
             GgufError::UnsupportedModelFeature("missing LLaMA tokenizer scores".into())
         })?
         .into_iter()
         .map(f32::to_bits)
         .collect::<Vec<_>>();
-    let token_types = source_tokenizer.token_types.clone().ok_or_else(|| {
+    let token_types = source_tokenizer.token_types.ok_or_else(|| {
         GgufError::UnsupportedModelFeature("missing LLaMA tokenizer token types".into())
     })?;
     let add_space_prefix = source_tokenizer.add_space_prefix.ok_or_else(|| {
