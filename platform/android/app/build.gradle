@@ -1,9 +1,9 @@
-def ntdGitSha = providers.gradleProperty("ntdGitSha").orElse("local-unattested").get()
-def ntdSovereigntyAuditPassed = providers.gradleProperty("ntdSovereigntyAuditPassed").orElse("false").get()
-
 plugins {
     id "com.android.application"
 }
+
+def ntdGitSha = providers.gradleProperty("ntdGitSha").orElse("local-unattested").get()
+def ntdSovereigntyAuditPassed = providers.gradleProperty("ntdSovereigntyAuditPassed").orElse("false").get()
 
 android {
     namespace "ai.ntd97.mobile"
