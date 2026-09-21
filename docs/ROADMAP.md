@@ -42,12 +42,29 @@ Exit: a native capsule can be deterministically written, reopened, integrity-ver
 ### Phase 003C — NCC97 Native IR Serialization
 
 - deterministic NTD97 IR graph encoding inside Graph sections;
+- fixed value-declaration and node framing;
+- complete current IR operation-family mapping;
+- Tool::Invoke UTF-8 capability attributes;
 - tensor descriptor schema without execution kernels;
 - tokenizer/codec descriptor framing;
 - IR graph decode + structural validation after capsule read;
-- golden-vector compatibility tests.
+- Graph -> NCC97 -> reopen -> Graph integration test;
+- golden-vector compatibility test;
+- strict trailing/reserved-field rejection.
 
 Exit: a valid NTD97 IR graph can be encoded into NCC97, reopened and reconstructed identically before any inference backend exists.
+
+### Phase 003D — Native Tensor Payload + Content Store Contract
+
+- deterministic tensor-shard payload framing;
+- content-addressed tensor identities bound to SHA-256;
+- embedded and external shard resolution contract;
+- alignment/range validation for zero-copy access;
+- quantization metadata schema without optimized kernels;
+- duplicate-chunk reuse across Thin/Full capsules;
+- tensor descriptor-to-shard integrity binding.
+
+Exit: NCC97 can describe and resolve native tensor data deterministically without depending on GGUF or another source format at runtime.
 
 ## M2 — Adaptive Mobile Runtime
 
