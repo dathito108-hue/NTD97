@@ -25,9 +25,9 @@ pub use action_fabric::{
     AdapterResult, CapabilityAdapter, PlannedAction,
 };
 pub use assistant::{
-    decode_conversation_checkpoint, encode_conversation_checkpoint, ActiveConversationTurn,
-    ConversationStateError, SovereignConversationState, NCS97_HEADER_LEN, NCS97_MAGIC, NCS97_MAJOR,
-    NCS97_MINOR,
+    decode_conversation_checkpoint, encode_conversation_checkpoint, memory_recall_limit_for_budget,
+    ActiveConversationTurn, ConversationStateError, SovereignConversationState, NCS97_HEADER_LEN,
+    NCS97_MAGIC, NCS97_MAJOR, NCS97_MINOR,
 };
 pub use capability::{
     ActionOutput, ActionValue, AuthorityGrant, AuthorityScope, CapabilityDescriptor,
