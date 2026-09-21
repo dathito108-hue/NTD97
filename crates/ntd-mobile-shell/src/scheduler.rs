@@ -104,7 +104,11 @@ pub fn choose_platform_directive(
         | MobileContinuityState::WaitingCondition => {
             let require_network = !context.network_available;
             Ok(PlatformDirective::SchedulePersistentWork {
-                delay_ms: if context.device_unlocked { 1_000 } else { 15_000 },
+                delay_ms: if context.device_unlocked {
+                    1_000
+                } else {
+                    15_000
+                },
                 require_network,
                 persisted: true,
             })
@@ -125,9 +129,7 @@ pub fn choose_platform_directive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        MobileContinuityBundle, PendingApproval, RetryBackoff, WakeReason,
-    };
+    use crate::{MobileContinuityBundle, PendingApproval, RetryBackoff, WakeReason};
     use ntd_runtime::CognitiveIdentity;
 
     fn snapshot(battery: u8, thermal: ThermalState) -> ResourceSnapshot {
