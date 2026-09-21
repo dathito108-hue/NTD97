@@ -1,6 +1,6 @@
 # Android Continuity + Interactive 3D Assistant
 
-Status: Major Block F implementation contract.
+Status: Major Block F complete; canonical Android build and API 35 lifecycle/reboot validation PASS.
 
 This block binds the existing SIK97 cognition state and TAF97 action journal to a mobile continuity shell and a first-class 3D assistant surface without moving Android APIs into `ntd-runtime`.
 
@@ -110,18 +110,18 @@ If no local runtime host is attached, durable work remains stored and scheduled 
 
 ## 8. Local runtime host boundary
 
-`NtdRuntimeHost` is the replaceable local binding interface between the Android shell and packaged NTD97 runtime.
+`NtdRuntimeHost` remains the local binding interface between the Android shell and packaged NTD97 runtime.
 
-`NtdRuntimeBootstrap` discovers only local providers through Java `ServiceLoader`. There is no hosted-runtime or cloud fallback.
+The canonical implementation is `NtdNativeRuntimeHost`, which loads `libntd97_android.so` and crosses a narrow JNI boundary into the `ntd-android-bridge` Rust cdylib. That bridge depends inward on `ntd-mobile-shell` and `ntd-runtime`, so MCS97 decode/verify/restore and avatar state remain native NTD97 logic rather than a second Java cognition implementation. `NtdRuntimeBootstrap` attaches this concrete local host directly; there is no ServiceLoader dependency, hosted runtime, third-party AI backend or cloud fallback.
 
 The host owns:
 
 - restore + verify;
 - checkpoint production;
 - approval resolution;
-- avatar-state export.
-
-A concrete packaged local provider is required for a functional APK. The current repository intentionally keeps that binding replaceable instead of embedding a second Java cognition/runtime implementation.
+- avatar-state export;
+- local PCM ingress/egress;
+- Android resource snapshot handoff for RAM/battery/charging/thermal-aware rendering.
 
 ## 9. Notifications and approval
 
@@ -160,8 +160,20 @@ Rendering is therefore a consumer of mobile resource policy rather than a requir
 
 The Android shell also includes a local PCM `AudioRecord` / `AudioTrack` bridge. Microphone PCM is delivered only to the packaged local runtime host and speaker PCM is pulled from that host. No Android SpeechRecognizer/TTS service is required for the sovereign baseline.
 
-## 13. Android source status
+## 13. Android build and lifecycle validation
 
-`platform/android` contains the application shell, manifest, atomic continuity store, JobScheduler bridge, foreground service, reboot receiver, notification/approval controller, in-app OpenGL ES avatar and floating overlay source.
+`platform/android` contains the application shell, manifest, atomic continuity store, JobScheduler bridge, foreground service, reboot receiver, notification/approval controller, in-app OpenGL ES avatar, floating overlay, resource sampler and concrete native runtime host.
 
-The canonical Rust CI verifies `ntd-mobile-shell` and its process-death/reboot acceptance tests. Android Gradle/SDK compilation and concrete packaged `NtdRuntimeHost` provider must be verified before treating an APK as release-ready.
+Canonical CI now verifies:
+
+- Rust `cargo fmt --all -- --check`;
+- `cargo clippy --workspace --all-targets -- -D warnings`;
+- `cargo test --workspace`;
+- Android SDK 35 + NDK 27 setup;
+- Rust native bridge cross-compilation for `arm64-v8a`, `armeabi-v7a` and `x86_64`;
+- Gradle 8.9 / JDK 17 debug APK assembly;
+- API 35 x86_64 emulator lifecycle validation.
+
+The emulator gate confirms native host attachment, avatar JNI, PCM bridge, notification channels, foreground-service request, overlay service, persisted JobScheduler work, reboot and post-reboot cold start. The debug-only probe is excluded from release source sets.
+
+This closes the M6 integration gate. A broader Android-version/device matrix, long-duration soak and performance/thermal validation remain intentionally assigned to M10 rather than being duplicated here.

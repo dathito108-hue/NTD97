@@ -69,21 +69,25 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Major Block F — Android Continuity + Interactive 3D Assistant (core/shell implemented, APK binding gate pending)**
+**Major Block F — Android Continuity + Interactive 3D Assistant — complete**
 
-NTD97 now has a portable mobile shell around the same sovereign cognition/action identity:
+NTD97 now has a validated Android shell around the same sovereign cognition/action identity:
 
 ```text
 SIK97 cognition + TAF97 actions + capability snapshot
   -> deterministic MCS97 mobile continuity
   -> OS-aware wake policy
   -> Android AtomicFile / JobScheduler / reboot / foreground paths
+  -> concrete local JNI NtdRuntimeHost
   -> approval + local PCM voice
   -> avatar state
   -> in-app / floating OpenGL ES 3D surface
 ```
 
-Process-death/reboot tests prove a committed action is not replayed after restore. Android source fails closed when no packaged local runtime host exists; Android Gradle/native-provider packaging remains the current M6 release gate.
+The canonical Android build produces a debug APK with local native libraries for `arm64-v8a`, `armeabi-v7a` and `x86_64`. API 35 emulator validation passes native-host attachment, avatar JNI, PCM bridge, notification channels, foreground-service request, overlay service, persisted work, reboot and post-reboot cold start. No hosted AI backend or cloud fallback is present in this path.
+
+Current roadmap focus moves to **Major Block G — Paired PC Fabric**. Broader Android device/version soak and representative-device performance validation remains scheduled for M10.
+
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
 See:
