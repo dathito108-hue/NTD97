@@ -226,6 +226,49 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_node_id() {
+        let graph = Graph {
+            version: IrVersion::CURRENT,
+            inputs: vec![scalar(0)],
+            outputs: vec![ValueId(2)],
+            nodes: vec![
+                Node {
+                    id: NodeId(7),
+                    op: OpKind::State(StateOp::Read),
+                    inputs: vec![ValueId(0)],
+                    outputs: vec![scalar(1)],
+                },
+                Node {
+                    id: NodeId(7),
+                    op: OpKind::State(StateOp::Write),
+                    inputs: vec![ValueId(1)],
+                    outputs: vec![scalar(2)],
+                },
+            ],
+        };
+
+        assert_eq!(
+            graph.validate(),
+            Err(ValidationError::DuplicateNodeId(NodeId(7)))
+        );
+    }
+
+    #[test]
+    fn rejects_missing_graph_output() {
+        let graph = Graph {
+            version: IrVersion::CURRENT,
+            inputs: vec![scalar(0)],
+            outputs: vec![ValueId(99)],
+            nodes: Vec::new(),
+        };
+
+        assert_eq!(
+            graph.validate(),
+            Err(ValidationError::MissingGraphOutput(ValueId(99)))
+        );
+    }
+
+    #[test]
     fn rejects_duplicate_value_definition() {
         let graph = Graph {
             version: IrVersion::CURRENT,
