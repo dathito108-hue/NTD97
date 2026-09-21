@@ -38,6 +38,12 @@ public interface NtdRuntimeHost {
 
     boolean resolveApproval(boolean approved);
 
+    default void acceptMicrophonePcm(short[] samples, int sampleRateHz) {}
+
+    default short[] pullSpeakerPcm(int maxSamples, int sampleRateHz) {
+        return null;
+    }
+
     AvatarState avatarState();
 
     final class AvatarState {
