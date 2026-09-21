@@ -12,6 +12,7 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static boolean loaded;
 
     private final Context context;
+    private boolean chatModelReady;
 
     private NtdNativeRuntimeHost(Context context) {
         this.context = context.getApplicationContext();
@@ -79,6 +80,55 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     }
 
     @Override
+    public synchronized boolean chatReady() {
+        if (chatModelReady) {
+            return true;
+        }
+
+        try {
+            NtdNativeModelStore.ModelFiles model =
+                    NtdNativeModelStore.prepareBundledModel(context);
+            if (model == null) {
+                return false;
+            }
+            chatModelReady = nativeOpenChatModel(
+                    "model.ntd97.stories260k",
+                    1,
+                    model.capsule.getAbsolutePath(),
+                    model.shardRoot.getAbsolutePath(),
+                    model.verifyKey,
+                    128);
+            return chatModelReady;
+        } catch (java.io.IOException error) {
+            chatModelReady = false;
+            return false;
+        }
+    }
+
+    @Override
+    public long submitChat(String prompt, int maxNewTokens) {
+        if (!chatReady() || prompt == null || prompt.trim().isEmpty()) {
+            return -1L;
+        }
+        return nativeSubmitChat(prompt, Math.max(1, maxNewTokens));
+    }
+
+    @Override
+    public ChatEvent nextChatEvent(long requestId) {
+        return decodeChatEvent(nativeNextChatEvent(requestId));
+    }
+
+    @Override
+    public boolean cancelChat(long requestId) {
+        return nativeCancelChat(requestId);
+    }
+
+    @Override
+    public int chatStatus(long requestId) {
+        return nativeChatStatus(requestId);
+    }
+
+    @Override
     public void acceptMicrophonePcm(short[] samples, int sampleRateHz) {
         if (samples == null || samples.length == 0) {
             return;
@@ -123,6 +173,25 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
                 snapshot.charging,
                 snapshot.thermalState,
                 snapshot.latencyBudgetMs);
+    }
+
+    private static ChatEvent decodeChatEvent(byte[] encoded) {
+        try {
+            if (encoded == null || encoded.length < 10) {
+                throw new IllegalArgumentException("empty chat event");
+            }
+            ByteBuffer buffer = ByteBuffer.wrap(encoded).order(ByteOrder.LITTLE_ENDIAN);
+            int version = Byte.toUnsignedInt(buffer.get());
+            if (version != 1) {
+                throw new IllegalArgumentException("unsupported chat event protocol");
+            }
+            int kind = Byte.toUnsignedInt(buffer.get());
+            int tokenId = buffer.getInt();
+            String text = readString(buffer);
+            return new ChatEvent(kind, tokenId, text);
+        } catch (RuntimeException error) {
+            return new ChatEvent(ChatEvent.ERROR, -1, "Native chat protocol error");
+        }
     }
 
     private static ResumeResult decodeRestoreResult(byte[] encoded) {
@@ -209,6 +278,22 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
         buffer.get(bytes);
         return new String(bytes, StandardCharsets.UTF_8);
     }
+
+    private static native boolean nativeOpenChatModel(
+            String assetId,
+            int version,
+            String capsulePath,
+            String shardRoot,
+            byte[] verifyKey,
+            int contextLimit);
+
+    private static native long nativeSubmitChat(String prompt, int maxNewTokens);
+
+    private static native byte[] nativeNextChatEvent(long requestId);
+
+    private static native boolean nativeCancelChat(long requestId);
+
+    private static native int nativeChatStatus(long requestId);
 
     private static native byte[] nativeRealModelProbe(
             String capsulePath,
