@@ -4,7 +4,7 @@ use ntd_ir::{DType, IrVersion};
 
 pub const TENSOR_DESCRIPTOR_MAGIC: [u8; 6] = *b"NTS97\0";
 pub const TENSOR_DESCRIPTOR_HEADER_LEN: usize = 16;
-const TENSOR_RECORD_HEADER_LEN: usize = 16;
+pub const TENSOR_RECORD_HEADER_LEN: usize = 16;
 
 pub const DESCRIPTOR_FRAME_MAGIC: [u8; 6] = *b"NDF97\0";
 pub const DESCRIPTOR_FRAME_HEADER_LEN: usize = 32;
