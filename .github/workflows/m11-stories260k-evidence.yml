@@ -53,7 +53,7 @@ jobs:
             "https://huggingface.co/karpathy/tinyllamas/resolve/main/stories260K/tok512.bin?download=true"
           curl --fail --location --retry 3 \
             --output llama2c-run.c \
-            "https://raw.githubusercontent.com/karpathy/llama2.c/2fcd687a7cb637c1a3e503d3e32de336f5b7edb9/run.c"
+            "https://raw.githubusercontent.com/karpathy/llama2.c/350e04fe35433e6d2941dce5a1f53308f87058eb/run.c"
           sha256sum stories260K.bin tok512.bin
           cc -O3 -std=c11 -o llama2c-reference llama2c-run.c -lm
           ./llama2c-reference stories260K.bin \
