@@ -69,23 +69,23 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Major Block H — Capability Forge + Native Assimilation — complete**
+**Major Block I — Portable Sovereign Intelligence — complete**
 
-NTD97 can now convert supported external capability/intelligence sources into signed native assets without retaining their runtime:
+NTD97 can now back up and restore phone-owned intelligence independently of the app installation:
 
 ```text
-External source + provenance/license
-  -> importer discovery
-  -> NativeCandidate
-  -> isolated native regression validation
-  -> NTD97 IR / capability descriptor
-  -> signed NCC97
-  -> atomic version commit / rollback
+NTD97 native assets
+  -> classify model / capability / memory / state
+  -> SHA-256 content addressing
+  -> user-owned XChaCha20-Poly1305 encryption
+  -> Full / Thin / State portable backup
+  -> cross-device sovereign object store
+  -> integrity-verified offline restore
 ```
 
-The canonical assimilation path preserves source digest, URI, attribution and license; rejects disallowed licenses; validates generated native adapters or NTD97 IR; signs NCC97 assets with a trusted Ed25519 identity; and commits versions atomically with rollback. Source bytes and source runtimes are not part of the committed native asset.
+The canonical portability path encrypts both object payloads and backup manifests with a user-owned key, deduplicates by content digest, supports self-contained Full backups, reference-only Thin backups, and State backups containing only memory/state. Restore is staged and fail-closed: wrong keys, missing dedup objects, corrupted ciphertext, invalid NCC97 capsules, or integrity mismatches do not partially mutate the destination store.
 
-M8 acceptance passed the canonical Rust gate and the Android APK/lifecycle regression gate. Current roadmap focus moves to **Major Block I — Portable Sovereign Intelligence**.
+M9 acceptance passed the canonical Rust gate and the Android APK/lifecycle regression gate. Current roadmap focus moves to **Major Block J — Performance Convergence + General Mobile Agent Validation**.
 
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
@@ -104,6 +104,7 @@ See:
 - `docs/ANDROID_CONTINUITY_3D_ASSISTANT.md`
 - `docs/PAIRED_PC_FABRIC.md`
 - `docs/CAPABILITY_FORGE_NATIVE_ASSIMILATION.md`
+- `docs/PORTABLE_SOVEREIGN_INTELLIGENCE.md`
 - `docs/COGNITIVE_CAPSULE.md`
 - `docs/SOVEREIGN_MODEL.md`
 - `docs/CONTINUITY_3D.md`
