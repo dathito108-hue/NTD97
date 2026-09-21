@@ -2,6 +2,7 @@
 
 mod binary;
 mod descriptors;
+mod generative;
 mod hash;
 mod ir_codec;
 mod native_tensor;
@@ -17,6 +18,13 @@ pub use descriptors::{
     TensorDescriptor, DESCRIPTOR_FRAME_HEADER_LEN, DESCRIPTOR_FRAME_MAGIC, DESCRIPTOR_MAJOR,
     DESCRIPTOR_MINOR, TENSOR_DESCRIPTOR_HEADER_LEN, TENSOR_DESCRIPTOR_MAGIC,
     TENSOR_RECORD_HEADER_LEN,
+};
+pub use generative::{
+    decode_native_generative_manifest, encode_native_generative_manifest,
+    push_native_generative_manifest_section, NativeGenerativeManifest,
+    NativeGenerativeManifestError, NATIVE_GENERATIVE_MANIFEST_HEADER_LEN,
+    NATIVE_GENERATIVE_MANIFEST_MAGIC, NATIVE_GENERATIVE_MANIFEST_MAJOR,
+    NATIVE_GENERATIVE_MANIFEST_MINOR,
 };
 pub use hash::{sha256, Digest};
 pub use ir_codec::{
@@ -41,7 +49,7 @@ use ntd_ir::IrVersion;
 
 pub const NCC97_MAGIC: [u8; 6] = *b"NCC97\0";
 pub const NCC97_MAJOR: u16 = 0;
-pub const NCC97_MINOR: u16 = 1;
+pub const NCC97_MINOR: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
@@ -62,6 +70,7 @@ pub enum SectionKind {
     WorldStateSchema = 14,
     ContinuityState = 15,
     EmbodimentProfile = 16,
+    GenerativeManifest = 17,
 }
 
 impl TryFrom<u16> for SectionKind {
@@ -85,6 +94,7 @@ impl TryFrom<u16> for SectionKind {
             14 => Ok(Self::WorldStateSchema),
             15 => Ok(Self::ContinuityState),
             16 => Ok(Self::EmbodimentProfile),
+            17 => Ok(Self::GenerativeManifest),
             other => Err(CapsuleError::InvalidSectionKind(other)),
         }
     }

@@ -1,13 +1,19 @@
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeSet;
+
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use ntd_capsule::{
-    decode_graph_section, load_native_generative_program, sha256, CapsuleBuilder, CapsuleKind,
-    CapsuleView, ChunkStorageView, Digest, MemoryContentStore, SectionKind,
+    decode_graph_section, encode_native_generative_manifest, encode_native_tokenizer,
+    encode_tensor_descriptors, load_native_generative_program, sha256, CapsuleBuilder, CapsuleKind,
+    CapsuleView, ChunkStorageView, Digest, MemoryContentStore, NativeGenerativeManifest,
+    SectionKind,
 };
 use ntd_core::{CapabilityId, SideEffectClass};
 use ntd_runtime::{AuthorityScope, CapabilityDescriptor, CapabilityDomain};
 
+use crate::activation::activate_thin_generative_capsule;
+use crate::gguf::{FileTensorShardStore, StreamedLoweredLlamaModel};
 use crate::{AssetKind, AssimilationError, NativeCandidate, ProvenanceRecord, SandboxReport};
 
 const SIGNATURE_MAGIC: [u8; 6] = *b"NAS97\0";
@@ -49,6 +55,73 @@ pub struct NativePackage {
     pub native_capsule: Vec<u8>,
     pub capsule_hash: Digest,
     pub capability: Option<CapabilityDescriptor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamedPackageSpec {
+    pub asset_id: String,
+    pub version: u32,
+    pub importer_id: String,
+}
+
+impl StreamedPackageSpec {
+    pub fn new(
+        asset_id: impl Into<String>,
+        version: u32,
+        importer_id: impl Into<String>,
+    ) -> Result<Self, AssimilationError> {
+        let asset_id = asset_id.into().trim().to_owned();
+        let importer_id = importer_id.into().trim().to_owned();
+        if asset_id.is_empty() || version == 0 || importer_id.is_empty() {
+            return Err(AssimilationError::InvalidPackage);
+        }
+        Ok(Self {
+            asset_id,
+            version,
+            importer_id,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ThinPackageChunk {
+    Embedded(SectionKind, Vec<u8>),
+    External {
+        kind: SectionKind,
+        logical_len: u64,
+        hash: Digest,
+    },
+}
+
+impl ThinPackageChunk {
+    fn kind(&self) -> SectionKind {
+        match self {
+            Self::Embedded(kind, _) | Self::External { kind, .. } => *kind,
+        }
+    }
+
+    fn logical_len(&self) -> Result<u64, AssimilationError> {
+        match self {
+            Self::Embedded(_, bytes) => {
+                u64::try_from(bytes.len()).map_err(|_| AssimilationError::Overflow)
+            }
+            Self::External { logical_len, .. } => Ok(*logical_len),
+        }
+    }
+
+    fn hash(&self) -> Digest {
+        match self {
+            Self::Embedded(_, bytes) => sha256(bytes),
+            Self::External { hash, .. } => *hash,
+        }
+    }
+
+    fn storage_tag(&self) -> u8 {
+        match self {
+            Self::Embedded(_, _) => 0,
+            Self::External { .. } => 1,
+        }
+    }
 }
 
 pub fn build_native_package(
@@ -141,6 +214,116 @@ pub fn build_native_package(
         capability,
     };
     verify_native_package(&package, &identity.verify_key())?;
+    Ok(package)
+}
+
+pub fn build_streamed_native_package(
+    spec: StreamedPackageSpec,
+    model: &StreamedLoweredLlamaModel,
+    provenance: &ProvenanceRecord,
+    report: &SandboxReport,
+    shard_store: &FileTensorShardStore,
+    identity: &AssimilationIdentity,
+) -> Result<NativePackage, AssimilationError> {
+    provenance.validate()?;
+    model
+        .graph
+        .validate()
+        .map_err(|error| AssimilationError::InvalidCandidate(format!("{error:?}")))?;
+    if model.tensor_shards.is_empty() || model.vocabulary_size == 0 {
+        return Err(AssimilationError::InvalidPackage);
+    }
+    validate_streamed_report(report)?;
+
+    let descriptors = model
+        .tensor_shards
+        .iter()
+        .map(|shard| shard.descriptor.clone())
+        .collect::<Vec<_>>();
+    let descriptor_bytes = encode_tensor_descriptors(&descriptors)
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let tokenizer_bytes = encode_native_tokenizer(&model.tokenizer)
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let manifest_bytes = encode_native_generative_manifest(NativeGenerativeManifest {
+        token_input: model.token_input,
+        distribution_output: u32::try_from(model.distribution_output)
+            .map_err(|_| AssimilationError::Overflow)?,
+        vocabulary_size: u32::try_from(model.vocabulary_size)
+            .map_err(|_| AssimilationError::Overflow)?,
+    })
+    .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let graph_bytes = ntd_capsule::encode_graph(&model.graph)
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let provenance_bytes = encode_provenance(provenance)?;
+    let log_bytes = encode_assimilation_log(
+        &spec.asset_id,
+        spec.version,
+        AssetKind::Intelligence,
+        &spec.importer_id,
+        &report.passed_regressions,
+    )?;
+
+    let mut chunks = Vec::with_capacity(model.tensor_shards.len().saturating_add(7));
+    chunks.push(ThinPackageChunk::Embedded(SectionKind::Graph, graph_bytes));
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::Tensors,
+        descriptor_bytes,
+    ));
+    for shard in &model.tensor_shards {
+        chunks.push(ThinPackageChunk::External {
+            kind: SectionKind::Tensors,
+            logical_len: shard.logical_len,
+            hash: shard.hash,
+        });
+    }
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::Tokenizer,
+        tokenizer_bytes,
+    ));
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::GenerativeManifest,
+        manifest_bytes,
+    ));
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::Provenance,
+        provenance_bytes,
+    ));
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::AssimilationLog,
+        log_bytes,
+    ));
+
+    let signable = thin_section_signing_payload(&chunks)?;
+    let signature = identity.sign(&signable);
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::Signatures,
+        encode_signature(identity.verify_key(), signature),
+    ));
+
+    let capsule_id = native_capsule_id(&spec.asset_id, spec.version, &provenance.source_digest)?;
+    let mut builder = CapsuleBuilder::new(CapsuleKind::Thin, capsule_id);
+    for chunk in chunks {
+        match chunk {
+            ThinPackageChunk::Embedded(kind, bytes) => builder.push_embedded(kind, bytes),
+            ThinPackageChunk::External {
+                kind,
+                logical_len,
+                hash,
+            } => builder.push_external(kind, logical_len, hash),
+        }
+    }
+    let native_capsule = builder
+        .write()
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let package = NativePackage {
+        asset_id: spec.asset_id,
+        version: spec.version,
+        kind: AssetKind::Intelligence,
+        capsule_hash: sha256(&native_capsule),
+        native_capsule,
+        capability: None,
+    };
+    verify_native_package_with_shards(&package, &identity.verify_key(), shard_store)?;
     Ok(package)
 }
 
@@ -237,6 +420,86 @@ pub fn verify_native_package(
     Ok(())
 }
 
+pub fn verify_native_package_with_shards(
+    package: &NativePackage,
+    trusted_verify_key: &[u8; 32],
+    shard_store: &FileTensorShardStore,
+) -> Result<(), AssimilationError> {
+    if package.asset_id.trim().is_empty()
+        || package.version == 0
+        || sha256(&package.native_capsule) != package.capsule_hash
+        || package.kind != AssetKind::Intelligence
+        || package.capability.is_some()
+    {
+        return Err(AssimilationError::InvalidPackage);
+    }
+
+    let view = CapsuleView::read(&package.native_capsule)
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    if view.kind == CapsuleKind::Full {
+        return verify_native_package(package, trusted_verify_key);
+    }
+    if view.kind != CapsuleKind::Thin {
+        return Err(AssimilationError::InvalidPackage);
+    }
+
+    let mut signable = Vec::new();
+    let mut signature = None;
+    let mut log = None;
+    for chunk in &view.chunks {
+        if chunk.kind == SectionKind::Signatures {
+            let ChunkStorageView::Embedded(bytes) = chunk.storage else {
+                return Err(AssimilationError::InvalidPackage);
+            };
+            if signature.replace(decode_signature(bytes)?).is_some() {
+                return Err(AssimilationError::InvalidPackage);
+            }
+            continue;
+        }
+
+        match chunk.storage {
+            ChunkStorageView::Embedded(bytes) => {
+                signable.push(ThinPackageChunk::Embedded(chunk.kind, bytes.to_vec()));
+                if chunk.kind == SectionKind::AssimilationLog
+                    && log.replace(decode_assimilation_log(bytes)?).is_some()
+                {
+                    return Err(AssimilationError::InvalidPackage);
+                }
+            }
+            ChunkStorageView::External => {
+                if chunk.kind != SectionKind::Tensors {
+                    return Err(AssimilationError::InvalidPackage);
+                }
+                signable.push(ThinPackageChunk::External {
+                    kind: chunk.kind,
+                    logical_len: chunk.logical_len,
+                    hash: chunk.hash,
+                });
+            }
+        }
+    }
+
+    let (verify_key, signature) = signature.ok_or(AssimilationError::InvalidSignature)?;
+    if &verify_key != trusted_verify_key {
+        return Err(AssimilationError::UntrustedSigner);
+    }
+    let message = thin_section_signing_payload(&signable)?;
+    let key =
+        VerifyingKey::from_bytes(&verify_key).map_err(|_| AssimilationError::InvalidSignature)?;
+    key.verify(&message, &Signature::from_bytes(&signature))
+        .map_err(|_| AssimilationError::InvalidSignature)?;
+
+    let (asset_id, version, kind) = log.ok_or(AssimilationError::InvalidPackage)?;
+    if asset_id != package.asset_id || version != package.version || kind != AssetKind::Intelligence
+    {
+        return Err(AssimilationError::InvalidPackage);
+    }
+
+    activate_thin_generative_capsule(&package.native_capsule, shard_store)
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    Ok(())
+}
+
 pub fn load_native_capability(
     native_capsule: &[u8],
 ) -> Result<CapabilityDescriptor, AssimilationError> {
@@ -275,6 +538,55 @@ fn validate_report(
         }
     }
     Ok(())
+}
+
+fn validate_streamed_report(report: &SandboxReport) -> Result<(), AssimilationError> {
+    if !report.isolated || report.network_used || report.external_write_used {
+        return Err(AssimilationError::SandboxNotIsolated);
+    }
+    let unique = report
+        .passed_regressions
+        .iter()
+        .map(|name| name.trim().to_owned())
+        .collect::<BTreeSet<_>>();
+    if unique.len() != report.passed_regressions.len() {
+        return Err(AssimilationError::InvalidPackage);
+    }
+    if !unique.contains("nir97-roundtrip") {
+        return Err(AssimilationError::RegressionMissing(
+            "nir97-roundtrip".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn native_capsule_id(
+    asset_id: &str,
+    version: u32,
+    source_digest: &Digest,
+) -> Result<[u8; 16], AssimilationError> {
+    let mut material = Vec::new();
+    push_string(&mut material, asset_id)?;
+    push_u32(&mut material, version);
+    material.extend_from_slice(source_digest);
+    let digest = sha256(&material);
+    let mut capsule_id = [0u8; 16];
+    capsule_id.copy_from_slice(&digest[..16]);
+    Ok(capsule_id)
+}
+
+fn thin_section_signing_payload(chunks: &[ThinPackageChunk]) -> Result<Vec<u8>, AssimilationError> {
+    let count = u32::try_from(chunks.len()).map_err(|_| AssimilationError::Overflow)?;
+    let mut out = b"NTD97-NATIVE-ASSET-SIGN-v2".to_vec();
+    push_u32(&mut out, count);
+    for chunk in chunks {
+        push_u16(&mut out, chunk.kind() as u16);
+        out.push(chunk.storage_tag());
+        out.push(0);
+        push_u64(&mut out, chunk.logical_len()?);
+        out.extend_from_slice(&chunk.hash());
+    }
+    Ok(out)
 }
 
 fn section_signing_payload(

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ntd_ir::{Graph, NodeId, OpKind, ValidationError, ValueDecl, ValueId, ValueType};
 
@@ -34,6 +34,29 @@ pub enum ExecutionError {
         expected: usize,
         actual: usize,
     },
+    Resolve {
+        value: ValueId,
+        source: TensorResolveError,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TensorResolveError {
+    Unavailable,
+    Invalid,
+}
+
+pub trait TensorResolver {
+    fn resolve(&self, value: ValueId) -> Result<Option<Tensor>, TensorResolveError>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct EmptyTensorResolver;
+
+impl TensorResolver for EmptyTensorResolver {
+    fn resolve(&self, _value: ValueId) -> Result<Option<Tensor>, TensorResolveError> {
+        Ok(None)
+    }
 }
 
 pub struct GraphExecutor<P> {
@@ -53,15 +76,36 @@ where
         graph: &Graph,
         inputs: BTreeMap<ValueId, Tensor>,
     ) -> Result<Vec<Tensor>, ExecutionError> {
+        self.execute_with_resolver(graph, inputs, &EmptyTensorResolver)
+    }
+
+    pub fn execute_with_resolver<R: TensorResolver>(
+        &self,
+        graph: &Graph,
+        inputs: BTreeMap<ValueId, Tensor>,
+        resolver: &R,
+    ) -> Result<Vec<Tensor>, ExecutionError> {
         graph.validate().map_err(ExecutionError::InvalidGraph)?;
 
+        let input_decls = graph
+            .inputs
+            .iter()
+            .map(|decl| (decl.id, *decl))
+            .collect::<BTreeMap<_, _>>();
+        let output_ids = graph.outputs.iter().copied().collect::<BTreeSet<_>>();
+        let mut remaining_uses = BTreeMap::<ValueId, usize>::new();
+        for node in &graph.nodes {
+            for value in &node.inputs {
+                *remaining_uses.entry(*value).or_default() += 1;
+            }
+        }
+
         let mut values = BTreeMap::new();
-        for input in &graph.inputs {
-            let tensor = inputs
-                .get(&input.id)
-                .ok_or(ExecutionError::MissingGraphInput(input.id))?;
-            validate_decl(NodeId(u32::MAX), *input, tensor)?;
-            values.insert(input.id, tensor.clone());
+        for (value_id, tensor) in inputs {
+            if let Some(decl) = input_decls.get(&value_id).copied() {
+                validate_decl(NodeId(u32::MAX), decl, &tensor)?;
+                values.insert(value_id, tensor);
+            }
         }
 
         for node in &graph.nodes {
@@ -69,6 +113,27 @@ where
                 OpKind::Tensor(op) => *op,
                 _ => return Err(ExecutionError::UnsupportedNode(node.id)),
             };
+
+            for value_id in &node.inputs {
+                if values.contains_key(value_id) {
+                    continue;
+                }
+                let Some(decl) = input_decls.get(value_id).copied() else {
+                    return Err(ExecutionError::MissingValue {
+                        node: node.id,
+                        value: *value_id,
+                    });
+                };
+                let tensor = resolver
+                    .resolve(*value_id)
+                    .map_err(|source| ExecutionError::Resolve {
+                        value: *value_id,
+                        source,
+                    })?
+                    .ok_or(ExecutionError::MissingGraphInput(*value_id))?;
+                validate_decl(NodeId(u32::MAX), decl, &tensor)?;
+                values.insert(*value_id, tensor);
+            }
 
             let mut node_inputs = Vec::with_capacity(node.inputs.len());
             for value_id in &node.inputs {
@@ -84,6 +149,7 @@ where
                     source,
                 }
             })?;
+            drop(node_inputs);
 
             if outputs.len() != node.outputs.len() {
                 return Err(ExecutionError::OutputArity {
@@ -91,6 +157,15 @@ where
                     expected: node.outputs.len(),
                     actual: outputs.len(),
                 });
+            }
+
+            for value_id in &node.inputs {
+                if let Some(remaining) = remaining_uses.get_mut(value_id) {
+                    *remaining = (*remaining).saturating_sub(1);
+                    if *remaining == 0 && !output_ids.contains(value_id) {
+                        values.remove(value_id);
+                    }
+                }
             }
 
             for (decl, tensor) in node.outputs.iter().zip(outputs.into_iter()) {
@@ -152,6 +227,55 @@ mod tests {
                 rank,
             },
         }
+    }
+
+    #[test]
+    fn resolves_graph_inputs_on_demand() {
+        use std::cell::Cell;
+
+        struct Resolver {
+            calls: Cell<usize>,
+        }
+
+        impl TensorResolver for Resolver {
+            fn resolve(&self, value: ValueId) -> Result<Option<Tensor>, TensorResolveError> {
+                self.calls.set(self.calls.get() + 1);
+                if value == ValueId(1) {
+                    Tensor::new(vec![2, 2], vec![3.0, 4.0, 5.0, 6.0])
+                        .map(Some)
+                        .map_err(|_| TensorResolveError::Invalid)
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+
+        let graph = Graph {
+            version: IrVersion::CURRENT,
+            inputs: vec![tensor_decl(0, 2), tensor_decl(1, 2)],
+            outputs: vec![ValueId(2)],
+            nodes: vec![Node {
+                id: NodeId(10),
+                op: OpKind::Tensor(TensorOp::MatMul),
+                inputs: vec![ValueId(0), ValueId(1)],
+                outputs: vec![tensor_decl(2, 2)],
+            }],
+        };
+
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            ValueId(0),
+            Tensor::new(vec![1, 2], vec![1.0, 2.0]).expect("lhs"),
+        );
+        let resolver = Resolver {
+            calls: Cell::new(0),
+        };
+
+        let result = GraphExecutor::new(CpuReferenceProvider)
+            .execute_with_resolver(&graph, inputs, &resolver)
+            .expect("execute");
+        assert_eq!(result[0].data(), &[13.0, 16.0]);
+        assert_eq!(resolver.calls.get(), 1);
     }
 
     #[test]

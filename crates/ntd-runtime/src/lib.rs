@@ -36,7 +36,9 @@ pub use cognition::{
     CognitiveTask, CognitiveVerifier, DeltaActivationHook, Goal, GoalStatus, LearnedDelta,
     TaskStatus, VerificationDecision, WorldFact,
 };
-pub use executor::{ExecutionError, GraphExecutor};
+pub use executor::{
+    EmptyTensorResolver, ExecutionError, GraphExecutor, TensorResolveError, TensorResolver,
+};
 pub use generation::{
     sample_token, DistributionKind, GeneratedText, GenerationConfig, GenerationError,
     GenerationResult, GraphGenerator, KvCache, KvCacheError, KvLayerCache, PrefixCache,
