@@ -9,8 +9,9 @@ mod trace;
 mod workload;
 
 pub use evidence::{
-    decode_physical_evidence, encode_physical_evidence, DeviceEvidence, EvidenceClass,
-    EvidenceMatrix, PhysicalEvidenceRecord, ValidationTargets,
+    decode_physical_evidence, encode_physical_evidence, evaluate_physical_records, DeviceEvidence,
+    EvidenceClass, EvidenceGateFailure, EvidenceGateReport, EvidenceMatrix, PhysicalEvidenceRecord,
+    ValidationTargets,
 };
 pub use matrix::{
     evaluate_device_profile, representative_device_profiles, DeviceMatrixReport,

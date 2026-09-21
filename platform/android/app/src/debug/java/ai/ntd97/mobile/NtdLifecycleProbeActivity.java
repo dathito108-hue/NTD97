@@ -26,6 +26,13 @@ public final class NtdLifecycleProbeActivity extends Activity {
         }
 
         List<String> results = new ArrayList<>();
+        boolean buildAttestationOk = BuildConfig.NTD_SOVEREIGNTY_AUDIT_PASSED
+                && BuildConfig.NTD_GIT_SHA != null
+                && BuildConfig.NTD_GIT_SHA.matches("[0-9a-fA-F]{40}");
+        results.add(buildAttestationOk
+                ? "build_attestation=ok"
+                : "build_attestation=failed");
+
         NtdRuntimeHost host = NtdSessionController.runtime();
 
         if (host == null) {

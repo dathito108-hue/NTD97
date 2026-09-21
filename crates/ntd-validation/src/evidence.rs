@@ -157,6 +157,20 @@ pub struct ValidationTargets {
 }
 
 impl ValidationTargets {
+    pub fn m10_reference() -> Self {
+        Self {
+            required_physical_profiles: vec![
+                "mobile-4gb".into(),
+                "mobile-8gb".into(),
+                "mobile-12gb".into(),
+            ],
+            max_p95_latency_nanos: 2_000_000_000,
+            max_energy_per_task_microjoules: 5_000_000,
+            min_reliability_permille: 990,
+            min_recovery_permille: 990,
+        }
+    }
+
     pub fn validate(&self) -> bool {
         !self.required_physical_profiles.is_empty()
             && self.max_p95_latency_nanos > 0
@@ -168,6 +182,164 @@ impl ValidationTargets {
                 .iter()
                 .all(|profile| !profile.trim().is_empty())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EvidenceGateFailure {
+    InvalidTargets,
+    InvalidExpectedRevision,
+    MissingProfile(String),
+    DuplicateProfile(String),
+    InvalidRecord(String),
+    BuildRevisionMismatch {
+        profile: String,
+        expected: String,
+        actual: String,
+    },
+    DuplicateFingerprint(String),
+    LatencyExceeded {
+        profile: String,
+        actual: u64,
+        maximum: u64,
+    },
+    EnergyExceeded {
+        profile: String,
+        actual: u64,
+        maximum: u64,
+    },
+    ReliabilityBelowTarget {
+        profile: String,
+        actual: u16,
+        minimum: u16,
+    },
+    RecoveryBelowTarget {
+        profile: String,
+        actual: u16,
+        minimum: u16,
+    },
+    SovereigntyAuditMissing(String),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EvidenceGateReport {
+    pub accepted: bool,
+    pub accepted_profiles: Vec<String>,
+    pub failures: Vec<EvidenceGateFailure>,
+}
+
+pub fn evaluate_physical_records(
+    records: &[PhysicalEvidenceRecord],
+    targets: &ValidationTargets,
+    expected_revision: &str,
+) -> EvidenceGateReport {
+    let mut report = EvidenceGateReport::default();
+    if !targets.validate() {
+        report.failures.push(EvidenceGateFailure::InvalidTargets);
+        return report;
+    }
+    if !is_git_revision(expected_revision) {
+        report
+            .failures
+            .push(EvidenceGateFailure::InvalidExpectedRevision);
+        return report;
+    }
+
+    let mut fingerprints = BTreeSet::new();
+    for required in &targets.required_physical_profiles {
+        let matching = records
+            .iter()
+            .filter(|record| record.evidence.profile == *required)
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            report
+                .failures
+                .push(EvidenceGateFailure::MissingProfile(required.clone()));
+            continue;
+        }
+        if matching.len() != 1 {
+            report
+                .failures
+                .push(EvidenceGateFailure::DuplicateProfile(required.clone()));
+            continue;
+        }
+
+        let failure_count_before = report.failures.len();
+        let record = matching[0];
+        let evidence = &record.evidence;
+        if !record.validate() {
+            report
+                .failures
+                .push(EvidenceGateFailure::InvalidRecord(required.clone()));
+            continue;
+        }
+        if record.build_revision != expected_revision {
+            report
+                .failures
+                .push(EvidenceGateFailure::BuildRevisionMismatch {
+                    profile: required.clone(),
+                    expected: expected_revision.to_owned(),
+                    actual: record.build_revision.clone(),
+                });
+        }
+        if !fingerprints.insert(evidence.device_fingerprint.clone()) {
+            report
+                .failures
+                .push(EvidenceGateFailure::DuplicateFingerprint(
+                    evidence.device_fingerprint.clone(),
+                ));
+        }
+        if evidence.p95_latency_nanos > targets.max_p95_latency_nanos {
+            report.failures.push(EvidenceGateFailure::LatencyExceeded {
+                profile: required.clone(),
+                actual: evidence.p95_latency_nanos,
+                maximum: targets.max_p95_latency_nanos,
+            });
+        }
+        if evidence.energy_per_task_microjoules > targets.max_energy_per_task_microjoules {
+            report.failures.push(EvidenceGateFailure::EnergyExceeded {
+                profile: required.clone(),
+                actual: evidence.energy_per_task_microjoules,
+                maximum: targets.max_energy_per_task_microjoules,
+            });
+        }
+        if evidence.reliability_permille < targets.min_reliability_permille {
+            report
+                .failures
+                .push(EvidenceGateFailure::ReliabilityBelowTarget {
+                    profile: required.clone(),
+                    actual: evidence.reliability_permille,
+                    minimum: targets.min_reliability_permille,
+                });
+        }
+        if evidence.recovery_permille < targets.min_recovery_permille {
+            report
+                .failures
+                .push(EvidenceGateFailure::RecoveryBelowTarget {
+                    profile: required.clone(),
+                    actual: evidence.recovery_permille,
+                    minimum: targets.min_recovery_permille,
+                });
+        }
+        if !evidence.sovereignty_audit_passed {
+            report
+                .failures
+                .push(EvidenceGateFailure::SovereigntyAuditMissing(
+                    required.clone(),
+                ));
+        }
+
+        if report.failures.len() == failure_count_before {
+            report.accepted_profiles.push(required.clone());
+        }
+    }
+
+    report.accepted = report.failures.is_empty()
+        && report.accepted_profiles.len() == targets.required_physical_profiles.len();
+    report
+}
+
+fn is_git_revision(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -308,7 +480,7 @@ mod tests {
                 recovery_permille: 1000,
                 sovereignty_audit_passed: true,
             },
-            build_revision: "0123456789abcdef".into(),
+            build_revision: "0123456789abcdef0123456789abcdef01234567".into(),
             total_ram_bytes: 8 * 1024 * 1024 * 1024,
             sample_count: 64,
             energy_source: "energy-counter".into(),
@@ -320,6 +492,54 @@ mod tests {
         let record = fixture();
         let encoded = encode_physical_evidence(&record).expect("encode");
         assert_eq!(decode_physical_evidence(&encoded).expect("decode"), record);
+    }
+
+    #[test]
+    fn m10_gate_requires_same_revision_and_distinct_devices() {
+        let revision = "0123456789abcdef0123456789abcdef01234567";
+        let mut records = Vec::new();
+        for (index, profile) in ["mobile-4gb", "mobile-8gb", "mobile-12gb"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut record = fixture();
+            record.evidence.profile = profile.into();
+            record.evidence.device_fingerprint = format!("sha256:device-{index}");
+            record.build_revision = revision.into();
+            records.push(record);
+        }
+
+        let report =
+            evaluate_physical_records(&records, &ValidationTargets::m10_reference(), revision);
+        assert!(report.accepted);
+        assert!(report.failures.is_empty());
+        assert_eq!(report.accepted_profiles.len(), 3);
+    }
+
+    #[test]
+    fn m10_gate_rejects_mixed_revision_and_duplicate_device() {
+        let revision = "0123456789abcdef0123456789abcdef01234567";
+        let mut records = Vec::new();
+        for profile in ["mobile-4gb", "mobile-8gb", "mobile-12gb"] {
+            let mut record = fixture();
+            record.evidence.profile = profile.into();
+            record.evidence.device_fingerprint = "sha256:same-device".into();
+            record.build_revision = revision.into();
+            records.push(record);
+        }
+        records[1].build_revision = "fedcba9876543210fedcba9876543210fedcba98".into();
+
+        let report =
+            evaluate_physical_records(&records, &ValidationTargets::m10_reference(), revision);
+        assert!(!report.accepted);
+        assert!(report
+            .failures
+            .iter()
+            .any(|failure| matches!(failure, EvidenceGateFailure::BuildRevisionMismatch { .. })));
+        assert!(report
+            .failures
+            .iter()
+            .any(|failure| matches!(failure, EvidenceGateFailure::DuplicateFingerprint(_))));
     }
 
     #[test]

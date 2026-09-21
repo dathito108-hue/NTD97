@@ -92,6 +92,35 @@ NDE97 contains:
 
 A SHA-256 digest covers the encoded record. It detects accidental or post-collection byte modification; it is not a hardware attestation signature.
 
+## Canonical acceptance targets
+
+The M10 reference gate is fixed before physical evidence is accepted:
+
+- required profiles: `mobile-4gb`, `mobile-8gb`, `mobile-12gb`;
+- p95 native workload latency: at most 2,000,000,000 ns;
+- energy per successful workload: at most 5,000,000 µJ;
+- reliability: at least 990/1000;
+- recovery: at least 990/1000;
+- sovereignty audit: required;
+- all three records must carry the same expected 40-character build revision;
+- all three records must have distinct hashed device fingerprints.
+
+These thresholds apply to the deterministic validation workload, not to unrestricted model-generation latency.
+
+## Verify collected records
+
+After collecting one curated NDE97 record for each required profile, run:
+
+```bash
+cargo run -p ntd-validation --bin nde97-gate -- \
+  <40-char-canonical-build-sha> \
+  physical-evidence/mobile-4gb.nde97 \
+  physical-evidence/mobile-8gb.nde97 \
+  physical-evidence/mobile-12gb.nde97
+```
+
+The command decodes and integrity-checks every record, prints its metrics, and exits nonzero for missing/duplicate profiles, mixed revisions, duplicate device fingerprints, metric failures or a missing sovereignty audit.
+
 ## Completion rule
 
 CI/emulator evidence is explicitly insufficient.
