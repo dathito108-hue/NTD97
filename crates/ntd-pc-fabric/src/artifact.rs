@@ -65,6 +65,26 @@ impl ArtifactSender {
         &self.descriptor
     }
 
+    pub fn chunk_at(&self, offset: u64) -> Result<ArtifactChunk, PcFabricError> {
+        if offset > self.descriptor.length {
+            return Err(PcFabricError::InvalidArtifact);
+        }
+        let offset_usize = usize::try_from(offset).map_err(|_| PcFabricError::Overflow)?;
+        let chunk_size =
+            usize::try_from(self.descriptor.chunk_size).map_err(|_| PcFabricError::Overflow)?;
+        let end = offset_usize
+            .saturating_add(chunk_size)
+            .min(self.bytes.len());
+        if offset_usize > self.bytes.len() {
+            return Err(PcFabricError::InvalidArtifact);
+        }
+        Ok(ArtifactChunk {
+            transfer_id: self.descriptor.transfer_id,
+            offset,
+            data: self.bytes[offset_usize..end].to_vec(),
+        })
+    }
+
     pub fn chunks(&self) -> Result<Vec<ArtifactChunk>, PcFabricError> {
         let chunk_size =
             usize::try_from(self.descriptor.chunk_size).map_err(|_| PcFabricError::Overflow)?;
