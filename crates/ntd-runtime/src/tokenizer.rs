@@ -1,7 +1,11 @@
 #![forbid(unsafe_code)]
 
+mod bpe;
+
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap};
+
+pub use bpe::{Gpt2BpeConfig, Gpt2BpeTokenizer, Gpt2PreTokenizer};
 
 pub const TOKEN_TYPE_NORMAL: i32 = 1;
 pub const TOKEN_TYPE_UNKNOWN: i32 = 2;
@@ -64,6 +68,10 @@ pub enum TokenizerError {
     InvalidTokenType { token: u32, token_type: i32 },
     NonFiniteScore(u32),
     MissingByteToken(u8),
+    InvalidMerge(usize),
+    DuplicateMerge { first: usize, second: usize },
+    MissingBpeToken(Vec<u8>),
+    InvalidByteEncoding(u32),
     UnmatchedInput(usize),
     InvalidTokenId(u32),
     InvalidUtf8,
