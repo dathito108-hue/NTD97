@@ -13,11 +13,12 @@ pub use generation::{
     SamplingError, SamplingMode,
 };
 pub use mobile::{
-    page_windows, plan_tensor_placement, AdaptiveExecutionProvider, AutotuneTable, ComputePolicy,
-    CpuReferenceMobileProvider, CpuTiledProvider, DeviceCapabilities, MobileComputeError,
-    MobileExecutionProvider, PageWindow, PowerClass, ProfiledProvider, ProviderKind,
-    ProviderMeasurement, ProviderProfile, QuantizationProfile, ResourceSnapshot, TensorPlacement,
-    TensorPlacementPlan, ThermalState,
+    npu_provider, page_windows, plan_tensor_placement, vulkan_provider, AdaptiveExecutionProvider,
+    AutotuneTable, ByteRegion, ComputePolicy, CpuReferenceMobileProvider, CpuTiledProvider,
+    DeviceCapabilities, MobileComputeError, MobileExecutionProvider, PageWindow, PagedByteReader,
+    PowerClass, ProfiledProvider, ProviderKind, ProviderMeasurement, ProviderProfile,
+    QuantizationProfile, ResourceSnapshot, SliceByteRegion, TensorPlacement, TensorPlacementPlan,
+    ThermalState,
 };
 pub use tensor::{
     CpuReferenceProvider, ExecutionProvider, QuantizationParams, Tensor, TensorError,
