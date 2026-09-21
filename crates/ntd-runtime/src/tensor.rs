@@ -127,6 +127,8 @@ impl ExecutionProvider for CpuReferenceProvider {
             TensorOp::Silu => silu(inputs)?,
             TensorOp::Reshape => reshape(inputs)?,
             TensorOp::Transpose => transpose(inputs)?,
+            TensorOp::Linear => linear(inputs)?,
+            TensorOp::PositionIds => position_ids(inputs)?,
         };
         Ok(vec![output])
     }
@@ -271,7 +273,7 @@ fn matmul(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
 }
 
 fn rms_norm(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
-    if inputs.is_empty() || inputs.len() > 2 {
+    if inputs.is_empty() || inputs.len() > 3 {
         return Err(TensorError::Arity {
             expected: 1,
             actual: inputs.len(),
@@ -283,7 +285,7 @@ fn rms_norm(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
         return Err(TensorError::InvalidShape);
     }
 
-    let weight = if inputs.len() == 2 {
+    let weight = if inputs.len() >= 2 {
         let weight = inputs[1];
         if weight.shape != vec![width] {
             return Err(TensorError::ShapeMismatch);
@@ -292,11 +294,19 @@ fn rms_norm(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
     } else {
         None
     };
+    let epsilon = if inputs.len() == 3 {
+        scalar_value(inputs[2])?
+    } else {
+        1.0e-5
+    };
+    if !epsilon.is_finite() || epsilon <= 0.0 {
+        return Err(TensorError::InvalidShape);
+    }
 
     let mut data = Vec::with_capacity(input.data.len());
     for row in input.data.chunks_exact(width) {
         let mean_square = row.iter().map(|value| value * value).sum::<f32>() / width as f32;
-        let inv_rms = 1.0 / (mean_square + 1.0e-5).sqrt();
+        let inv_rms = 1.0 / (mean_square + epsilon).sqrt();
         for (index, value) in row.iter().enumerate() {
             let scale = weight.map(|tensor| tensor.data[index]).unwrap_or(1.0);
             data.push(value * inv_rms * scale);
@@ -362,11 +372,25 @@ fn gather(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
 }
 
 fn rotary_position(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
-    require_arity(inputs, 2)?;
+    if inputs.len() != 2 && inputs.len() != 3 {
+        return Err(TensorError::Arity {
+            expected: 2,
+            actual: inputs.len(),
+        });
+    }
     let input = inputs[0];
     let positions = inputs[1];
+    let frequency_base = if inputs.len() == 3 {
+        scalar_value(inputs[2])?
+    } else {
+        10_000.0
+    };
 
-    if input.shape.len() != 3 || positions.shape.len() != 1 {
+    if input.shape.len() != 3
+        || positions.shape.len() != 1
+        || !frequency_base.is_finite()
+        || frequency_base <= 1.0
+    {
         return Err(TensorError::ShapeMismatch);
     }
 
@@ -389,7 +413,7 @@ fn rotary_position(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
             for pair in 0..(width / 2) {
                 let even = pair * 2;
                 let exponent = -(even as f32) / width as f32;
-                let theta = position * 10_000.0f32.powf(exponent);
+                let theta = position * frequency_base.powf(exponent);
                 let cos = theta.cos();
                 let sin = theta.sin();
                 let left = input.data[base + even];
@@ -488,11 +512,34 @@ fn reshape(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
     }
 
     let mut shape = Vec::with_capacity(shape_spec.data.len());
-    for raw in &shape_spec.data {
-        if !raw.is_finite() || *raw <= 0.0 || raw.fract() != 0.0 {
+    let mut inferred = None;
+    let mut known = 1usize;
+    for (index, raw) in shape_spec.data.iter().enumerate() {
+        if !raw.is_finite() || raw.fract() != 0.0 {
             return Err(TensorError::InvalidShape);
         }
-        shape.push(*raw as usize);
+        if *raw == -1.0 {
+            if inferred.replace(index).is_some() {
+                return Err(TensorError::InvalidShape);
+            }
+            shape.push(1);
+            continue;
+        }
+        if *raw <= 0.0 {
+            return Err(TensorError::InvalidShape);
+        }
+        let dimension = *raw as usize;
+        known = known
+            .checked_mul(dimension)
+            .ok_or(TensorError::InvalidShape)?;
+        shape.push(dimension);
+    }
+
+    if let Some(index) = inferred {
+        if known == 0 || input.data.len() % known != 0 {
+            return Err(TensorError::ShapeMismatch);
+        }
+        shape[index] = input.data.len() / known;
     }
     if element_count_usize(&shape)? != input.data.len() {
         return Err(TensorError::ShapeMismatch);
@@ -551,6 +598,48 @@ fn transpose(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
     }
 
     Tensor::new(output_shape, data)
+}
+
+fn linear(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
+    require_arity(inputs, 2)?;
+    let input = inputs[0];
+    let weight = inputs[1];
+    if input.rank() != 2 || weight.rank() != 2 || input.shape[1] != weight.shape[1] {
+        return Err(TensorError::ShapeMismatch);
+    }
+
+    let rows = input.shape[0];
+    let width = input.shape[1];
+    let outputs = weight.shape[0];
+    let mut data = vec![0.0f32; rows.checked_mul(outputs).ok_or(TensorError::InvalidShape)?];
+
+    for row in 0..rows {
+        for output in 0..outputs {
+            let mut sum = 0.0f32;
+            for inner in 0..width {
+                sum += input.data[row * width + inner] * weight.data[output * width + inner];
+            }
+            data[row * outputs + output] = sum;
+        }
+    }
+    Tensor::new(vec![rows, outputs], data)
+}
+
+fn position_ids(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
+    require_arity(inputs, 1)?;
+    let tokens = inputs[0];
+    if tokens.rank() != 1 {
+        return Err(TensorError::ShapeMismatch);
+    }
+    let data = (0..tokens.data.len()).map(|index| index as f32).collect();
+    Tensor::new(vec![tokens.data.len()], data)
+}
+
+fn scalar_value(tensor: &Tensor) -> Result<f32, TensorError> {
+    if tensor.rank() != 0 || tensor.data.len() != 1 {
+        return Err(TensorError::ShapeMismatch);
+    }
+    Ok(tensor.data[0])
 }
 
 fn row_major_strides(shape: &[usize]) -> Result<Vec<usize>, TensorError> {
