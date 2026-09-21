@@ -24,12 +24,6 @@ const PINNED_MODEL_SHA256: Digest = [
     0x01, 0x54, 0xc5, 0x6a, 0xfb, 0xc2, 0x3a, 0xb1, 0xc5, 0xe5, 0x6a, 0x72, 0xe6, 0x99, 0x12,
     0xc0, 0x4b,
 ];
-const SOURCE_GOLDEN_LEN: usize = 464;
-const SOURCE_GOLDEN_SHA256: Digest = [
-    0xbe, 0xeb, 0x5c, 0xb4, 0x67, 0x85, 0xef, 0xee, 0x81, 0xa8, 0x54, 0x53, 0x00, 0xb3, 0x1e,
-    0x39, 0x6b, 0x59, 0x5e, 0x5c, 0xe6, 0xf3, 0xb7, 0x7d, 0xb2, 0x01, 0x54, 0x55, 0x01, 0x98,
-    0x1d, 0x14,
-];
 const SOURCE_GOLDEN_STEPS: usize = 200;
 
 fn main() {
@@ -46,12 +40,18 @@ fn run() -> Result<(), String> {
         .unwrap_or_else(|| "stories260k-evidence".to_owned());
     let model_path = args
         .next()
-        .ok_or_else(|| format!("usage: {program} <stories260K.gguf>"))?;
+        .ok_or_else(|| format!("usage: {program} <stories260K.gguf> <source-output>"))?;
+    let source_output_path = args
+        .next()
+        .ok_or_else(|| format!("usage: {program} <stories260K.gguf> <source-output>"))?;
     if args.next().is_some() {
-        return Err(format!("usage: {program} <stories260K.gguf>"));
+        return Err(format!(
+            "usage: {program} <stories260K.gguf> <source-output>"
+        ));
     }
 
     let model_path = PathBuf::from(model_path);
+    let source_output_path = PathBuf::from(source_output_path);
     let source_bytes =
         fs::read(&model_path).map_err(|error| format!("read pinned source: {error}"))?;
     if source_bytes.len() != PINNED_MODEL_LEN {
@@ -69,6 +69,16 @@ fn run() -> Result<(), String> {
         ));
     }
     drop(source_bytes);
+
+    let mut source_output = fs::read(&source_output_path)
+        .map_err(|error| format!("read source reference output: {error}"))?;
+    if source_output.last() == Some(&b'\n') {
+        source_output.pop();
+    }
+    if source_output.is_empty() {
+        return Err("source reference output is empty".into());
+    }
+    let source_output_digest = sha256(&source_output);
 
     let source = FileGgufSource::open(&model_path)
         .map_err(|error| format!("open file-backed GGUF: {error:?}"))?;
@@ -195,18 +205,17 @@ fn run() -> Result<(), String> {
         println!("context_length={}", streamed.config.context_length);
         println!("source_steps={source_steps}");
         println!("generated_token_count={}", generated.generated_tokens.len());
+        println!("source_text_bytes={}", source_output.len());
+        println!("source_text_sha256={}", digest_hex(&source_output_digest));
         println!("generated_text_bytes={}", text.len());
         println!("generated_text_sha256={}", digest_hex(&text_digest));
-        println!(
-            "source_golden_sha256={}",
-            digest_hex(&SOURCE_GOLDEN_SHA256)
-        );
 
-        if text.len() != SOURCE_GOLDEN_LEN || text_digest != SOURCE_GOLDEN_SHA256 {
+        if text.as_bytes() != source_output.as_slice() {
+            let mismatch = first_mismatch(text.as_bytes(), &source_output);
             return Err(format!(
-                "source golden mismatch: expected {} bytes / {}, got {} bytes / {}",
-                SOURCE_GOLDEN_LEN,
-                digest_hex(&SOURCE_GOLDEN_SHA256),
+                "source output mismatch at byte {mismatch}: source {} bytes / {}, NTD97 {} bytes / {}",
+                source_output.len(),
+                digest_hex(&source_output_digest),
                 text.len(),
                 digest_hex(&text_digest)
             ));
@@ -298,6 +307,14 @@ fn build_tokenizer(
 
 fn evidence_shard_root() -> PathBuf {
     env::temp_dir().join(format!("ntd97-stories260k-evidence-{}", process::id()))
+}
+
+fn first_mismatch(left: &[u8], right: &[u8]) -> usize {
+    let shared = left.len().min(right.len());
+    left.iter()
+        .zip(right.iter())
+        .position(|(left, right)| left != right)
+        .unwrap_or(shared)
 }
 
 fn digest_hex(digest: &Digest) -> String {
