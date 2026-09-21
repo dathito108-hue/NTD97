@@ -5,6 +5,7 @@ mod action_fabric;
 mod capability;
 mod checkpoint;
 mod cognition;
+mod conversation;
 mod executor;
 mod generation;
 mod gpt2;
@@ -35,6 +36,10 @@ pub use cognition::{
     CognitiveIdentity, CognitiveObservation, CognitivePlanner, CognitiveRuntime, CognitiveState,
     CognitiveTask, CognitiveVerifier, DeltaActivationHook, Goal, GoalStatus, LearnedDelta,
     TaskStatus, VerificationDecision, WorldFact,
+};
+pub use conversation::{
+    ChatPromptError, CompiledChatPrompt, ConversationRole, ConversationTurn,
+    NativeChatPromptCompiler,
 };
 pub use executor::{
     EmptyTensorResolver, ExecutionError, GraphExecutor, TensorResolveError, TensorResolver,
