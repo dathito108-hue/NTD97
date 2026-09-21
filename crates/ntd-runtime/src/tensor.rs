@@ -304,7 +304,6 @@ fn softmax(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
     Tensor::new(input.shape.clone(), data)
 }
 
-
 fn gather(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
     require_arity(inputs, 2)?;
     let table = inputs[0];
@@ -521,11 +520,7 @@ mod tests {
     #[test]
     fn gather_selects_rows_in_token_order() {
         let provider = CpuReferenceProvider;
-        let table = Tensor::new(
-            vec![3, 2],
-            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-        )
-        .expect("table");
+        let table = Tensor::new(vec![3, 2], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).expect("table");
         let indices = Tensor::new(vec![2], vec![2.0, 0.0]).expect("indices");
         let output = provider
             .execute(TensorOp::Gather, &[&table, &indices])
