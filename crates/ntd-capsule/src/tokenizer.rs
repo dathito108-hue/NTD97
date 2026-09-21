@@ -184,8 +184,7 @@ pub fn load_native_generative_program<S: ContentStore>(
             let bytes = store
                 .get(&chunk.hash)
                 .ok_or(NativeGenerativeError::MissingExternalContent(chunk.hash))?;
-            let actual =
-                u64::try_from(bytes.len()).map_err(|_| NativeGenerativeError::Overflow)?;
+            let actual = u64::try_from(bytes.len()).map_err(|_| NativeGenerativeError::Overflow)?;
             if actual != chunk.logical_len {
                 return Err(NativeGenerativeError::ExternalLengthMismatch {
                     expected: chunk.logical_len,
@@ -199,8 +198,7 @@ pub fn load_native_generative_program<S: ContentStore>(
         }
     };
 
-    let tokenizer =
-        decode_native_tokenizer(bytes).map_err(NativeGenerativeError::Tokenizer)?;
+    let tokenizer = decode_native_tokenizer(bytes).map_err(NativeGenerativeError::Tokenizer)?;
 
     Ok(NativeGenerativeProgram { program, tokenizer })
 }
@@ -217,10 +215,7 @@ fn validate_tokenizer(tokenizer: &NativeTokenizerDescriptor) -> Result<(), Nativ
             return Err(NativeTokenizerError::EmptyToken(id));
         }
         if let Some(first) = seen.insert(token.clone(), id) {
-            return Err(NativeTokenizerError::DuplicateToken {
-                first,
-                second: id,
-            });
+            return Err(NativeTokenizerError::DuplicateToken { first, second: id });
         }
     }
 
