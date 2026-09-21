@@ -178,6 +178,7 @@ fn encode_planned_action(
     push_u64(out, action.id.0);
     push_u32(out, action.node_id);
     push_string(out, &action.capability.0)?;
+    push_u32(out, action.capability_version);
     push_u8(out, encode_side_effect(action.side_effect));
     push_bool(out, action.verification_required);
     encode_typed_action(out, &action.action)?;
@@ -194,6 +195,7 @@ fn decode_planned_action(cursor: &mut Cursor<'_>) -> Result<PlannedAction, Actio
     let id = ActionId(cursor.u64()?);
     let node_id = cursor.u32()?;
     let capability = CapabilityId(cursor.string()?);
+    let capability_version = cursor.u32()?;
     let side_effect = decode_side_effect(cursor.u8()?)?;
     let verification_required = cursor.boolean()?;
     let action = decode_typed_action(cursor)?;
@@ -209,6 +211,7 @@ fn decode_planned_action(cursor: &mut Cursor<'_>) -> Result<PlannedAction, Actio
         id,
         node_id,
         capability,
+        capability_version,
         side_effect,
         verification_required,
         action,
@@ -648,6 +651,7 @@ mod tests {
                         id: ActionId(1),
                         node_id: 4,
                         capability: CapabilityId("web.search".into()),
+                        capability_version: 1,
                         side_effect: SideEffectClass::ReadOnly,
                         verification_required: true,
                         action: TypedAction::WebSearch {
