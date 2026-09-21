@@ -10,7 +10,7 @@ mod wire;
 pub use adapter::{PairedPcAdapter, PairedPcTransport};
 pub use agent::{
     DesktopAgent, DesktopArtifactPolicy, DesktopCapabilityHandler, DesktopExecutionPolicy,
-    FileArtifactHandler, ProcessExecutionHandler, SystemObserveHandler,
+    DesktopHandlerOutput, FileArtifactHandler, ProcessExecutionHandler, SystemObserveHandler,
 };
 pub use artifact::{
     ArtifactAssembler, ArtifactChunk, ArtifactDescriptor, ArtifactSender, DEFAULT_ARTIFACT_CHUNK,
@@ -19,10 +19,13 @@ pub use crypto::{
     ClientHandshake, ClientHello, HandshakeEntropy, PairedIdentity, PairingRecord, SecureSession,
     ServerHello, SessionRole,
 };
-pub use transport::{read_length_prefixed_frame, write_length_prefixed_frame, TcpFrameTransport};
+pub use transport::{
+    read_length_prefixed_frame, write_length_prefixed_frame, TcpFrameTransport,
+    DEFAULT_MAX_TRANSPORT_FRAME,
+};
 pub use wire::{
-    decode_message, encode_message, RemoteAction, RemoteMessage, RemoteRequest, RemoteResult,
-    RemoteResultStatus, PCF97_MAGIC, PCF97_MAJOR, PCF97_MINOR,
+    decode_message, encode_message, RemoteAction, RemoteCapability, RemoteMessage, RemoteRequest,
+    RemoteResult, RemoteResultStatus, PCF97_MAGIC, PCF97_MAJOR, PCF97_MINOR,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
