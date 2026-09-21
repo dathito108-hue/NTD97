@@ -15,6 +15,31 @@ use ntd_runtime::{
     TypedAction,
 };
 
+struct FlakySearchAdapter {
+    calls: Rc<RefCell<u32>>,
+    action_ids: Rc<RefCell<Vec<u64>>>,
+}
+
+impl CapabilityAdapter for FlakySearchAdapter {
+    fn execute(
+        &mut self,
+        action_id: ntd_runtime::ActionId,
+        _action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        self.action_ids.borrow_mut().push(action_id.0);
+        let mut calls = self.calls.borrow_mut();
+        *calls += 1;
+        if *calls == 1 {
+            Err("temporary network failure".into())
+        } else {
+            Ok(AdapterResult::Completed {
+                output: ActionOutput::text("retry succeeded", "ok"),
+                rollback_token: None,
+            })
+        }
+    }
+}
+
 struct SearchAdapter;
 
 impl CapabilityAdapter for SearchAdapter {
@@ -359,6 +384,56 @@ fn multi_surface_action_plan_resumes_after_checkpoint() {
         .actions
         .iter()
         .all(|action| action.status == ActionStatus::Committed));
+}
+
+#[test]
+fn transient_adapter_failure_retries_with_same_action_id() {
+    let registry = registry();
+    let calls = Rc::new(RefCell::new(0));
+    let action_ids = Rc::new(RefCell::new(Vec::new()));
+    let mut fabric = ActionFabric::new(registry);
+    fabric
+        .register_adapter(
+            CapabilityId("web.search".into()),
+            FlakySearchAdapter {
+                calls: Rc::clone(&calls),
+                action_ids: Rc::clone(&action_ids),
+            },
+        )
+        .expect("adapter");
+
+    let graph = TaskGraph {
+        actions: vec![ActionNode {
+            id: 1,
+            capability: CapabilityId("web.search".into()),
+            side_effect: SideEffectClass::ReadOnly,
+            verification_required: true,
+        }],
+    };
+    let plan = fabric
+        .prepare_plan(
+            88,
+            &graph,
+            BTreeMap::from([(
+                1,
+                TypedAction::WebSearch {
+                    query: "retry".into(),
+                    max_results: 1,
+                },
+            )]),
+        )
+        .expect("plan");
+
+    let first = fabric
+        .execute_next(plan, &authority(), &mut AcceptVerifier)
+        .expect("retryable report");
+    assert_eq!(first.action_status, Some(ActionStatus::Retryable));
+
+    let second = fabric
+        .execute_next(plan, &authority(), &mut AcceptVerifier)
+        .expect("retry success");
+    assert_eq!(second.plan_status, ActionPlanStatus::Completed);
+    assert_eq!(action_ids.borrow().as_slice(), &[1, 1]);
 }
 
 #[test]
