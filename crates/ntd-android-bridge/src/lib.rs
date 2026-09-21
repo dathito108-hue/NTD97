@@ -142,7 +142,10 @@ impl CognitiveExecutor for NativeDeliberationExecutor {
                     "entropy_milli={}",
                     (signals.normalized_entropy * 1000.0).round() as u16
                 ),
-                format!("margin_milli={}", (signals.top_margin * 1000.0).round() as u16),
+                format!(
+                    "margin_milli={}",
+                    (signals.top_margin * 1000.0).round() as u16
+                ),
             ],
         })
     }
@@ -773,13 +776,7 @@ fn submit_chat_reserved(
     let mut verifier = NativeDeliberationVerifier;
     let report = conversation
         .cognition_mut()
-        .advance(
-            task_id,
-            signals,
-            &mut planner,
-            &mut executor,
-            &mut verifier,
-        )
+        .advance(task_id, signals, &mut planner, &mut executor, &mut verifier)
         .map_err(|error| format!("native cognitive deliberation: {error:?}"))?;
     if report.status != TaskStatus::Running || report.iterations == 0 {
         return Err(format!(
