@@ -99,6 +99,7 @@ impl Default for NativeState {
             input_peak_milli: 0,
             chat_model: None,
             chat_session: None,
+            chat_submit_in_progress: false,
             conversation: SovereignConversationState::new(CognitiveIdentity(*b"NTD97-ASSISTANT1")),
             next_chat_request_id: 1,
         }
