@@ -155,15 +155,12 @@ fn lower_llama_model_internal(
             let token_types = source_tokenizer.token_types.ok_or_else(|| {
                 GgufError::UnsupportedModelFeature("missing LLaMA tokenizer token types".into())
             })?;
-            let add_space_prefix = source_tokenizer.add_space_prefix.ok_or_else(|| {
-                GgufError::UnsupportedModelFeature("missing LLaMA add-space-prefix policy".into())
-            })?;
-            let add_bos_token = source_tokenizer.add_bos_token.ok_or_else(|| {
-                GgufError::UnsupportedModelFeature("missing LLaMA add-BOS policy".into())
-            })?;
-            let add_eos_token = source_tokenizer.add_eos_token.ok_or_else(|| {
-                GgufError::UnsupportedModelFeature("missing LLaMA add-EOS policy".into())
-            })?;
+            // GGUF LLaMA/SPM semantics inherit llama.cpp defaults when these optional
+            // metadata overrides are absent. This is intentionally scoped to the
+            // canonical "llama" tokenizer model and does not generalize to other tokenizers.
+            let add_space_prefix = source_tokenizer.add_space_prefix.unwrap_or(true);
+            let add_bos_token = source_tokenizer.add_bos_token.unwrap_or(true);
+            let add_eos_token = source_tokenizer.add_eos_token.unwrap_or(false);
 
             NativeTokenizerDescriptor {
                 tokens: source_tokenizer.tokens,
