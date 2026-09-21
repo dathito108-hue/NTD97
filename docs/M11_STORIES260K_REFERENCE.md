@@ -114,12 +114,36 @@ This satisfies the representative real LLaMA source-vs-NIR97 equivalence gate fo
 pinned SHA. It does not authorize unsupported architectures/tokenizers or silently
 generalize equivalence to arbitrary source artifacts.
 
-## Remaining evidence gate
+## Recorded Android integration evidence
 
-For this exact real native package, the remaining M11 integration gate is Android
-load + local generation through the canonical JNI/mobile path. Additional tokenizer
-families, architectures and quantized models retain their own fail-closed support and
-validation requirements.
+The same pinned model is exported by NTD97 as a signed Thin NCC97 package and 52
+content-addressed NTP97 shards. The host exporter first verifies the package and records
+a deterministic 16-token native reference. Only native artifacts are copied into debug
+APK assets; the GGUF file, llama2.c checkpoint and source runtime are excluded from the
+Android execution path.
+
+Recorded Android evidence:
+
+```text
+capsule SHA-256 = 8938b069b9891c2bea96f206419bad9990a9a1738a423e4116fe80472d2bda71
+shards          = 52
+signature       = ok
+activation      = ok
+generated tokens = 16
+token IDs       = 403,407,261,378,432,383,286,261,376,298,315,421,395,317,426,338
+text bytes      = 57
+text SHA-256    = 1e454937e49b36d9d8cba4a122bd493f1348a90626a41d6061789374fcc021c8
+android_real_model = PASS
+```
+
+The x86_64 API 35 emulator verifies the package signature and shard hashes on-device,
+activates the Thin capsule through the file-backed resolver, generates the reference
+tokens through the JNI/native path, and then completes the existing lifecycle/reboot
+probe successfully.
+
+This closes the M11 Android integration gate for the pinned real model. Other model
+families and tokenizer variants retain independent fail-closed support/evidence
+requirements.
 
 The source runtime is used only as a validation oracle. It is not linked into NCC97,
 the canonical NTD97 runtime, or the shipped Android dependency graph.
