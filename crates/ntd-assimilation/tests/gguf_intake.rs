@@ -149,12 +149,24 @@ fn conversion_plan_distinguishes_supported_transcode_from_unsupported_types() {
     assert_eq!(bf16.transcode_tensor_count, 0);
     assert_eq!(bf16.unsupported_tensor_count, 0);
 
-    model.tensors[0].ggml_type = 12;
-    let q4_k = GgufConversionPlan::from_model(&model).expect("q4_k plan");
-    assert_eq!(q4_k.direct_tensor_count, 0);
-    assert_eq!(q4_k.transcode_tensor_count, 0);
-    assert_eq!(q4_k.unsupported_tensor_count, 1);
-    assert!(q4_k
+    for ggml_type in [12, 13, 14] {
+        model.tensors[0].ggml_type = ggml_type;
+        let k_quant = GgufConversionPlan::from_model(&model).expect("k-quant plan");
+        assert_eq!(k_quant.direct_tensor_count, 0);
+        assert_eq!(k_quant.transcode_tensor_count, 1);
+        assert_eq!(k_quant.unsupported_tensor_count, 0);
+        assert!(!k_quant
+            .blockers
+            .iter()
+            .any(|item| item.contains("unsupported GGML")));
+    }
+
+    model.tensors[0].ggml_type = 10;
+    let q2_k = GgufConversionPlan::from_model(&model).expect("unsupported plan");
+    assert_eq!(q2_k.direct_tensor_count, 0);
+    assert_eq!(q2_k.transcode_tensor_count, 0);
+    assert_eq!(q2_k.unsupported_tensor_count, 1);
+    assert!(q2_k
         .blockers
         .iter()
         .any(|item| item.contains("unsupported GGML")));
