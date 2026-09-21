@@ -263,6 +263,7 @@ pub fn evaluate_physical_records(
             continue;
         }
 
+        let failure_count_before = report.failures.len();
         let record = matching[0];
         let evidence = &record.evidence;
         if !record.validate() {
@@ -331,21 +332,7 @@ pub fn evaluate_physical_records(
                 ));
         }
 
-        if !report.failures.iter().any(|failure| match failure {
-            EvidenceGateFailure::BuildRevisionMismatch { profile, .. }
-            | EvidenceGateFailure::LatencyExceeded { profile, .. }
-            | EvidenceGateFailure::EnergyExceeded { profile, .. }
-            | EvidenceGateFailure::ReliabilityBelowTarget { profile, .. }
-            | EvidenceGateFailure::RecoveryBelowTarget { profile, .. } => profile == required,
-            EvidenceGateFailure::InvalidRecord(profile)
-            | EvidenceGateFailure::DuplicateProfile(profile)
-            | EvidenceGateFailure::MissingProfile(profile)
-            | EvidenceGateFailure::SovereigntyAuditMissing(profile) => profile == required,
-            EvidenceGateFailure::DuplicateFingerprint(_) => false,
-            EvidenceGateFailure::InvalidTargets | EvidenceGateFailure::InvalidExpectedRevision => {
-                false
-            }
-        }) {
+        if report.failures.len() == failure_count_before {
             report.accepted_profiles.push(required.clone());
         }
     }
