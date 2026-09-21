@@ -436,8 +436,8 @@ fn real_model_probe(
         capsule_hash,
         capability: None,
     };
-    let shard_store =
-        FileTensorShardStore::open(shard_root).map_err(|error| format!("open shards: {error:?}"))?;
+    let shard_store = FileTensorShardStore::open(shard_root)
+        .map_err(|error| format!("open shards: {error:?}"))?;
 
     verify_native_package_with_shards(&package, &verify_key, &shard_store)
         .map_err(|error| format!("verify signed package: {error:?}"))?;
@@ -530,10 +530,16 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeRealModel
     expected_token_ids: JString<'_>,
 ) -> jbyteArray {
     let Some(capsule_path) = java_string(&mut env, &capsule_path) else {
-        return java_bytes(&env, b"android_real_model=failed\nerror=invalid capsule path\n");
+        return java_bytes(
+            &env,
+            b"android_real_model=failed\nerror=invalid capsule path\n",
+        );
     };
     let Some(shard_root) = java_string(&mut env, &shard_root) else {
-        return java_bytes(&env, b"android_real_model=failed\nerror=invalid shard root\n");
+        return java_bytes(
+            &env,
+            b"android_real_model=failed\nerror=invalid shard root\n",
+        );
     };
     let Some(expected_token_ids) = java_string(&mut env, &expected_token_ids) else {
         return java_bytes(
@@ -544,16 +550,14 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeRealModel
     let verify_key = match env.convert_byte_array(&verify_key) {
         Ok(bytes) => bytes,
         Err(_) => {
-            return java_bytes(&env, b"android_real_model=failed\nerror=invalid verify key\n")
+            return java_bytes(
+                &env,
+                b"android_real_model=failed\nerror=invalid verify key\n",
+            )
         }
     };
 
-    match real_model_probe(
-        &capsule_path,
-        &shard_root,
-        &verify_key,
-        &expected_token_ids,
-    ) {
+    match real_model_probe(&capsule_path, &shard_root, &verify_key, &expected_token_ids) {
         Ok(result) => java_bytes(&env, result.as_bytes()),
         Err(error) => java_bytes(
             &env,
