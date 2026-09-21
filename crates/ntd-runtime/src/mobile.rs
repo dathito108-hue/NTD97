@@ -38,11 +38,7 @@ pub struct DeviceCapabilities {
 }
 
 impl DeviceCapabilities {
-    pub fn detect(
-        total_ram_bytes: u64,
-        supports_vulkan: bool,
-        supports_npu: bool,
-    ) -> Self {
+    pub fn detect(total_ram_bytes: u64, supports_vulkan: bool, supports_npu: bool) -> Self {
         let logical_cores = std::thread::available_parallelism()
             .map(|value| value.get())
             .unwrap_or(1);
@@ -152,7 +148,6 @@ pub struct PageWindow {
     pub len: u64,
 }
 
-
 pub trait ByteRegion {
     fn len(&self) -> u64;
     fn read_range(&self, offset: u64, len: u64) -> Option<&[u8]>;
@@ -220,7 +215,10 @@ pub enum MobileComputeError {
     InvalidPageSize,
 }
 
-pub fn page_windows(total_bytes: u64, page_bytes: u64) -> Result<Vec<PageWindow>, MobileComputeError> {
+pub fn page_windows(
+    total_bytes: u64,
+    page_bytes: u64,
+) -> Result<Vec<PageWindow>, MobileComputeError> {
     if page_bytes == 0 {
         return Err(MobileComputeError::InvalidPageSize);
     }
@@ -234,7 +232,9 @@ pub fn page_windows(total_bytes: u64, page_bytes: u64) -> Result<Vec<PageWindow>
         let remaining = total_bytes - offset;
         let len = remaining.min(page_bytes);
         windows.push(PageWindow { offset, len });
-        offset = offset.checked_add(len).ok_or(MobileComputeError::Overflow)?;
+        offset = offset
+            .checked_add(len)
+            .ok_or(MobileComputeError::Overflow)?;
     }
     Ok(windows)
 }
@@ -254,19 +254,9 @@ pub fn plan_tensor_placement(
         .available_ram_bytes
         .saturating_sub(policy.reserve_ram_bytes);
 
-    let accelerator = if accelerator_permitted(
-        ProviderKind::Npu,
-        device,
-        snapshot,
-        policy,
-    ) {
+    let accelerator = if accelerator_permitted(ProviderKind::Npu, device, snapshot, policy) {
         Some(ProviderKind::Npu)
-    } else if accelerator_permitted(
-        ProviderKind::Vulkan,
-        device,
-        snapshot,
-        policy,
-    ) {
+    } else if accelerator_permitted(ProviderKind::Vulkan, device, snapshot, policy) {
         Some(ProviderKind::Vulkan)
     } else {
         None
@@ -497,16 +487,14 @@ impl AutotuneTable {
     pub fn latency_nanos(&self, kind: ProviderKind, op: TensorOp) -> Option<u64> {
         self.measurements
             .iter()
-            .find(|entry| {
-                entry.kind == kind && entry.op == op && entry.verified_equivalent
-            })
+            .find(|entry| entry.kind == kind && entry.op == op && entry.verified_equivalent)
             .map(|entry| entry.latency_nanos)
     }
 
     pub fn is_verified(&self, kind: ProviderKind, op: TensorOp) -> bool {
-        self.measurements.iter().any(|entry| {
-            entry.kind == kind && entry.op == op && entry.verified_equivalent
-        })
+        self.measurements
+            .iter()
+            .any(|entry| entry.kind == kind && entry.op == op && entry.verified_equivalent)
     }
 }
 
@@ -615,12 +603,7 @@ impl AdaptiveExecutionProvider {
             ProviderKind::CpuReference | ProviderKind::CpuTiled => true,
             ProviderKind::Vulkan | ProviderKind::Npu => {
                 self.autotune.is_verified(profile.kind, op)
-                    && accelerator_permitted(
-                        profile.kind,
-                        &self.device,
-                        self.snapshot,
-                        self.policy,
-                    )
+                    && accelerator_permitted(profile.kind, &self.device, self.snapshot, self.policy)
             }
         }
     }
@@ -809,13 +792,8 @@ mod tests {
         snapshot.available_ram_bytes = 512 * 1024 * 1024;
         let policy = ComputePolicy::for_device(&device);
 
-        let plan = plan_tensor_placement(
-            900 * 1024 * 1024,
-            &device,
-            snapshot,
-            policy,
-        )
-        .expect("plan");
+        let plan =
+            plan_tensor_placement(900 * 1024 * 1024, &device, snapshot, policy).expect("plan");
 
         assert!(matches!(plan.placement, TensorPlacement::PagedCpu { .. }));
         assert!(plan.page_count > 1);
