@@ -126,11 +126,7 @@ impl Gpt2BpeTokenizer {
         self.add_eos_token
     }
 
-    pub fn encode(
-        &self,
-        text: &str,
-        add_special_tokens: bool,
-    ) -> Result<Vec<u32>, TokenizerError> {
+    pub fn encode(&self, text: &str, add_special_tokens: bool) -> Result<Vec<u32>, TokenizerError> {
         let mut output = Vec::new();
         if add_special_tokens && self.add_bos_token {
             output.extend(self.bos_token);
@@ -477,10 +473,7 @@ mod tests {
             gpt2_pretokenize(" hello! it's 42\n\nnext"),
             vec![" hello", "!", " it", "'s", " 42", "\n", "\n", "next"]
         );
-        assert_eq!(
-            gpt2_pretokenize(" αβ１２"),
-            vec![" αβ", "１２"]
-        );
+        assert_eq!(gpt2_pretokenize(" αβ１２"), vec![" αβ", "１２"]);
     }
 
     #[test]
@@ -496,11 +489,17 @@ mod tests {
         let tokenizer = toy_tokenizer();
         let encoded = tokenizer.encode(" hello!", false).expect("encode");
         assert_eq!(encoded.len(), 2);
-        assert_eq!(tokenizer.decode(&encoded, false).expect("decode"), " hello!");
+        assert_eq!(
+            tokenizer.decode(&encoded, false).expect("decode"),
+            " hello!"
+        );
 
         let unicode = " hé🙂";
         let encoded = tokenizer.encode(unicode, false).expect("unicode encode");
-        assert_eq!(tokenizer.decode(&encoded, false).expect("unicode decode"), unicode);
+        assert_eq!(
+            tokenizer.decode(&encoded, false).expect("unicode decode"),
+            unicode
+        );
     }
 
     #[test]
