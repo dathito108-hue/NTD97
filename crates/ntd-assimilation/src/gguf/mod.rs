@@ -1,10 +1,14 @@
 #![forbid(unsafe_code)]
 
+mod lower;
 mod reader;
 mod transcode;
 
 use std::collections::BTreeMap;
 
+pub use lower::{
+    lower_llama_model, LlamaConfig, LlamaTensorBinding, LoweredLlamaModel,
+};
 pub use reader::parse_gguf;
 pub use transcode::{
     ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, transcode_tensor,
@@ -305,6 +309,11 @@ pub enum GgufError {
     UnsupportedVersion(u32),
     UnsupportedValueType(u32),
     UnsupportedTensorType(u32),
+    UnsupportedArchitecture(String),
+    UnsupportedModelFeature(String),
+    MissingTensor(String),
+    InvalidModelConfig(&'static str),
+    NativeLowering(String),
     InvalidBool(u8),
     InvalidUtf8,
     InvalidArrayType,
