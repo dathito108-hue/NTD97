@@ -600,7 +600,8 @@ fn chat_status(request_id: u64) -> i32 {
     else {
         return CHAT_STATUS_MISSING;
     };
-    if session.cancel.load(Ordering::Acquire) && session.status == NativeChatSessionStatus::Running {
+    if session.cancel.load(Ordering::Acquire) && session.status == NativeChatSessionStatus::Running
+    {
         return CHAT_STATUS_CANCELLED;
     }
     match session.status {
@@ -645,7 +646,8 @@ fn terminal_chat_event(request_id: u64) -> Option<Vec<u8>> {
         .as_mut()
         .filter(|session| session.request_id == request_id)?;
 
-    if session.cancel.load(Ordering::Acquire) && session.status == NativeChatSessionStatus::Running {
+    if session.cancel.load(Ordering::Acquire) && session.status == NativeChatSessionStatus::Running
+    {
         session.status = NativeChatSessionStatus::Cancelled;
     }
 
@@ -881,10 +883,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeNextChatE
                     session.status = NativeChatSessionStatus::Failed;
                 }
             }
-            java_bytes(
-                &env,
-                &encode_chat_event(CHAT_EVENT_ERROR, None, &error),
-            )
+            java_bytes(&env, &encode_chat_event(CHAT_EVENT_ERROR, None, &error))
         }
     }
 }
