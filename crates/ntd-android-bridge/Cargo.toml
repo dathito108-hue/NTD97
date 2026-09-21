@@ -11,6 +11,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 jni = { version = "0.21.1", default-features = false }
+ntd-assimilation = { path = "../ntd-assimilation" }
+ntd-capsule = { path = "../ntd-capsule" }
 ntd-mobile-shell = { path = "../ntd-mobile-shell" }
 ntd-runtime = { path = "../ntd-runtime" }
 ntd-validation = { path = "../ntd-validation" }
