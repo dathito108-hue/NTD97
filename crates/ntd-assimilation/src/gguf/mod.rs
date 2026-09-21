@@ -2,17 +2,20 @@
 
 mod lower;
 mod reader;
+mod storage;
 mod transcode;
 
 use std::collections::BTreeMap;
 
 pub use lower::{
-    lower_llama_model, lowered_llama_candidate, LlamaConfig, LlamaTensorBinding, LoweredLlamaModel,
+    lower_llama_model, lower_llama_model_from_source, lowered_llama_candidate, LlamaConfig,
+    LlamaTensorBinding, LoweredLlamaModel,
 };
-pub use reader::parse_gguf;
+pub use reader::{parse_gguf, parse_gguf_source};
+pub use storage::{FileGgufSource, GgufByteSource, SliceGgufSource};
 pub use transcode::{
-    ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, transcode_tensor,
-    TranscodedTensor,
+    ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, gguf_tensor_bytes_from_source,
+    transcode_tensor, transcode_tensor_from_source, TranscodedTensor,
 };
 
 pub const GGUF_MAGIC: [u8; 4] = *b"GGUF";
@@ -199,6 +202,10 @@ pub struct GgufModel {
 impl GgufModel {
     pub fn parse(bytes: &[u8]) -> Result<Self, GgufError> {
         parse_gguf(bytes)
+    }
+
+    pub fn parse_source(source: &dyn GgufByteSource) -> Result<Self, GgufError> {
+        parse_gguf_source(source)
     }
 
     pub fn architecture(&self) -> Result<&str, GgufError> {
@@ -562,6 +569,7 @@ pub enum GgufError {
     NativeLowering(String),
     InvalidBool(u8),
     InvalidUtf8,
+    Io(String),
     InvalidArrayType,
     InvalidAlignment,
     InvalidTensorAlignment,
