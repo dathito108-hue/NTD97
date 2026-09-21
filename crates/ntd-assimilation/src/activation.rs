@@ -274,10 +274,10 @@ fn validate_manifest(
         .find(|decl| decl.id == manifest.token_input)
         .ok_or(ThinActivationError::InvalidTokenInput(manifest.token_input))?;
     if token_decl.ty
-        != ValueType::Tensor {
+        != (ValueType::Tensor {
             dtype: DType::I32,
             rank: 1,
-        }
+        })
     {
         return Err(ThinActivationError::InvalidTokenInput(manifest.token_input));
     }
@@ -387,7 +387,7 @@ mod tests {
             vocabulary_size: 2,
         };
 
-        let mut builder = CapsuleBuilder::new(CapsuleKind::Thin, *b"NTD97-ACTIV-001");
+        let mut builder = CapsuleBuilder::new(CapsuleKind::Thin, *b"NTD97-ACTIV-0001");
         builder.push_embedded(
             SectionKind::Graph,
             ntd_capsule::encode_graph(&graph).expect("graph"),
