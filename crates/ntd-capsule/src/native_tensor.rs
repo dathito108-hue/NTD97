@@ -314,9 +314,8 @@ pub fn load_native_program<S: ContentStore>(
             if descriptor_table.is_some() {
                 return Err(NativeTensorError::MultipleDescriptorTables);
             }
-            descriptor_table = Some(
-                decode_tensor_descriptors(bytes).map_err(NativeTensorError::Descriptor)?,
-            );
+            descriptor_table =
+                Some(decode_tensor_descriptors(bytes).map_err(NativeTensorError::Descriptor)?);
         } else if bytes.starts_with(&NATIVE_TENSOR_MAGIC) {
             shards.push(decode_native_tensor(bytes)?);
         } else {
