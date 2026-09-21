@@ -32,11 +32,48 @@ public interface NtdRuntimeHost {
         }
     }
 
+    final class ChatEvent {
+        public static final int TOKEN = 1;
+        public static final int COMPLETE = 2;
+        public static final int CANCELLED = 3;
+        public static final int ERROR = 4;
+
+        public final int kind;
+        public final int tokenId;
+        public final String text;
+
+        public ChatEvent(int kind, int tokenId, String text) {
+            this.kind = kind;
+            this.tokenId = tokenId;
+            this.text = text;
+        }
+    }
+
     ResumeResult restoreAndVerify(byte[] mcs97, String wakeReason);
 
     byte[] checkpoint();
 
     boolean resolveApproval(boolean approved);
+
+    default boolean chatReady() {
+        return false;
+    }
+
+    default long submitChat(String prompt, int maxNewTokens) {
+        return -1L;
+    }
+
+    default ChatEvent nextChatEvent(long requestId) {
+        return new ChatEvent(ChatEvent.ERROR, -1, "Native chat unavailable");
+    }
+
+    default boolean cancelChat(long requestId) {
+        return false;
+    }
+
+    default int chatStatus(long requestId) {
+        return 0;
+    }
 
     default void acceptMicrophonePcm(short[] samples, int sampleRateHz) {}
 
