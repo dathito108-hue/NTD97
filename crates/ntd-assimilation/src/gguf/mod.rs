@@ -166,7 +166,7 @@ pub struct GgufTensorInfo {
     pub data_offset: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GgufTokenizer {
     pub model: String,
     pub tokens: Vec<Vec<u8>>,
