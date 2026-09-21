@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn q4_0_is_dequantized_into_native_f32() {
         let mut bytes = vec![0x00, 0x3c];
-        bytes.extend(std::iter::repeat_n(0x98u8, 16));
+        bytes.extend(std::iter::repeat(0x98u8).take(16));
         let tensor = GgufTensorInfo {
             name: "q4.weight".into(),
             dimensions: vec![32],
