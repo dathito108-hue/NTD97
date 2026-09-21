@@ -2,8 +2,8 @@
 
 use ntd_runtime::{
     decode_action_fabric_checkpoint, decode_cognitive_checkpoint, encode_action_fabric_checkpoint,
-    encode_cognitive_checkpoint, ActionFabric, ActionFabricState, CapabilityRegistry,
-    CognitiveIdentity, CognitiveRuntime,
+    encode_cognitive_checkpoint, ActionFabric, ActionFabricState, AuthorityScope,
+    CapabilityDescriptor, CapabilityDomain, CapabilityRegistry, CognitiveIdentity, CognitiveRuntime,
 };
 
 pub const MCS97_MAGIC: [u8; 6] = *b"MCS97\0";
@@ -120,6 +120,7 @@ pub struct MobileContinuityBundle {
     pub checkpoint_sequence: u64,
     pub cognitive_checkpoint: Vec<u8>,
     pub action_checkpoint: Vec<u8>,
+    pub capabilities: Vec<CapabilityDescriptor>,
     pub pending_approval: Option<PendingApproval>,
     pub retry: Option<RetryBackoff>,
 }
@@ -175,6 +176,7 @@ pub fn build_mobile_continuity_bundle(
         .map_err(|error| MobileContinuityError::CognitiveCheckpoint(format!("{error:?}")))?;
     let action_checkpoint = encode_action_fabric_checkpoint(registry, actions)
         .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?;
+    let capabilities = registry.descriptors().cloned().collect::<Vec<_>>();
 
     validate_links(cognitive, actions, pending_approval.as_ref())?;
 
@@ -185,6 +187,7 @@ pub fn build_mobile_continuity_bundle(
         checkpoint_sequence,
         cognitive_checkpoint,
         action_checkpoint,
+        capabilities,
         pending_approval,
         retry,
     };
@@ -193,10 +196,10 @@ pub fn build_mobile_continuity_bundle(
 }
 
 pub fn restore_mobile_continuity_bundle(
-    registry: CapabilityRegistry,
     bundle: MobileContinuityBundle,
 ) -> Result<RestoredMobileSession, MobileContinuityError> {
     validate_bundle(&bundle)?;
+    let registry = registry_from_snapshot(&bundle.capabilities)?;
 
     let cognitive_state = decode_cognitive_checkpoint(&bundle.cognitive_checkpoint)
         .map_err(|error| MobileContinuityError::CognitiveCheckpoint(format!("{error:?}")))?;
@@ -236,6 +239,7 @@ pub fn encode_mobile_continuity_bundle(
     push_u64(&mut payload, bundle.checkpoint_sequence);
     push_bytes(&mut payload, &bundle.cognitive_checkpoint)?;
     push_bytes(&mut payload, &bundle.action_checkpoint)?;
+    push_capabilities(&mut payload, &bundle.capabilities)?;
     push_optional_approval(&mut payload, bundle.pending_approval.as_ref())?;
     push_optional_retry(&mut payload, bundle.retry.as_ref());
 
@@ -296,6 +300,7 @@ pub fn decode_mobile_continuity_bundle(
     let checkpoint_sequence = cursor.u64()?;
     let cognitive_checkpoint = cursor.bytes()?.to_vec();
     let action_checkpoint = cursor.bytes()?.to_vec();
+    let capabilities = cursor.capabilities()?;
     let pending_approval = cursor.optional_approval()?;
     let retry = cursor.optional_retry()?;
 
@@ -310,6 +315,7 @@ pub fn decode_mobile_continuity_bundle(
         checkpoint_sequence,
         cognitive_checkpoint,
         action_checkpoint,
+        capabilities,
         pending_approval,
         retry,
     };
@@ -317,10 +323,78 @@ pub fn decode_mobile_continuity_bundle(
     Ok(bundle)
 }
 
+
+fn registry_from_snapshot(
+    descriptors: &[CapabilityDescriptor],
+) -> Result<CapabilityRegistry, MobileContinuityError> {
+    let mut registry = CapabilityRegistry::new();
+    for descriptor in descriptors.iter().cloned() {
+        registry
+            .register(descriptor)
+            .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?;
+    }
+    Ok(registry)
+}
+
+fn push_capabilities(
+    out: &mut Vec<u8>,
+    descriptors: &[CapabilityDescriptor],
+) -> Result<(), MobileContinuityError> {
+    let count = u32::try_from(descriptors.len()).map_err(|_| MobileContinuityError::Overflow)?;
+    push_u32(out, count);
+    for descriptor in descriptors {
+        push_string(out, &descriptor.id.0)?;
+        push_u32(out, descriptor.version);
+        push_u8(out, descriptor.domain as u8);
+        push_u8(out, encode_side_effect(descriptor.side_effect));
+        push_u8(out, u8::from(descriptor.verification_required));
+        push_u8(out, u8::from(descriptor.rollback_supported));
+        push_u8(out, u8::from(descriptor.resumable));
+        let scope_count =
+            u32::try_from(descriptor.required_scopes.len()).map_err(|_| MobileContinuityError::Overflow)?;
+        push_u32(out, scope_count);
+        for scope in &descriptor.required_scopes {
+            push_string(out, scope.as_str())?;
+        }
+    }
+    Ok(())
+}
+
+fn encode_side_effect(value: ntd_core::SideEffectClass) -> u8 {
+    match value {
+        ntd_core::SideEffectClass::ReadOnly => 1,
+        ntd_core::SideEffectClass::Reversible => 2,
+        ntd_core::SideEffectClass::ExternalWrite => 3,
+        ntd_core::SideEffectClass::Irreversible => 4,
+    }
+}
+
+fn decode_side_effect(value: u8) -> Result<ntd_core::SideEffectClass, MobileContinuityError> {
+    match value {
+        1 => Ok(ntd_core::SideEffectClass::ReadOnly),
+        2 => Ok(ntd_core::SideEffectClass::Reversible),
+        3 => Ok(ntd_core::SideEffectClass::ExternalWrite),
+        4 => Ok(ntd_core::SideEffectClass::Irreversible),
+        _ => Err(MobileContinuityError::NonCanonicalEncoding),
+    }
+}
+
 fn validate_bundle(bundle: &MobileContinuityBundle) -> Result<(), MobileContinuityError> {
     if bundle.checkpoint_sequence == 0
         || bundle.cognitive_checkpoint.is_empty()
         || bundle.action_checkpoint.is_empty()
+    {
+        return Err(MobileContinuityError::NonCanonicalEncoding);
+    }
+    let registry = registry_from_snapshot(&bundle.capabilities)?;
+    let decoded_actions = decode_action_fabric_checkpoint(&registry, &bundle.action_checkpoint)
+        .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?;
+    if decoded_actions.plans.values().any(|plan| {
+        !bundle
+            .capabilities
+            .iter()
+            .any(|descriptor| descriptor.id.0 == plan.actions.first().map(|a| a.capability.0.clone()).unwrap_or_default())
+    }) && !decoded_actions.plans.is_empty()
     {
         return Err(MobileContinuityError::NonCanonicalEncoding);
     }
@@ -491,6 +565,66 @@ impl<'a> Cursor<'a> {
 
     fn string(&mut self) -> Result<String, MobileContinuityError> {
         String::from_utf8(self.bytes()?.to_vec()).map_err(|_| MobileContinuityError::InvalidUtf8)
+    }
+
+
+    fn capabilities(&mut self) -> Result<Vec<CapabilityDescriptor>, MobileContinuityError> {
+        let count = usize::try_from(self.u32()?).map_err(|_| MobileContinuityError::Overflow)?;
+        let mut descriptors = Vec::with_capacity(count);
+        let mut previous: Option<String> = None;
+
+        for _ in 0..count {
+            let id = self.string()?;
+            if id.trim().is_empty()
+                || previous.as_ref().is_some_and(|previous_id| id <= *previous_id)
+            {
+                return Err(MobileContinuityError::NonCanonicalEncoding);
+            }
+            previous = Some(id.clone());
+
+            let version = self.u32()?;
+            let domain = CapabilityDomain::try_from(self.u8()?)
+                .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?;
+            let side_effect = decode_side_effect(self.u8()?)?;
+            let verification_required = self.boolean()?;
+            let rollback_supported = self.boolean()?;
+            let resumable = self.boolean()?;
+            let scope_count =
+                usize::try_from(self.u32()?).map_err(|_| MobileContinuityError::Overflow)?;
+            let mut required_scopes = Vec::with_capacity(scope_count);
+            for _ in 0..scope_count {
+                required_scopes.push(
+                    AuthorityScope::new(self.string()?)
+                        .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?,
+                );
+            }
+
+            let mut descriptor = CapabilityDescriptor::new(
+                ntd_core::CapabilityId(id),
+                version,
+                domain,
+                side_effect,
+            )
+            .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?;
+            descriptor.verification_required = verification_required;
+            descriptor.rollback_supported = rollback_supported;
+            descriptor.resumable = resumable;
+            descriptor.required_scopes = required_scopes;
+            descriptor
+                .normalize()
+                .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?;
+            descriptors.push(descriptor);
+        }
+
+        Ok(descriptors)
+    }
+
+    fn boolean(&mut self) -> Result<bool, MobileContinuityError> {
+        match self.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => Err(MobileContinuityError::InvalidBoolean(other)),
+        }
     }
 
     fn optional_approval(&mut self) -> Result<Option<PendingApproval>, MobileContinuityError> {
