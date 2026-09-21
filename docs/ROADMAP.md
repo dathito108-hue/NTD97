@@ -313,7 +313,7 @@ Current implementation:
 - NTD97 IR 0.4 transformer semantics: SiLU, dynamic Reshape, Transpose, PositionIds, learned/model-epsilon RMSNorm and grouped-query causal attention;
 - strict canonical LLaMA-family metadata/tensor-role lowering into a full-context NIR97 graph;
 - exact GGUF tensor-boundary validation;
-- direct F32/F16/BF16 materialization plus Q4_0/Q8_0 native transcode to NTD97-owned F32;
+- direct F32/F16/BF16 materialization plus clean-room Q4_0/Q8_0/Q4_K/Q5_K/Q6_K native transcode to NTD97-owned F32;
 - native tokenizer section, tensor descriptor table and NTP97 tensor shard emission;
 - preservation and validation of GGUF tokenizer semantic metadata;
 - native LLaMA-style SentencePiece execution carried through GGUF -> NCC97 v0.2 -> runtime, including score-ordered merges, U+2581 space normalization, byte fallback and source add-space/BOS/EOS policy;
@@ -326,7 +326,6 @@ Still required before M11 completion:
 
 - representative real LLaMA/GPT-2 tokenizer source-vs-NTD97 differential validation, plus additional BPE pre-tokenizers such as Qwen2/LLaMA3 only when their exact semantics are implemented;
 - representative real-model source-vs-NIR97 semantic-equivalence execution;
-- common mobile GGUF K-quant transcodes such as Q4_K/Q5_K/Q6_K;
 - streaming/mapped large-file import path;
 - Android loading/generation using the resulting real native model.
 
