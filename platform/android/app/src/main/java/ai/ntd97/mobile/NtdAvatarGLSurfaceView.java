@@ -4,6 +4,8 @@ import android.content.Context;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.MotionEvent;
 
 import java.nio.ByteBuffer;
@@ -12,6 +14,19 @@ import java.nio.FloatBuffer;
 
 public final class NtdAvatarGLSurfaceView extends GLSurfaceView {
     private final AvatarRenderer renderer;
+    private final Handler renderHandler = new Handler(Looper.getMainLooper());
+    private final Runnable renderTick = new Runnable() {
+        @Override
+        public void run() {
+            NtdRuntimeHost host = NtdSessionController.runtime();
+            if (host != null) {
+                renderer.setState(host.avatarState());
+            }
+            requestRender();
+            int fps = Math.max(1, renderer.targetFps());
+            renderHandler.postDelayed(this, Math.max(16L, 1000L / fps));
+        }
+    };
     private float lastX;
     private float lastY;
 
@@ -20,7 +35,20 @@ public final class NtdAvatarGLSurfaceView extends GLSurfaceView {
         setEGLContextClientVersion(2);
         renderer = new AvatarRenderer();
         setRenderer(renderer);
-        setRenderMode(RENDERMODE_CONTINUOUSLY);
+        setRenderMode(RENDERMODE_WHEN_DIRTY);
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        renderHandler.removeCallbacks(renderTick);
+        renderHandler.post(renderTick);
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        renderHandler.removeCallbacks(renderTick);
+        super.onDetachedFromWindow();
     }
 
     public void setAvatarState(NtdRuntimeHost.AvatarState state) {
@@ -88,6 +116,10 @@ public final class NtdAvatarGLSurfaceView extends GLSurfaceView {
 
         void setState(NtdRuntimeHost.AvatarState state) {
             this.state = state;
+        }
+
+        int targetFps() {
+            return Math.max(1, state.targetFps);
         }
 
         void addUserRotation(float yaw, float pitch) {
