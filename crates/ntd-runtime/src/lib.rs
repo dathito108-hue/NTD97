@@ -51,10 +51,10 @@ pub use executor::{
     EmptyTensorResolver, ExecutionError, GraphExecutor, TensorResolveError, TensorResolver,
 };
 pub use generation::{
-    sample_token, DistributionKind, GeneratedText, GenerationConfig, GenerationControl,
-    GenerationError, GenerationFinishReason, GenerationResult, GraphGenerator, KvCache,
-    KvCacheError, KvLayerCache, PrefixCache, SamplingError, SamplingMode,
-    StreamingGenerationResult,
+    model_inference_signals, sample_token, DistributionKind, GeneratedText, GenerationConfig,
+    GenerationControl, GenerationError, GenerationFinishReason, GenerationResult, GraphGenerator,
+    KvCache, KvCacheError, KvLayerCache, ModelInferenceSignals, PrefixCache, SamplingError,
+    SamplingMode, StreamingGenerationResult,
 };
 pub use gpt2::{Gpt2BpeConfig, Gpt2BpeTokenizer};
 pub use memory::{MemoryError, MemoryHit, MemoryKind, MemoryQuery, MemoryRecord, SovereignMemory};
