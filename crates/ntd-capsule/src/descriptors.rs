@@ -74,9 +74,7 @@ pub fn encode_tensor_descriptors(
     Ok(out)
 }
 
-pub fn decode_tensor_descriptors(
-    bytes: &[u8],
-) -> Result<Vec<TensorDescriptor>, DescriptorError> {
+pub fn decode_tensor_descriptors(bytes: &[u8]) -> Result<Vec<TensorDescriptor>, DescriptorError> {
     let mut cursor = Cursor::new(bytes);
 
     if cursor.take(6)? != TENSOR_DESCRIPTOR_MAGIC.as_slice() {
@@ -132,8 +130,7 @@ pub fn decode_tensor_descriptors(
 
 pub fn encode_descriptor_frame(frame: &DescriptorFrame) -> Result<Vec<u8>, DescriptorError> {
     let format_len = u32::try_from(frame.format.len()).map_err(|_| DescriptorError::Overflow)?;
-    let payload_len =
-        u64::try_from(frame.payload.len()).map_err(|_| DescriptorError::Overflow)?;
+    let payload_len = u64::try_from(frame.payload.len()).map_err(|_| DescriptorError::Overflow)?;
 
     let mut out = Vec::new();
     out.extend_from_slice(&DESCRIPTOR_FRAME_MAGIC);
