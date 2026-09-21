@@ -793,16 +793,17 @@ fn run_native_action_planner(
                 sampling: SamplingMode::Greedy,
             },
             |_, generated_tokens| {
-                let decoded = match model
-                    .tokenizer
-                    .decode_after(previous_token, generated_tokens, true)
-                {
-                    Ok(decoded) => decoded,
-                    Err(_) => {
-                        decode_failed = true;
-                        return GenerationControl::Cancel;
-                    }
-                };
+                let decoded =
+                    match model
+                        .tokenizer
+                        .decode_after(previous_token, generated_tokens, true)
+                    {
+                        Ok(decoded) => decoded,
+                        Err(_) => {
+                            decode_failed = true;
+                            return GenerationControl::Cancel;
+                        }
+                    };
                 let candidate = decoded.trim();
                 if candidate == NATIVE_ACTION_DIRECT {
                     early_decision = Some(NativeActionPlanningOutcome::Direct);
@@ -842,17 +843,11 @@ fn run_native_action_planner(
 
     let decoded = model
         .tokenizer
-        .decode_after(
-            previous_token,
-            &generated.generation.generated_tokens,
-            true,
-        )
+        .decode_after(previous_token, &generated.generation.generated_tokens, true)
         .map_err(|error| format!("decode native action planner output: {error:?}"))?;
     Ok(match parse_native_action_plan(&decoded) {
         Ok(AssistantPlanDecision::Direct) => NativeActionPlanningOutcome::Direct,
-        Ok(AssistantPlanDecision::Actions(plan)) => {
-            NativeActionPlanningOutcome::Actions(plan)
-        }
+        Ok(AssistantPlanDecision::Actions(plan)) => NativeActionPlanningOutcome::Actions(plan),
         Err(_) => NativeActionPlanningOutcome::Invalid,
     })
 }
@@ -898,7 +893,9 @@ fn execute_android_verified_actions(
     fabric
         .register_adapter(
             CapabilityId("device.observe".into()),
-            AndroidResourceAdapter { snapshot: resources },
+            AndroidResourceAdapter {
+                snapshot: resources,
+            },
         )
         .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
 
@@ -1216,7 +1213,6 @@ fn chat_verified_action_count(request_id: u64) -> i32 {
         .and_then(|value| i32::try_from(value).ok())
         .unwrap_or(0)
 }
-
 
 fn cancel_chat(request_id: u64) -> bool {
     let (task_id, cancel) = {
