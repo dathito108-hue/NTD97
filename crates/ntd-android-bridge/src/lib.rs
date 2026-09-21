@@ -743,7 +743,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
 
 fn action_planning_prompt(user_message: &str) -> String {
     format!(
-        "Choose local action. Reply exactly DIRECT or NTD97_ACTIONS_V1\\n1|device.observe|surface\\nEND. User: {user_message}\\nPlan:"
+        "Choose local action. Reply exactly DIRECT or NTD97_ACTIONS_V1\n1|device.observe|surface\nEND. User: {user_message}\nPlan:"
     )
 }
 
