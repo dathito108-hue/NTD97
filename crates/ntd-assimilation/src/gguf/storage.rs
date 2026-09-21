@@ -86,7 +86,11 @@ impl GgufByteSource for FileGgufSource {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
+
+    static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(1);
 
     #[test]
     fn slice_source_reads_bounded_ranges() {
@@ -94,5 +98,22 @@ mod tests {
         assert_eq!(source.byte_len(), Ok(5));
         assert_eq!(source.read_exact_at(1, 3), Ok(b"TD9".to_vec()));
         assert_eq!(source.read_exact_at(4, 2), Err(GgufError::Truncated));
+    }
+
+    #[test]
+    fn file_source_reads_ranges_without_materializing_the_file() {
+        let id = NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "ntd97-gguf-source-{}-{id}.bin",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"0123456789").expect("write fixture");
+
+        let source = FileGgufSource::open(&path).expect("open source");
+        assert_eq!(source.byte_len(), Ok(10));
+        assert_eq!(source.read_exact_at(3, 4), Ok(b"3456".to_vec()));
+        assert_eq!(source.read_exact_at(9, 2), Err(GgufError::Truncated));
+
+        std::fs::remove_file(path).expect("remove fixture");
     }
 }
