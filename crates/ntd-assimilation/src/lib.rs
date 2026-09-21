@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod forge;
+mod gguf;
 mod importer;
 mod package;
 mod sandbox;
@@ -8,6 +9,11 @@ mod source;
 mod store;
 
 pub use forge::{CapabilityForge, ForgePolicy};
+pub use gguf::{
+    parse_gguf, tensor_disposition, GgufConversionPlan, GgufError, GgufModel, GgufTensorDisposition,
+    GgufTensorInfo, GgufTokenizer, GgufValue, GgufValueType, GGUF_DEFAULT_ALIGNMENT, GGUF_MAGIC,
+    GGUF_VERSION,
+};
 pub use importer::{ImporterRegistry, SourceImporter};
 pub use package::{
     build_native_package, load_native_capability, verify_native_package, AssimilationIdentity,
