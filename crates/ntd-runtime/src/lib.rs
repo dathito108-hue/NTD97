@@ -12,6 +12,7 @@ mod generation;
 mod gpt2;
 mod memory;
 mod mobile;
+mod reasoning;
 mod tensor;
 mod tokenizer;
 
@@ -65,6 +66,10 @@ pub use mobile::{
     MobileExecutionProvider, PageWindow, PagedByteReader, PowerClass, ProfiledProvider,
     ProviderKind, ProviderMeasurement, ProviderProfile, QuantizationProfile, ResourceSnapshot,
     SliceByteRegion, TensorPlacement, TensorPlacementPlan, ThermalState,
+};
+pub use reasoning::{
+    run_budgeted_reasoning_cycle, BudgetedReasoningPlanner, NativeReasoningExecutor,
+    NativeReasoningProbe, NativeReasoningVerifier,
 };
 pub use tensor::{
     CpuReferenceProvider, ExecutionProvider, QuantizationParams, Tensor, TensorError,
