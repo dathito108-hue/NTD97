@@ -670,7 +670,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         return Err("max_new_tokens must be greater than zero".into());
     }
 
-    let (model, history, prior_failure) = {
+    let (model, conversation_snapshot, prior_failure) = {
         let mut guard = lock_state();
         if guard.chat_submit_in_progress
             || guard
@@ -685,16 +685,14 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
             .clone()
             .ok_or_else(|| "no verified native chat model is loaded".to_owned())?;
         guard.chat_submit_in_progress = true;
-        (
-            model,
-            guard.conversation.turns().to_vec(),
-            guard.conversation.prior_conversation_failure(),
-        )
+        let conversation_snapshot = guard.conversation.clone();
+        let prior_failure = conversation_snapshot.prior_conversation_failure();
+        (model, conversation_snapshot, prior_failure)
     };
 
     let result = submit_chat_reserved(
         &model,
-        &history,
+        &conversation_snapshot,
         prior_failure,
         user_message,
         max_new_tokens,
@@ -706,14 +704,19 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
 
 fn submit_chat_reserved(
     model: &Arc<NativeChatModel>,
-    history: &[ntd_runtime::ConversationTurn],
+    conversation_snapshot: &SovereignConversationState,
     prior_failure: bool,
     user_message: &str,
     max_new_tokens: usize,
 ) -> Result<u64, String> {
     let prompt_limit = model.context_limit.saturating_sub(max_new_tokens).max(1);
     let base = NativeChatPromptCompiler
-        .compile(history, user_message, &model.tokenizer, prompt_limit)
+        .compile(
+            conversation_snapshot.turns(),
+            user_message,
+            &model.tokenizer,
+            prompt_limit,
+        )
         .map_err(|error| format!("compile preflight chat prompt: {error:?}"))?;
 
     let generator = GraphGenerator::new(
@@ -737,23 +740,7 @@ fn submit_chat_reserved(
     let budget = choose_reasoning_budget(signals);
     let recall_limit = memory_recall_limit_for_budget(budget);
 
-    let mut guard = lock_state();
-    if guard
-        .chat_session
-        .as_ref()
-        .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
-    {
-        return Err("another native chat request started during preflight".into());
-    }
-    let loaded_model = guard
-        .chat_model
-        .as_ref()
-        .ok_or_else(|| "native chat model was unloaded during preflight".to_owned())?;
-    if loaded_model.asset_id != model.asset_id || loaded_model.version != model.version {
-        return Err("native chat model changed during reasoning preflight".into());
-    }
-
-    let mut conversation = guard.conversation.clone();
+    let mut conversation = conversation_snapshot.clone();
     let recalled = conversation
         .recall_conversation_context(user_message, recall_limit)
         .map_err(|error| format!("recall sovereign conversation memory: {error:?}"))?;
@@ -772,13 +759,56 @@ fn submit_chat_reserved(
             model.asset_id.clone(),
             model.version,
             user_message,
-            compiled.token_ids,
+            compiled.token_ids.clone(),
             max_new_tokens,
         )
         .map_err(|error| format!("begin sovereign conversation turn: {error:?}"))?;
     conversation
         .record_reasoning_profile(task_id, budget, signals, compiled.retained_memory_items)
         .map_err(|error| format!("record sovereign reasoning profile: {error:?}"))?;
+
+    let mut planner = NativeDeliberationPlanner;
+    let mut executor =
+        NativeDeliberationExecutor::new(Arc::clone(model), compiled.token_ids.clone());
+    let mut verifier = NativeDeliberationVerifier;
+    let report = conversation
+        .cognition_mut()
+        .advance(
+            task_id,
+            signals,
+            &mut planner,
+            &mut executor,
+            &mut verifier,
+        )
+        .map_err(|error| format!("native cognitive deliberation: {error:?}"))?;
+    if report.status != TaskStatus::Running || report.iterations == 0 {
+        return Err(format!(
+            "native cognitive deliberation ended unexpectedly: {:?}",
+            report.status
+        ));
+    }
+    conversation
+        .record_reasoning_iterations(task_id, report.iterations)
+        .map_err(|error| format!("record deliberation iterations: {error:?}"))?;
+
+    let mut guard = lock_state();
+    if guard
+        .chat_session
+        .as_ref()
+        .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+    {
+        return Err("another native chat request started during deliberation".into());
+    }
+    let loaded_model = guard
+        .chat_model
+        .as_ref()
+        .ok_or_else(|| "native chat model was unloaded during deliberation".to_owned())?;
+    if loaded_model.asset_id != model.asset_id || loaded_model.version != model.version {
+        return Err("native chat model changed during deliberation".into());
+    }
+    if &guard.conversation != conversation_snapshot {
+        return Err("sovereign conversation changed during deliberation".into());
+    }
 
     let request_id = guard.next_chat_request_id;
     guard.next_chat_request_id = guard
