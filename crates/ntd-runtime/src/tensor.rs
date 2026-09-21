@@ -64,6 +64,7 @@ pub enum TensorError {
     ShapeMismatch,
     UnsupportedOp(TensorOp),
     InvalidIndex,
+    NoProvider,
 }
 
 #[derive(Debug, Default, Clone, Copy)]

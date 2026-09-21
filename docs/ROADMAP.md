@@ -69,21 +69,26 @@ Exit: an NTD97-native text model accepts tokens/text, executes locally and gener
 
 Goal: make the same native model path practical across current phones.
 
-Planned scope:
+Delivered contract:
 
-- device capability detection;
-- optimized CPU provider;
-- Vulkan provider behind the same `ExecutionProvider` semantics;
-- replaceable NPU provider interface where platform support exists;
-- memory mapping/paging and tensor placement;
-- quantization profiles;
-- provider autotuning;
-- RAM, thermal, battery and latency budget manager;
-- fallback/recovery under resource pressure;
-- representative-device deterministic equivalence tests.
+- portable CPU thread detection plus platform-supplied RAM/Vulkan/NPU capability reporting;
+- `ResourceSnapshot` for available RAM, battery, charging, thermal state and latency budget;
+- `ComputePolicy` for RAM reserve, paging, accelerator permission, power preference and quantization profile;
+- `CpuReferenceMobileProvider` correctness baseline;
+- cache-friendlier `CpuTiledProvider` for MatMul/QuantizedMatMul;
+- replaceable Vulkan and NPU provider adapters behind the same `ExecutionProvider` semantics;
+- per-operation provider capability and working-set metadata;
+- `AutotuneTable` with explicit semantic-equivalence verification;
+- latency-budget-aware provider ranking;
+- battery/thermal/RAM gating for accelerators;
+- deterministic provider fallback on execution failure;
+- quantization profiles for F32/F16/I8 mobile placement policy;
+- tensor placement planning for resident, accelerator-local or paged CPU storage;
+- deterministic `ByteRegion` / `PagedByteReader` paging contract suitable for platform-backed mapped storage;
+- representative 4 GB / 8 GB / 12 GB device-profile graph-equivalence tests;
+- hot-device fallback test proving accelerator rejection without output drift.
 
-Exit: the same NTD97 graph can select the fastest verified local provider that fits device constraints without changing model identity.
-
+Exit: the same NTD97 graph can select the fastest registered **verified** provider that fits current resource constraints, while preserving CPU-reference semantics and falling back deterministically under pressure.
 ## M4 — Major Block D: Cognitive Runtime + Sovereign Memory
 
 Goal: build the persistent intelligence loop on top of native inference.

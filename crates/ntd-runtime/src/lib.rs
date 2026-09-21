@@ -2,6 +2,7 @@
 
 mod executor;
 mod generation;
+mod mobile;
 mod tensor;
 mod tokenizer;
 
@@ -10,6 +11,14 @@ pub use generation::{
     sample_token, DistributionKind, GeneratedText, GenerationConfig, GenerationError,
     GenerationResult, GraphGenerator, KvCache, KvCacheError, KvLayerCache, PrefixCache,
     SamplingError, SamplingMode,
+};
+pub use mobile::{
+    npu_provider, page_windows, plan_tensor_placement, verify_provider_equivalence,
+    vulkan_provider, AdaptiveExecutionProvider, AutotuneTable, ByteRegion, ComputePolicy,
+    CpuReferenceMobileProvider, CpuTiledProvider, DeviceCapabilities, MobileComputeError,
+    MobileExecutionProvider, PageWindow, PagedByteReader, PowerClass, ProfiledProvider,
+    ProviderKind, ProviderMeasurement, ProviderProfile, QuantizationProfile, ResourceSnapshot,
+    SliceByteRegion, TensorPlacement, TensorPlacementPlan, ThermalState,
 };
 pub use tensor::{
     CpuReferenceProvider, ExecutionProvider, QuantizationParams, Tensor, TensorError,
