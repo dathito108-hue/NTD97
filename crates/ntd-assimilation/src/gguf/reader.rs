@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    GgufError, GgufModel, GgufTensorInfo, GgufValue, GgufValueType, GGUF_DEFAULT_ALIGNMENT,
-    GGUF_MAGIC, GGUF_VERSION,
+    GgufByteSource, GgufError, GgufModel, GgufTensorInfo, GgufValue, GgufValueType,
+    SliceGgufSource, GGUF_DEFAULT_ALIGNMENT, GGUF_MAGIC, GGUF_VERSION,
 };
 
 const MAX_METADATA_ENTRIES: u64 = 100_000;
@@ -14,8 +14,12 @@ const MAX_STRING_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DIMS: u32 = 4;
 
 pub fn parse_gguf(bytes: &[u8]) -> Result<GgufModel, GgufError> {
-    let mut cursor = Cursor::new(bytes);
-    if cursor.take(4)? != GGUF_MAGIC.as_slice() {
+    parse_gguf_source(&SliceGgufSource::new(bytes))
+}
+
+pub fn parse_gguf_source(source: &dyn GgufByteSource) -> Result<GgufModel, GgufError> {
+    let mut cursor = Cursor::new(source);
+    if cursor.take(4)?.as_slice() != GGUF_MAGIC.as_slice() {
         return Err(GgufError::InvalidMagic);
     }
 
@@ -82,8 +86,8 @@ pub fn parse_gguf(bytes: &[u8]) -> Result<GgufModel, GgufError> {
         });
     }
 
-    let data_offset = align_up(cursor.offset_u64()?, u64::from(alignment))?;
-    let file_len = u64::try_from(bytes.len()).map_err(|_| GgufError::LimitExceeded)?;
+    let data_offset = align_up(cursor.offset_u64(), u64::from(alignment))?;
+    let file_len = source.byte_len()?;
     if data_offset > file_len {
         return Err(GgufError::Truncated);
     }
@@ -160,27 +164,24 @@ fn align_up(value: u64, alignment: u64) -> Result<u64, GgufError> {
 }
 
 struct Cursor<'a> {
-    bytes: &'a [u8],
-    offset: usize,
+    source: &'a dyn GgufByteSource,
+    offset: u64,
 }
 
 impl<'a> Cursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
+    fn new(source: &'a dyn GgufByteSource) -> Self {
+        Self { source, offset: 0 }
     }
 
-    fn take(&mut self, len: usize) -> Result<&'a [u8], GgufError> {
-        let end = self.offset.checked_add(len).ok_or(GgufError::Overflow)?;
-        let out = self
-            .bytes
-            .get(self.offset..end)
-            .ok_or(GgufError::Truncated)?;
-        self.offset = end;
-        Ok(out)
+    fn take(&mut self, len: usize) -> Result<Vec<u8>, GgufError> {
+        let bytes = self.source.read_exact_at(self.offset, len)?;
+        let len = u64::try_from(len).map_err(|_| GgufError::LimitExceeded)?;
+        self.offset = self.offset.checked_add(len).ok_or(GgufError::Overflow)?;
+        Ok(bytes)
     }
 
-    fn offset_u64(&self) -> Result<u64, GgufError> {
-        u64::try_from(self.offset).map_err(|_| GgufError::LimitExceeded)
+    fn offset_u64(&self) -> u64 {
+        self.offset
     }
 
     fn u8(&mut self) -> Result<u8, GgufError> {
@@ -239,8 +240,96 @@ impl<'a> Cursor<'a> {
             return Err(GgufError::LimitExceeded);
         }
         let bytes = self.take(usize::try_from(len).map_err(|_| GgufError::LimitExceeded)?)?;
-        std::str::from_utf8(bytes)
+        std::str::from_utf8(&bytes)
             .map(str::to_owned)
             .map_err(|_| GgufError::InvalidUtf8)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    struct CountingSource<'a> {
+        bytes: &'a [u8],
+        max_read: Cell<usize>,
+        total_read: Cell<usize>,
+    }
+
+    impl GgufByteSource for CountingSource<'_> {
+        fn byte_len(&self) -> Result<u64, GgufError> {
+            u64::try_from(self.bytes.len()).map_err(|_| GgufError::LimitExceeded)
+        }
+
+        fn read_exact_at(&self, offset: u64, len: usize) -> Result<Vec<u8>, GgufError> {
+            self.max_read.set(self.max_read.get().max(len));
+            self.total_read.set(
+                self.total_read
+                    .get()
+                    .checked_add(len)
+                    .ok_or(GgufError::Overflow)?,
+            );
+            SliceGgufSource::new(self.bytes).read_exact_at(offset, len)
+        }
+    }
+
+    fn push_string(out: &mut Vec<u8>, value: &str) {
+        out.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        out.extend_from_slice(value.as_bytes());
+    }
+
+    fn minimal_fixture_with_large_payload(payload_len: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        out.extend_from_slice(&GGUF_VERSION.to_le_bytes());
+        out.extend_from_slice(&1u64.to_le_bytes());
+        out.extend_from_slice(&4u64.to_le_bytes());
+
+        push_string(&mut out, "general.architecture");
+        out.extend_from_slice(&(GgufValueType::String as u32).to_le_bytes());
+        push_string(&mut out, "llama");
+
+        push_string(&mut out, "tokenizer.ggml.model");
+        out.extend_from_slice(&(GgufValueType::String as u32).to_le_bytes());
+        push_string(&mut out, "llama");
+
+        push_string(&mut out, "tokenizer.ggml.tokens");
+        out.extend_from_slice(&(GgufValueType::Array as u32).to_le_bytes());
+        out.extend_from_slice(&(GgufValueType::String as u32).to_le_bytes());
+        out.extend_from_slice(&1u64.to_le_bytes());
+        push_string(&mut out, "a");
+
+        push_string(&mut out, "general.alignment");
+        out.extend_from_slice(&(GgufValueType::Uint32 as u32).to_le_bytes());
+        out.extend_from_slice(&32u32.to_le_bytes());
+
+        push_string(&mut out, "token_embd.weight");
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&(payload_len as u64 / 4).to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u64.to_le_bytes());
+
+        while out.len() % 32 != 0 {
+            out.push(0);
+        }
+        out.resize(out.len() + payload_len, 0);
+        out
+    }
+
+    #[test]
+    fn source_parser_does_not_materialize_tensor_payload() {
+        let bytes = minimal_fixture_with_large_payload(4 * 1024 * 1024);
+        let source = CountingSource {
+            bytes: &bytes,
+            max_read: Cell::new(0),
+            total_read: Cell::new(0),
+        };
+
+        let model = parse_gguf_source(&source).expect("parse source");
+        assert_eq!(model.file_len, bytes.len() as u64);
+        assert!(source.total_read.get() < 4096);
+        assert!(source.max_read.get() < 1024);
     }
 }
