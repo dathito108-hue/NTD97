@@ -1,0 +1,136 @@
+package ai.ntd97.mobile;
+
+import android.app.Activity;
+import android.content.res.AssetManager;
+import android.os.Bundle;
+
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+
+public final class NtdRealModelProbeActivity extends Activity {
+    private static final String ASSET_ROOT = "ntd97-real-model";
+    private static final String RUNTIME_ROOT = "ntd97-real-model";
+    private static final String RESULT_FILE = "ntd97-real-model-probe.txt";
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        String result;
+        try {
+            File runtimeRoot = new File(getFilesDir(), RUNTIME_ROOT);
+            deleteTree(runtimeRoot);
+            copyAssetTree(getAssets(), ASSET_ROOT, runtimeRoot);
+
+            File capsule = new File(runtimeRoot, "model.ncc97");
+            File shardRoot = new File(runtimeRoot, "ntp97-shards");
+            byte[] verifyKey = readAllBytes(new File(runtimeRoot, "verify-key.bin"));
+            String expectedTokenIds = new String(
+                    readAllBytes(new File(runtimeRoot, "expected-token-ids.txt")),
+                    StandardCharsets.UTF_8).trim();
+
+            byte[] nativeResult = NtdNativeRuntimeHost.runRealModelProbe(
+                    capsule.getAbsolutePath(),
+                    shardRoot.getAbsolutePath(),
+                    verifyKey,
+                    expectedTokenIds);
+            result = new String(nativeResult, StandardCharsets.UTF_8);
+            if (result.isEmpty()) {
+                result = "android_real_model=failed\nerror=empty native result\n";
+            }
+        } catch (Exception error) {
+            String message = error.getMessage();
+            if (message == null || message.isEmpty()) {
+                message = error.getClass().getSimpleName();
+            }
+            result = "android_real_model=failed\nerror="
+                    + message.replace('\n', ' ').replace('\r', ' ')
+                    + "\n";
+        }
+
+        writeResult(result);
+        finish();
+    }
+
+    private void copyAssetTree(
+            AssetManager assets,
+            String assetPath,
+            File destination) throws IOException {
+        String[] children = assets.list(assetPath);
+        if (children == null) {
+            throw new IOException("asset listing failed: " + assetPath);
+        }
+
+        if (children.length == 0) {
+            File parent = destination.getParentFile();
+            if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+                throw new IOException("failed to create asset parent");
+            }
+            try (InputStream input = assets.open(assetPath);
+                 FileOutputStream output = new FileOutputStream(destination, false)) {
+                copy(input, output);
+                output.getFD().sync();
+            }
+            return;
+        }
+
+        if (!destination.isDirectory() && !destination.mkdirs()) {
+            throw new IOException("failed to create asset directory");
+        }
+        for (String child : children) {
+            copyAssetTree(
+                    assets,
+                    assetPath + "/" + child,
+                    new File(destination, child));
+        }
+    }
+
+    private byte[] readAllBytes(File file) throws IOException {
+        try (FileInputStream input = new FileInputStream(file);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            copy(input, output);
+            return output.toByteArray();
+        }
+    }
+
+    private void copy(InputStream input, java.io.OutputStream output) throws IOException {
+        byte[] buffer = new byte[16 * 1024];
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+            output.write(buffer, 0, count);
+        }
+    }
+
+    private void deleteTree(File file) throws IOException {
+        if (!file.exists()) {
+            return;
+        }
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children == null) {
+                throw new IOException("failed to list runtime directory");
+            }
+            for (File child : children) {
+                deleteTree(child);
+            }
+        }
+        if (!file.delete()) {
+            throw new IOException("failed to delete " + file.getAbsolutePath());
+        }
+    }
+
+    private void writeResult(String result) {
+        File output = new File(getFilesDir(), RESULT_FILE);
+        try (FileOutputStream stream = new FileOutputStream(output, false)) {
+            stream.write(result.getBytes(StandardCharsets.UTF_8));
+            stream.getFD().sync();
+        } catch (IOException error) {
+            throw new IllegalStateException("failed to write real-model probe result", error);
+        }
+    }
+}
