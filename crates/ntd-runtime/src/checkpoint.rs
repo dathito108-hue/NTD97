@@ -49,6 +49,8 @@ impl From<MemoryError> for CheckpointError {
 pub fn encode_cognitive_checkpoint(
     state: &CognitiveState,
 ) -> Result<Vec<u8>, CheckpointError> {
+    crate::CognitiveRuntime::from_state(state.clone())?;
+
     let mut payload = Vec::new();
     payload.extend_from_slice(&state.identity.0);
     push_u64(&mut payload, state.tick);
