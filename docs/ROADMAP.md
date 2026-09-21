@@ -365,6 +365,28 @@ Required contract:
 - Android JNI surface for submit/cancel/stream/status rather than test-only lifecycle calls;
 - end-to-end offline chat and reasoning acceptance tests.
 
+Current implementation:
+
+- Android chat composer, transcript surface, local token streaming and user cancellation through production JNI submit/stream/status APIs;
+- bounded canonical prompt compilation preserving complete recent dialogue pairs;
+- verified real native model loading from signed Thin NCC97 + NTP97 shards with no hosted fallback;
+- partial cancelled/failed generations remain uncommitted;
+- sovereign NCS97 conversation state binding each active turn to cognitive task identity and native model identity;
+- token-level NCS97 checkpoint/restore across Activity destruction/process continuity using Android AtomicFile storage;
+- completed dialogue stored as episodic sovereign memory and restored with the cognitive checkpoint;
+- native model-logit preflight computes entropy/top-margin uncertainty and feeds canonical Reflex/Standard/Deep/Recovery budget selection;
+- prior paused/failed conversation state escalates the next preflight through the existing Recovery signal;
+- budget-dependent sovereign memory recall is compiled back into the final bounded prompt while recent dialogue is preserved ahead of lower-ranked memory;
+- selected reasoning budget, complexity/uncertainty signals and retained-memory count are persisted in cognitive world state and survive NCS97 restore;
+- Android real-model acceptance requires adaptive reasoning selection, nonzero memory recall on an overlapping follow-up turn, NCS97 restore, cancellation and lifecycle/reboot regression.
+
+Still required before M12 completion:
+
+- use the selected reasoning budget to drive a real multi-iteration planner/verifier loop rather than only preflight/context policy;
+- materialize non-empty task graphs from model-grounded intent where governed actions are required;
+- synthesize final assistant answers from verified action results;
+- end-to-end offline acceptance covering native reasoning + memory + task graph + verified response in one user turn.
+
 Exit: the canonical APK can hold a useful local conversation, reason through the native model, remember relevant state and resume interrupted work without any external AI backend.
 
 ## M13 — Major Block M: Real-World Capability Adapters
