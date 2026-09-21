@@ -40,6 +40,8 @@ public final class MainActivity extends Activity {
     private final StringBuilder transcript = new StringBuilder();
     private volatile long activeChatRequestId = -1L;
     private volatile boolean chatCancelRequested;
+    private volatile boolean conversationRestored;
+    private volatile boolean activityDestroyed;
     private boolean voiceActive;
 
     @Override
@@ -180,16 +182,17 @@ public final class MainActivity extends Activity {
     @Override
     protected void onPause() {
         NtdSessionController.checkpoint(this);
-        NtdSessionController.checkpointConversation(this);
+        if (conversationRestored) {
+            NtdSessionController.checkpointConversation(this);
+        }
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
-        long requestId = activeChatRequestId;
-        NtdRuntimeHost host = NtdSessionController.runtime();
-        if (host != null && requestId >= 0) {
-            host.cancelChat(requestId);
+        activityDestroyed = true;
+        if (conversationRestored) {
+            NtdSessionController.checkpointConversation(this);
         }
         chatExecutor.shutdownNow();
         audioController.close();
@@ -253,6 +256,7 @@ public final class MainActivity extends Activity {
         while (!Thread.currentThread().isInterrupted()) {
             NtdRuntimeHost.ChatEvent event = host.nextChatEvent(requestId);
             if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+                conversationRestored = true;
                 NtdSessionController.checkpointConversation(this);
                 if (!event.text.isEmpty()) {
                     runOnUiThread(() -> appendTranscript(event.text));
@@ -273,8 +277,12 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        host.cancelChat(requestId);
-        finishChatUi("Generation interrupted", true);
+        if (conversationRestored) {
+            NtdSessionController.checkpointConversation(this);
+        }
+        if (!activityDestroyed) {
+            finishChatUi("Generation interrupted", true);
+        }
     }
 
     private void cancelChat() {
@@ -288,6 +296,7 @@ public final class MainActivity extends Activity {
     }
 
     private void finishChatUi(String status, boolean terminateAssistantLine) {
+        conversationRestored = true;
         NtdSessionController.checkpointConversation(this);
         activeChatRequestId = -1L;
         runOnUiThread(() -> {
@@ -320,6 +329,7 @@ public final class MainActivity extends Activity {
 
         chatExecutor.execute(() -> {
             long requestId = NtdSessionController.restoreConversation(this);
+            conversationRestored = requestId >= 0;
             String restoredTranscript = host.chatTranscript();
             runOnUiThread(() -> {
                 transcript.setLength(0);
