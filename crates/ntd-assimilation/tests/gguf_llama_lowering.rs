@@ -5,10 +5,12 @@ use ntd_assimilation::{
     AssimilationIdentity, ForgeSandbox, GgufModel, GgufValueType, LicenseRecord,
     NativeValidationSandbox, SourcePackage, GGUF_MAGIC, GGUF_VERSION,
 };
-use ntd_capsule::{load_native_generative_program, CapsuleView, MemoryContentStore};
+use ntd_capsule::{
+    load_native_generative_program, CapsuleView, MemoryContentStore, NativeTokenizerModel,
+};
 use ntd_runtime::{
-    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, QuantizationParams,
-    SamplingMode, TensorLoader,
+    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
+    LlamaSpmTokenizer, QuantizationParams, SamplingMode, TensorLoader,
 };
 
 const ALIGNMENT: usize = 32;
@@ -41,6 +43,32 @@ fn push_f32_kv(out: &mut Vec<u8>, key: &str, value: f32) {
     push_string(out, key);
     out.extend_from_slice(&(GgufValueType::Float32 as u32).to_le_bytes());
     out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_bool_kv(out: &mut Vec<u8>, key: &str, value: bool) {
+    push_string(out, key);
+    out.extend_from_slice(&(GgufValueType::Bool as u32).to_le_bytes());
+    out.push(u8::from(value));
+}
+
+fn push_f32_array(out: &mut Vec<u8>, key: &str, values: &[f32]) {
+    push_string(out, key);
+    out.extend_from_slice(&(GgufValueType::Array as u32).to_le_bytes());
+    out.extend_from_slice(&(GgufValueType::Float32 as u32).to_le_bytes());
+    out.extend_from_slice(&(values.len() as u64).to_le_bytes());
+    for value in values {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
+fn push_i32_array(out: &mut Vec<u8>, key: &str, values: &[i32]) {
+    push_string(out, key);
+    out.extend_from_slice(&(GgufValueType::Array as u32).to_le_bytes());
+    out.extend_from_slice(&(GgufValueType::Int32 as u32).to_le_bytes());
+    out.extend_from_slice(&(values.len() as u64).to_le_bytes());
+    for value in values {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
 }
 
 fn push_tokens(out: &mut Vec<u8>, tokens: &[&str]) {
@@ -152,13 +180,18 @@ fn fixture() -> Vec<u8> {
     out.extend_from_slice(&GGUF_MAGIC);
     out.extend_from_slice(&GGUF_VERSION.to_le_bytes());
     out.extend_from_slice(&(tensors.len() as u64).to_le_bytes());
-    out.extend_from_slice(&15u64.to_le_bytes());
+    out.extend_from_slice(&20u64.to_le_bytes());
 
     push_string_kv(&mut out, "general.architecture", "llama");
     push_string_kv(&mut out, "general.name", "ntd97-tiny-llama");
     push_u32_kv(&mut out, "general.alignment", ALIGNMENT as u32);
     push_string_kv(&mut out, "tokenizer.ggml.model", "llama");
     push_tokens(&mut out, &["a", "b", "<eos>"]);
+    push_f32_array(&mut out, "tokenizer.ggml.scores", &[0.0, 0.0, -1000.0]);
+    push_i32_array(&mut out, "tokenizer.ggml.token_type", &[1, 1, 3]);
+    push_bool_kv(&mut out, "tokenizer.ggml.add_space_prefix", false);
+    push_bool_kv(&mut out, "tokenizer.ggml.add_bos_token", false);
+    push_bool_kv(&mut out, "tokenizer.ggml.add_eos_token", false);
     push_u32_kv(&mut out, "tokenizer.ggml.bos_token_id", 0);
     push_u32_kv(&mut out, "tokenizer.ggml.eos_token_id", 2);
     push_u32_kv(&mut out, "llama.context_length", 8);
@@ -292,4 +325,33 @@ fn lowered_llama_packages_as_signed_native_generative_intelligence() {
     assert_eq!(loaded.program.graph, lowered.graph);
     assert_eq!(loaded.program.tensors, lowered.tensors);
     assert_eq!(loaded.tokenizer, lowered.tokenizer);
+
+    let NativeTokenizerModel::LlamaSpm {
+        score_bits,
+        token_types,
+        add_space_prefix,
+        add_bos_token,
+        add_eos_token,
+    } = &loaded.tokenizer.model
+    else {
+        panic!("expected native LLaMA SPM tokenizer");
+    };
+    let runtime_tokenizer = LlamaSpmTokenizer::new(
+        loaded.tokenizer.tokens.clone(),
+        score_bits.clone(),
+        token_types.clone(),
+        LlamaSpmConfig {
+            bos_token: loaded.tokenizer.bos_token,
+            eos_token: loaded.tokenizer.eos_token,
+            unknown_token: loaded.tokenizer.unknown_token,
+            add_space_prefix: *add_space_prefix,
+            add_bos_token: *add_bos_token,
+            add_eos_token: *add_eos_token,
+        },
+    )
+    .expect("runtime tokenizer");
+    assert_eq!(
+        runtime_tokenizer.encode("ab", true).expect("tokenize"),
+        vec![0, 1]
+    );
 }
