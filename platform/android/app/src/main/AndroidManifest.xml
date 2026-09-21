@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <uses-feature
+        android:glEsVersion="0x00020000"
+        android:required="false" />
+
     <application
         android:name=".Ntd97Application"
         android:allowBackup="false"
