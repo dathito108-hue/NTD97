@@ -143,12 +143,14 @@ impl SovereignConversationState {
             return Err(ConversationStateError::InvalidActiveTurn);
         }
 
-        let task_id = self.cognition.state_mut().submit_task(
+        let mut cognition = self.cognition.clone();
+        let task_id = cognition.state_mut().submit_task(
             Intent::new(user_message.clone()),
             TaskGraph::default(),
             None,
         )?;
-        self.cognition.start_external_task(task_id)?;
+        cognition.start_external_task(task_id)?;
+        self.cognition = cognition;
         self.active = Some(ActiveConversationTurn {
             task_id,
             model_asset_id,
@@ -176,11 +178,16 @@ impl SovereignConversationState {
         if active.generated_tokens.len() >= active.max_new_tokens {
             return Err(ConversationStateError::InvalidActiveTurn);
         }
-        active.generated_tokens.push(token);
-        active.generated_text.push_str(text_piece);
-        if active.generated_text.len() > MAX_TEXT_BYTES {
+        let next_text_len = active
+            .generated_text
+            .len()
+            .checked_add(text_piece.len())
+            .ok_or(ConversationStateError::Overflow)?;
+        if next_text_len > MAX_TEXT_BYTES {
             return Err(ConversationStateError::LimitExceeded);
         }
+        active.generated_tokens.push(token);
+        active.generated_text.push_str(text_piece);
         Ok(())
     }
 
@@ -476,7 +483,9 @@ fn validate_active(
         .tasks
         .get(&active.task_id)
         .ok_or(ConversationStateError::InvalidActiveTurn)?;
-    if matches!(task.status, TaskStatus::Completed | TaskStatus::Failed) {
+    if task.intent.objective != active.user_message
+        || matches!(task.status, TaskStatus::Completed | TaskStatus::Failed)
+    {
         return Err(ConversationStateError::InvalidActiveTurn);
     }
     Ok(())
