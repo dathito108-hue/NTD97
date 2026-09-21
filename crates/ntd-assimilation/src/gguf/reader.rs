@@ -50,9 +50,8 @@ pub fn parse_gguf(bytes: &[u8]) -> Result<GgufModel, GgufError> {
     }
 
     let mut names = BTreeSet::new();
-    let mut tensors = Vec::with_capacity(
-        usize::try_from(tensor_count).map_err(|_| GgufError::LimitExceeded)?,
-    );
+    let mut tensors =
+        Vec::with_capacity(usize::try_from(tensor_count).map_err(|_| GgufError::LimitExceeded)?);
     for _ in 0..tensor_count {
         let name = cursor.string()?;
         if name.is_empty() || !names.insert(name.clone()) {
@@ -134,9 +133,8 @@ fn parse_value(cursor: &mut Cursor<'_>, value_type: GgufValueType) -> Result<Ggu
             if count > MAX_ARRAY_ELEMENTS {
                 return Err(GgufError::LimitExceeded);
             }
-            let mut values = Vec::with_capacity(
-                usize::try_from(count).map_err(|_| GgufError::LimitExceeded)?,
-            );
+            let mut values =
+                Vec::with_capacity(usize::try_from(count).map_err(|_| GgufError::LimitExceeded)?);
             for _ in 0..count {
                 values.push(parse_value(cursor, element_type)?);
             }
@@ -173,7 +171,10 @@ impl<'a> Cursor<'a> {
 
     fn take(&mut self, len: usize) -> Result<&'a [u8], GgufError> {
         let end = self.offset.checked_add(len).ok_or(GgufError::Overflow)?;
-        let out = self.bytes.get(self.offset..end).ok_or(GgufError::Truncated)?;
+        let out = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(GgufError::Truncated)?;
         self.offset = end;
         Ok(out)
     }
