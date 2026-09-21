@@ -6,6 +6,7 @@ members = [
     "crates/ntd-capsule",
     "crates/ntd-runtime",
     "crates/ntd-platform",
+    "crates/ntd-android-bridge",
 ]
 
 [workspace.package]
