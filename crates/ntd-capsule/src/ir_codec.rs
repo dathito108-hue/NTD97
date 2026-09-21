@@ -54,13 +54,13 @@ pub fn decode_graph_section(chunk: &ChunkView<'_>) -> Result<Graph, GraphSection
 }
 
 pub fn encode_graph(graph: &Graph) -> Result<Vec<u8>, IrCodecError> {
-    graph
-        .validate()
-        .map_err(IrCodecError::StructuralValidation)?;
-
     if !IrVersion::CURRENT.can_read(graph.version) {
         return Err(IrCodecError::UnsupportedVersion(graph.version));
     }
+
+    graph
+        .validate()
+        .map_err(IrCodecError::StructuralValidation)?;
 
     let input_count = u32::try_from(graph.inputs.len()).map_err(|_| IrCodecError::Overflow)?;
     let output_count = u32::try_from(graph.outputs.len()).map_err(|_| IrCodecError::Overflow)?;
@@ -517,6 +517,7 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CapsuleKind, CapsuleView};
 
     fn scalar(id: u32, dtype: DType) -> ValueDecl {
         ValueDecl {
@@ -599,6 +600,27 @@ mod tests {
         let decoded = decode_graph(&encoded).expect("decode");
         assert_eq!(decoded, graph);
         assert_eq!(encode_graph(&decoded).expect("re-encode"), encoded);
+    }
+
+    #[test]
+    fn graph_section_round_trips_through_ncc97_capsule() {
+        let graph = sample_graph();
+        let mut builder =
+            CapsuleBuilder::new(CapsuleKind::Full, *b"NTD97-IR-CAPS-01");
+        push_graph_section(&mut builder, &graph).expect("push graph");
+
+        let bytes = builder.write().expect("write capsule");
+        let capsule = CapsuleView::read(&bytes).expect("read capsule");
+        let graph_chunk = capsule
+            .chunks
+            .iter()
+            .find(|chunk| chunk.kind == SectionKind::Graph)
+            .expect("graph chunk");
+
+        assert_eq!(
+            decode_graph_section(graph_chunk).expect("decode graph section"),
+            graph
+        );
     }
 
     #[test]
