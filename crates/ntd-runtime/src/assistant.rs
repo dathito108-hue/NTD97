@@ -796,10 +796,7 @@ mod tests {
             .expect("begin");
         state.cancel_turn(task, "cancelled").expect("cancel");
         assert!(state.prior_conversation_failure());
-        assert_eq!(
-            memory_recall_limit_for_budget(ReasoningBudget::Recovery),
-            6
-        );
+        assert_eq!(memory_recall_limit_for_budget(ReasoningBudget::Recovery), 6);
     }
 
     #[test]
