@@ -339,7 +339,6 @@ fn decode_q4_0(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<Vec<f32>, GgufEr
     Ok(output)
 }
 
-
 fn decode_q4_k(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<Vec<f32>, GgufError> {
     validate_quantized_payload(tensor, bytes)?;
     let capacity = usize::try_from(element_count(tensor)?).map_err(|_| GgufError::LimitExceeded)?;
@@ -404,13 +403,21 @@ fn decode_q5_k(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<Vec<f32>, GgufEr
             let m2 = dmin * f32::from(min2);
             let q = &qs[group * 32..group * 32 + 32];
 
-            for index in 0..32 {
-                let high = if qh[index] & high_low_mask != 0 { 16 } else { 0 };
-                output.push(d1 * f32::from((q[index] & 0x0f) + high) - m1);
+            for (&low, &high_bits) in q.iter().zip(qh.iter()) {
+                let high = if high_bits & high_low_mask != 0 {
+                    16
+                } else {
+                    0
+                };
+                output.push(d1 * f32::from((low & 0x0f) + high) - m1);
             }
-            for index in 0..32 {
-                let high = if qh[index] & high_high_mask != 0 { 16 } else { 0 };
-                output.push(d2 * f32::from((q[index] >> 4) + high) - m2);
+            for (&low, &high_bits) in q.iter().zip(qh.iter()) {
+                let high = if high_bits & high_high_mask != 0 {
+                    16
+                } else {
+                    0
+                };
+                output.push(d2 * f32::from((low >> 4) + high) - m2);
             }
 
             scale_index += 2;
@@ -449,7 +456,7 @@ fn decode_q6_k(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<Vec<f32>, GgufEr
             for lane in 0..32 {
                 let scale_pair = lane / 16;
                 let high = qh[qh_base + lane];
-                let q1 = i32::from((ql[ql_base + lane] & 0x0f) | (((high >> 0) & 0x03) << 4)) - 32;
+                let q1 = i32::from((ql[ql_base + lane] & 0x0f) | ((high & 0x03) << 4)) - 32;
                 let q2 = i32::from((ql[ql_base + lane + 32] & 0x0f) | (((high >> 2) & 0x03) << 4)) - 32;
                 let q3 = i32::from((ql[ql_base + lane] >> 4) | (((high >> 4) & 0x03) << 4)) - 32;
                 let q4 = i32::from((ql[ql_base + lane + 32] >> 4) | (((high >> 6) & 0x03) << 4)) - 32;
