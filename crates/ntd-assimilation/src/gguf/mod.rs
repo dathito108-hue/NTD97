@@ -1,10 +1,15 @@
 #![forbid(unsafe_code)]
 
 mod reader;
+mod transcode;
 
 use std::collections::BTreeMap;
 
 pub use reader::parse_gguf;
+pub use transcode::{
+    ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, transcode_tensor,
+    TranscodedTensor,
+};
 
 pub const GGUF_MAGIC: [u8; 4] = *b"GGUF";
 pub const GGUF_VERSION: u32 = 3;
@@ -299,6 +304,7 @@ pub enum GgufError {
     InvalidMagic,
     UnsupportedVersion(u32),
     UnsupportedValueType(u32),
+    UnsupportedTensorType(u32),
     InvalidBool(u8),
     InvalidUtf8,
     InvalidArrayType,
