@@ -473,6 +473,7 @@ pub struct ProviderMeasurement {
     pub kind: ProviderKind,
     pub op: TensorOp,
     pub latency_nanos: u64,
+    pub verified_equivalent: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -496,8 +497,33 @@ impl AutotuneTable {
     pub fn latency_nanos(&self, kind: ProviderKind, op: TensorOp) -> Option<u64> {
         self.measurements
             .iter()
-            .find(|entry| entry.kind == kind && entry.op == op)
+            .find(|entry| {
+                entry.kind == kind && entry.op == op && entry.verified_equivalent
+            })
             .map(|entry| entry.latency_nanos)
+    }
+
+    pub fn is_verified(&self, kind: ProviderKind, op: TensorOp) -> bool {
+        self.measurements.iter().any(|entry| {
+            entry.kind == kind && entry.op == op && entry.verified_equivalent
+        })
+    }
+}
+
+pub fn verify_provider_equivalence<R, C>(
+    reference: &R,
+    candidate: &C,
+    op: TensorOp,
+    inputs: &[&Tensor],
+) -> Result<bool, TensorError>
+where
+    R: ExecutionProvider,
+    C: ExecutionProvider,
+{
+    let reference_outputs = reference.execute(op, inputs)?;
+    match candidate.execute(op, inputs) {
+        Ok(candidate_outputs) => Ok(candidate_outputs == reference_outputs),
+        Err(_) => Ok(false),
     }
 }
 
@@ -587,12 +613,15 @@ impl AdaptiveExecutionProvider {
 
         match profile.kind {
             ProviderKind::CpuReference | ProviderKind::CpuTiled => true,
-            ProviderKind::Vulkan | ProviderKind::Npu => accelerator_permitted(
-                profile.kind,
-                &self.device,
-                self.snapshot,
-                self.policy,
-            ),
+            ProviderKind::Vulkan | ProviderKind::Npu => {
+                self.autotune.is_verified(profile.kind, op)
+                    && accelerator_permitted(
+                        profile.kind,
+                        &self.device,
+                        self.snapshot,
+                        self.policy,
+                    )
+            }
         }
     }
 }
@@ -831,11 +860,13 @@ mod tests {
             kind: ProviderKind::CpuTiled,
             op: TensorOp::MatMul,
             latency_nanos: 500,
+            verified_equivalent: true,
         });
         table.record(ProviderMeasurement {
             kind: ProviderKind::Vulkan,
             op: TensorOp::MatMul,
             latency_nanos: 100,
+            verified_equivalent: true,
         });
         adaptive.set_autotune(table);
 
@@ -846,6 +877,19 @@ mod tests {
                 .kind,
             ProviderKind::Vulkan
         );
+    }
+
+    #[test]
+    fn equivalence_verifier_rejects_failed_candidate() {
+        let lhs = Tensor::new(vec![1, 1], vec![2.0]).expect("lhs");
+        let rhs = Tensor::new(vec![1, 1], vec![3.0]).expect("rhs");
+        assert!(!verify_provider_equivalence(
+            &CpuReferenceProvider,
+            &FailingProvider,
+            TensorOp::MatMul,
+            &[&lhs, &rhs],
+        )
+        .expect("verify"));
     }
 
     #[test]
@@ -860,6 +904,15 @@ mod tests {
         ));
         adaptive.register(CpuTiledProvider::default());
         adaptive.register(CpuReferenceMobileProvider);
+
+        let mut table = AutotuneTable::default();
+        table.record(ProviderMeasurement {
+            kind: ProviderKind::Npu,
+            op: TensorOp::MatMul,
+            latency_nanos: 50,
+            verified_equivalent: true,
+        });
+        adaptive.set_autotune(table);
 
         let lhs = Tensor::new(vec![1, 2], vec![1.0, 2.0]).expect("lhs");
         let rhs = Tensor::new(vec![2, 2], vec![3.0, 4.0, 5.0, 6.0]).expect("rhs");
