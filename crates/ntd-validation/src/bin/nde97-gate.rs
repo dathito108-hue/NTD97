@@ -1,11 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::{
-    env,
-    fs,
-    path::PathBuf,
-    process::ExitCode,
-};
+use std::{env, fs, path::PathBuf, process::ExitCode};
 
 use ntd_validation::{
     decode_physical_evidence, evaluate_physical_records, PhysicalEvidenceRecord, ValidationTargets,
@@ -13,9 +8,7 @@ use ntd_validation::{
 
 fn main() -> ExitCode {
     let mut args = env::args_os();
-    let program = args
-        .next()
-        .unwrap_or_else(|| "nde97-gate".into());
+    let program = args.next().unwrap_or_else(|| "nde97-gate".into());
     let Some(expected_revision) = args.next() else {
         print_usage(&program);
         return ExitCode::from(2);
