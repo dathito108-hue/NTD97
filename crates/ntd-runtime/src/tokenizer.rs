@@ -27,6 +27,16 @@ pub struct VocabularyTokenizer {
     unknown_token: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LlamaSpmConfig {
+    pub bos_token: Option<u32>,
+    pub eos_token: Option<u32>,
+    pub unknown_token: Option<u32>,
+    pub add_space_prefix: bool,
+    pub add_bos_token: bool,
+    pub add_eos_token: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlamaSpmTokenizer {
     tokens: Vec<Vec<u8>>,
@@ -196,20 +206,19 @@ impl TextTokenizer for VocabularyTokenizer {
 }
 
 impl LlamaSpmTokenizer {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         tokens: Vec<Vec<u8>>,
         score_bits: Vec<u32>,
         token_types: Vec<i32>,
-        bos_token: Option<u32>,
-        eos_token: Option<u32>,
-        unknown_token: Option<u32>,
-        add_space_prefix: bool,
-        add_bos_token: bool,
-        add_eos_token: bool,
+        config: LlamaSpmConfig,
     ) -> Result<Self, TokenizerError> {
         validate_vocabulary(&tokens)?;
-        validate_specials(&tokens, bos_token, eos_token, unknown_token)?;
+        validate_specials(
+            &tokens,
+            config.bos_token,
+            config.eos_token,
+            config.unknown_token,
+        )?;
 
         if score_bits.len() != tokens.len() {
             return Err(TokenizerError::InvalidScoreCount {
@@ -250,12 +259,12 @@ impl LlamaSpmTokenizer {
             tokens,
             score_bits,
             token_types,
-            bos_token,
-            eos_token,
-            unknown_token,
-            add_space_prefix,
-            add_bos_token,
-            add_eos_token,
+            bos_token: config.bos_token,
+            eos_token: config.eos_token,
+            unknown_token: config.unknown_token,
+            add_space_prefix: config.add_space_prefix,
+            add_bos_token: config.add_bos_token,
+            add_eos_token: config.add_eos_token,
             token_to_id,
             byte_tokens,
         })
@@ -776,12 +785,14 @@ mod tests {
             tokens,
             scores.into_iter().map(f32::to_bits).collect(),
             types,
-            Some(1),
-            Some(2),
-            Some(0),
-            true,
-            true,
-            false,
+            LlamaSpmConfig {
+                bos_token: Some(1),
+                eos_token: Some(2),
+                unknown_token: Some(0),
+                add_space_prefix: true,
+                add_bos_token: true,
+                add_eos_token: false,
+            },
         )
         .expect("spm tokenizer")
     }
@@ -836,12 +847,14 @@ mod tests {
             vec![b"<unk>".to_vec(), b"a".to_vec()],
             vec![(-1000.0f32).to_bits(), 0.0f32.to_bits()],
             vec![TOKEN_TYPE_UNKNOWN, TOKEN_TYPE_NORMAL],
-            None,
-            None,
-            Some(0),
-            false,
-            false,
-            false,
+            LlamaSpmConfig {
+                bos_token: None,
+                eos_token: None,
+                unknown_token: Some(0),
+                add_space_prefix: false,
+                add_bos_token: false,
+                add_eos_token: false,
+            },
         )
         .expect("tokenizer");
 
