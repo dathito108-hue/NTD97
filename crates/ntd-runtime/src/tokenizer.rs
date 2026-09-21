@@ -846,7 +846,11 @@ mod tests {
                 u32::try_from(byte_exclamation).expect("byte id")
             ]
         );
-        assert_eq!(tokenizer.decode(&tokens, true).expect("decode"), " hello!");
+        assert_eq!(tokenizer.decode(&tokens, true).expect("decode"), "hello!");
+        assert_eq!(
+            tokenizer.decode(&tokens[1..], true).expect("decode without bos"),
+            " hello!"
+        );
     }
 
     #[test]
