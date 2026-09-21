@@ -464,6 +464,330 @@ fn digest_hex(digest: &[u8; 32]) -> String {
     out
 }
 
+fn build_llama_tokenizer(
+    activation: &ThinGenerativeActivation,
+) -> Result<LlamaSpmTokenizer, String> {
+    let NativeTokenizerModel::LlamaSpm {
+        score_bits,
+        token_types,
+        add_space_prefix,
+        add_bos_token,
+        add_eos_token,
+    } = &activation.tokenizer.model
+    else {
+        return Err("native chat currently requires a LLaMA SPM tokenizer".into());
+    };
+
+    LlamaSpmTokenizer::new(
+        activation.tokenizer.tokens.clone(),
+        score_bits.clone(),
+        token_types.clone(),
+        LlamaSpmConfig {
+            bos_token: activation.tokenizer.bos_token,
+            eos_token: activation.tokenizer.eos_token,
+            unknown_token: activation.tokenizer.unknown_token,
+            add_space_prefix: *add_space_prefix,
+            add_bos_token: *add_bos_token,
+            add_eos_token: *add_eos_token,
+        },
+    )
+    .map_err(|error| format!("build tokenizer: {error:?}"))
+}
+
+fn open_chat_model(
+    asset_id: &str,
+    version: u32,
+    capsule_path: &str,
+    shard_root: &str,
+    verify_key: &[u8],
+    context_limit: usize,
+) -> Result<(), String> {
+    if asset_id.trim().is_empty() || version == 0 || context_limit == 0 {
+        return Err("invalid native chat model identity or context limit".into());
+    }
+    let verify_key: [u8; 32] = verify_key
+        .try_into()
+        .map_err(|_| "verify key must contain exactly 32 bytes".to_owned())?;
+    let native_capsule =
+        fs::read(capsule_path).map_err(|error| format!("read native capsule: {error}"))?;
+    let package = NativePackage {
+        asset_id: asset_id.to_owned(),
+        version,
+        kind: AssetKind::Intelligence,
+        capsule_hash: sha256(&native_capsule),
+        native_capsule,
+        capability: None,
+    };
+    let shard_store = FileTensorShardStore::open(shard_root)
+        .map_err(|error| format!("open shards: {error:?}"))?;
+
+    verify_native_package_with_shards(&package, &verify_key, &shard_store)
+        .map_err(|error| format!("verify signed package: {error:?}"))?;
+    let activation = activate_thin_generative_capsule(&package.native_capsule, &shard_store)
+        .map_err(|error| format!("activate package: {error:?}"))?;
+    let tokenizer = build_llama_tokenizer(&activation)?;
+    if tokenizer.vocab_size()
+        != usize::try_from(activation.manifest.vocabulary_size)
+            .map_err(|_| "vocabulary size does not fit usize".to_owned())?
+    {
+        return Err("native chat tokenizer vocabulary mismatch".into());
+    }
+    let resolver = FileBackedTensorResolver::from_activation(shard_store, &activation);
+
+    let mut guard = lock_state();
+    guard.chat_model = Some(Arc::new(NativeChatModel {
+        activation,
+        resolver,
+        tokenizer,
+        context_limit,
+    }));
+    guard.chat_session = None;
+    guard.chat_history.clear();
+    Ok(())
+}
+
+fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String> {
+    if max_new_tokens == 0 {
+        return Err("max_new_tokens must be greater than zero".into());
+    }
+
+    let mut guard = lock_state();
+    if guard
+        .chat_session
+        .as_ref()
+        .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+    {
+        return Err("another native chat request is still running".into());
+    }
+    let model = guard
+        .chat_model
+        .clone()
+        .ok_or_else(|| "no verified native chat model is loaded".to_owned())?;
+    let prompt_limit = model.context_limit.saturating_sub(max_new_tokens).max(1);
+    let compiled = NativeChatPromptCompiler
+        .compile(
+            &guard.chat_history,
+            user_message,
+            &model.tokenizer,
+            prompt_limit,
+        )
+        .map_err(|error| format!("compile chat prompt: {error:?}"))?;
+
+    let request_id = guard.next_chat_request_id;
+    guard.next_chat_request_id = guard
+        .next_chat_request_id
+        .checked_add(1)
+        .ok_or_else(|| "chat request id overflow".to_owned())?;
+    guard.chat_session = Some(NativeChatSession {
+        request_id,
+        user_message: user_message.to_owned(),
+        all_tokens: compiled.token_ids,
+        generated_tokens: Vec::with_capacity(max_new_tokens),
+        generated_text: String::new(),
+        max_new_tokens,
+        cancel: Arc::new(AtomicBool::new(false)),
+        status: NativeChatSessionStatus::Running,
+    });
+    Ok(request_id)
+}
+
+fn chat_status(request_id: u64) -> i32 {
+    let guard = lock_state();
+    let Some(session) = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
+    else {
+        return CHAT_STATUS_MISSING;
+    };
+    if session.cancel.load(Ordering::Acquire) && session.status == NativeChatSessionStatus::Running {
+        return CHAT_STATUS_CANCELLED;
+    }
+    match session.status {
+        NativeChatSessionStatus::Running => CHAT_STATUS_RUNNING,
+        NativeChatSessionStatus::Complete => CHAT_STATUS_COMPLETE,
+        NativeChatSessionStatus::Cancelled => CHAT_STATUS_CANCELLED,
+        NativeChatSessionStatus::Failed => CHAT_STATUS_FAILED,
+    }
+}
+
+fn cancel_chat(request_id: u64) -> bool {
+    let cancel = {
+        let guard = lock_state();
+        guard
+            .chat_session
+            .as_ref()
+            .filter(|session| {
+                session.request_id == request_id
+                    && session.status == NativeChatSessionStatus::Running
+            })
+            .map(|session| Arc::clone(&session.cancel))
+    };
+    if let Some(cancel) = cancel {
+        cancel.store(true, Ordering::Release);
+        true
+    } else {
+        false
+    }
+}
+
+fn encode_chat_event(kind: u8, token: Option<u32>, text: &str) -> Vec<u8> {
+    let mut out = vec![CHAT_EVENT_PROTOCOL_VERSION, kind];
+    out.extend_from_slice(&token.unwrap_or(u32::MAX).to_le_bytes());
+    push_string(&mut out, text);
+    out
+}
+
+fn terminal_chat_event(request_id: u64) -> Option<Vec<u8>> {
+    let mut guard = lock_state();
+    let session = guard
+        .chat_session
+        .as_mut()
+        .filter(|session| session.request_id == request_id)?;
+
+    if session.cancel.load(Ordering::Acquire) && session.status == NativeChatSessionStatus::Running {
+        session.status = NativeChatSessionStatus::Cancelled;
+    }
+
+    match session.status {
+        NativeChatSessionStatus::Running => None,
+        NativeChatSessionStatus::Complete => Some(encode_chat_event(CHAT_EVENT_COMPLETE, None, "")),
+        NativeChatSessionStatus::Cancelled => {
+            Some(encode_chat_event(CHAT_EVENT_CANCELLED, None, ""))
+        }
+        NativeChatSessionStatus::Failed => Some(encode_chat_event(
+            CHAT_EVENT_ERROR,
+            None,
+            "native chat generation failed",
+        )),
+    }
+}
+
+fn next_chat_event(request_id: u64) -> Result<Vec<u8>, String> {
+    if let Some(event) = terminal_chat_event(request_id) {
+        return Ok(event);
+    }
+
+    let (model, all_tokens, generated_len, max_new_tokens, cancel) = {
+        let guard = lock_state();
+        let session = guard
+            .chat_session
+            .as_ref()
+            .filter(|session| session.request_id == request_id)
+            .ok_or_else(|| "unknown chat request".to_owned())?;
+        let model = guard
+            .chat_model
+            .clone()
+            .ok_or_else(|| "native chat model was unloaded".to_owned())?;
+        (
+            model,
+            session.all_tokens.clone(),
+            session.generated_tokens.len(),
+            session.max_new_tokens,
+            Arc::clone(&session.cancel),
+        )
+    };
+
+    if generated_len >= max_new_tokens {
+        let mut guard = lock_state();
+        let commit = {
+            let session = guard
+                .chat_session
+                .as_mut()
+                .filter(|session| session.request_id == request_id)
+                .ok_or_else(|| "unknown chat request".to_owned())?;
+            session.status = NativeChatSessionStatus::Complete;
+            Some((session.user_message.clone(), session.generated_text.clone()))
+        };
+        if let Some((user, assistant)) = commit {
+            guard.chat_history.push(ConversationTurn::user(user));
+            guard
+                .chat_history
+                .push(ConversationTurn::assistant(assistant));
+        }
+        return Ok(encode_chat_event(CHAT_EVENT_COMPLETE, None, ""));
+    }
+
+    if cancel.load(Ordering::Acquire) {
+        let mut guard = lock_state();
+        if let Some(session) = guard
+            .chat_session
+            .as_mut()
+            .filter(|session| session.request_id == request_id)
+        {
+            session.status = NativeChatSessionStatus::Cancelled;
+        }
+        return Ok(encode_chat_event(CHAT_EVENT_CANCELLED, None, ""));
+    }
+
+    let previous_token = all_tokens.last().copied();
+    let generator = GraphGenerator::new(
+        model.activation.graph.clone(),
+        CpuReferenceProvider,
+        BTreeMap::new(),
+        model.activation.manifest.token_input,
+        usize::try_from(model.activation.manifest.distribution_output)
+            .map_err(|_| "distribution output does not fit usize".to_owned())?,
+        usize::try_from(model.activation.manifest.vocabulary_size)
+            .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
+    )
+    .map_err(|error| format!("build graph generator: {error:?}"))?;
+    let generated = generator
+        .generate_tokens_with_resolver(
+            &model.resolver,
+            &all_tokens,
+            GenerationConfig {
+                max_new_tokens: 1,
+                context_limit: model.context_limit,
+                eos_token: model.tokenizer.eos_token(),
+                distribution: DistributionKind::Logits,
+                sampling: SamplingMode::Greedy,
+            },
+        )
+        .map_err(|error| format!("generate next chat token: {error:?}"))?;
+    let token = generated
+        .generated_tokens
+        .first()
+        .copied()
+        .ok_or_else(|| "native chat generation returned no token".to_owned())?;
+    let piece = model
+        .tokenizer
+        .decode_after(previous_token, &[token], true)
+        .map_err(|error| format!("decode chat token: {error:?}"))?;
+
+    let mut guard = lock_state();
+    let mut commit = None;
+    {
+        let session = guard
+            .chat_session
+            .as_mut()
+            .filter(|session| session.request_id == request_id)
+            .ok_or_else(|| "chat request changed during generation".to_owned())?;
+        if session.cancel.load(Ordering::Acquire) {
+            session.status = NativeChatSessionStatus::Cancelled;
+            return Ok(encode_chat_event(CHAT_EVENT_CANCELLED, None, ""));
+        }
+
+        session.all_tokens.push(token);
+        session.generated_tokens.push(token);
+        session.generated_text.push_str(&piece);
+
+        let reached_eos = model.tokenizer.eos_token() == Some(token);
+        if reached_eos || session.generated_tokens.len() >= session.max_new_tokens {
+            session.status = NativeChatSessionStatus::Complete;
+            commit = Some((session.user_message.clone(), session.generated_text.clone()));
+        }
+    }
+    if let Some((user, assistant)) = commit {
+        guard.chat_history.push(ConversationTurn::user(user));
+        guard
+            .chat_history
+            .push(ConversationTurn::assistant(assistant));
+    }
+
+    Ok(encode_chat_event(CHAT_EVENT_TOKEN, Some(token), &piece))
+}
+
 fn real_model_probe(
     capsule_path: &str,
     shard_root: &str,
@@ -492,30 +816,7 @@ fn real_model_probe(
     let activation = activate_thin_generative_capsule(&package.native_capsule, &shard_store)
         .map_err(|error| format!("activate package: {error:?}"))?;
 
-    let NativeTokenizerModel::LlamaSpm {
-        score_bits,
-        token_types,
-        add_space_prefix,
-        add_bos_token,
-        add_eos_token,
-    } = &activation.tokenizer.model
-    else {
-        return Err("real model tokenizer is not LLaMA SPM".into());
-    };
-    let tokenizer = LlamaSpmTokenizer::new(
-        activation.tokenizer.tokens.clone(),
-        score_bits.clone(),
-        token_types.clone(),
-        LlamaSpmConfig {
-            bos_token: activation.tokenizer.bos_token,
-            eos_token: activation.tokenizer.eos_token,
-            unknown_token: activation.tokenizer.unknown_token,
-            add_space_prefix: *add_space_prefix,
-            add_bos_token: *add_bos_token,
-            add_eos_token: *add_eos_token,
-        },
-    )
-    .map_err(|error| format!("build tokenizer: {error:?}"))?;
+    let tokenizer = build_llama_tokenizer(&activation)?;
     let bos = tokenizer
         .bos_token()
         .ok_or_else(|| "real model tokenizer has no BOS token".to_owned())?;
