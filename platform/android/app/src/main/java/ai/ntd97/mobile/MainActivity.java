@@ -62,6 +62,13 @@ public final class MainActivity extends Activity {
         voice.setOnClickListener(view -> toggleVoice());
         controls.addView(voice);
 
+        if (BuildConfig.DEBUG) {
+            Button physicalValidation = new Button(this);
+            physicalValidation.setText("Physical validation");
+            physicalValidation.setOnClickListener(view -> openPhysicalValidation());
+            controls.addView(physicalValidation);
+        }
+
         approvalPanel = new LinearLayout(this);
         approvalPanel.setOrientation(LinearLayout.HORIZONTAL);
         approvalPanel.setVisibility(LinearLayout.GONE);
@@ -176,6 +183,14 @@ public final class MainActivity extends Activity {
         boolean playback = audioController.startPlayback();
         voiceActive = capture || playback;
         statusView.setText(voiceActive ? "Local voice active" : "Voice unavailable");
+    }
+
+    private void openPhysicalValidation() {
+        Intent validation = new Intent();
+        validation.setClassName(
+                this,
+                getPackageName() + ".NtdPhysicalEvidenceActivity");
+        startActivity(validation);
     }
 
     private void openOverlay() {

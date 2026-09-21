@@ -21,7 +21,7 @@ adb shell run-as "${PACKAGE}" rm -f \
   files/ntd97-device-evidence.nde97 \
   files/ntd97-device-evidence.txt || true
 
-adb shell am start -W -n "${ACTIVITY}" >/dev/null
+adb shell am start -W -n "${ACTIVITY}" --ez headless true >/dev/null
 
 for _ in $(seq 1 180); do
   if adb shell run-as "${PACKAGE}" test -f files/ntd97-device-evidence.txt; then

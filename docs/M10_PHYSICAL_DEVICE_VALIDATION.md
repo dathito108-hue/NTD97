@@ -56,7 +56,24 @@ CI performs the no-third-party-AI dependency audit before assembly and embeds:
 
 A locally assembled APK defaults to `local-unattested` and `false`.
 
-## Collect from a real Android phone
+## Collect directly on the phone
+
+The CI debug APK exposes a **Physical validation** button in the main NTD97 screen.
+
+For a physical-device run:
+
+1. install the canonical CI debug APK for the exact main revision being validated;
+2. unplug charging power and let the phone reach a stable thermal state;
+3. open NTD97 and tap **Physical validation**;
+4. keep the validation screen open while the native workload runs;
+5. after completion, Android opens the system document picker;
+6. save the generated `.nde97` file somewhere you can retrieve or upload.
+
+The filename includes the first eight characters of the embedded build revision. The NDE97 record itself contains the complete 40-character build revision and remains subject to the canonical ingestion gate.
+
+This route does not require ADB or a PC.
+
+## Collect from a real Android phone with ADB
 
 Requirements:
 
@@ -70,7 +87,7 @@ Run:
 bash .github/scripts/collect-physical-evidence.sh /path/to/app-debug.apk physical-evidence
 ```
 
-The script installs the debug APK, launches the collector, waits for completion, and exports:
+The script installs the debug APK, launches the collector in headless mode, waits for completion, and exports:
 
 - a human-readable `.txt` summary;
 - a canonical binary `.nde97` evidence record.
