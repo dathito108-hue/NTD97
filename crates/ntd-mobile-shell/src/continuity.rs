@@ -386,18 +386,16 @@ fn validate_bundle(bundle: &MobileContinuityBundle) -> Result<(), MobileContinui
     {
         return Err(MobileContinuityError::NonCanonicalEncoding);
     }
-    let registry = registry_from_snapshot(&bundle.capabilities)?;
-    let decoded_actions = decode_action_fabric_checkpoint(&registry, &bundle.action_checkpoint)
-        .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?;
-    if decoded_actions.plans.values().any(|plan| {
-        !bundle
-            .capabilities
-            .iter()
-            .any(|descriptor| descriptor.id.0 == plan.actions.first().map(|a| a.capability.0.clone()).unwrap_or_default())
-    }) && !decoded_actions.plans.is_empty()
+    if !bundle
+        .capabilities
+        .windows(2)
+        .all(|pair| pair[0].id.0 < pair[1].id.0)
     {
         return Err(MobileContinuityError::NonCanonicalEncoding);
     }
+    let registry = registry_from_snapshot(&bundle.capabilities)?;
+    decode_action_fabric_checkpoint(&registry, &bundle.action_checkpoint)
+        .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?;
     if let Some(retry) = &bundle.retry {
         retry.validate()?;
     }
@@ -745,7 +743,7 @@ mod tests {
 
         let decoded = decode_mobile_continuity_bundle(&first).expect("decode");
         let restored =
-            restore_mobile_continuity_bundle(registry, decoded).expect("restore mobile session");
+            restore_mobile_continuity_bundle(decoded).expect("restore mobile session");
 
         assert_eq!(restored.cognitive.state().identity, bundle.identity);
         assert!(restored.cognitive.state().tasks.contains_key(&task_id));
