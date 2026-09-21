@@ -75,11 +75,8 @@ fn position_ids_follow_dynamic_token_window() {
 
 #[test]
 fn dynamic_reshape_copies_and_infers_dimensions() {
-    let input = Tensor::new(
-        vec![2, 6],
-        (0..12).map(|value| value as f32).collect(),
-    )
-    .expect("input");
+    let input =
+        Tensor::new(vec![2, 6], (0..12).map(|value| value as f32).collect()).expect("input");
     let shape = Tensor::new(vec![3], vec![0.0, 2.0, -1.0]).expect("shape");
     let output = CpuReferenceProvider
         .execute(TensorOp::Reshape, &[&input, &shape])
