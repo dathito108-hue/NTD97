@@ -500,8 +500,12 @@ fn validate_tokenizer(tokenizer: &NativeTokenizerDescriptor) -> Result<(), Nativ
         }
         if merges.is_empty() || merges.iter().any(|merge| {
             let mut parts = merge.split(' ');
-            parts.next().is_none()
-                || parts.next().is_none()
+            let left = parts.next();
+            let right = parts.next();
+            left.is_none()
+                || right.is_none()
+                || left == Some("")
+                || right == Some("")
                 || parts.next().is_some()
         }) {
             return Err(NativeTokenizerError::NonCanonicalEncoding);
@@ -623,6 +627,35 @@ mod tests {
                 add_space_prefix: true,
                 add_bos_token: false,
                 add_eos_token: true,
+            },
+        };
+
+        let encoded = encode_native_tokenizer(&tokenizer).expect("encode");
+        assert_eq!(
+            decode_native_tokenizer(&encoded).expect("decode"),
+            tokenizer
+        );
+    }
+
+    #[test]
+    fn gpt2_bpe_descriptor_round_trips_source_semantics() {
+        let tokenizer = NativeTokenizerDescriptor {
+            tokens: vec![
+                b"h".to_vec(),
+                b"e".to_vec(),
+                b"he".to_vec(),
+                b"<bos>".to_vec(),
+            ],
+            bos_token: Some(3),
+            eos_token: None,
+            unknown_token: None,
+            model: NativeTokenizerModel::Gpt2Bpe {
+                token_types: vec![1, 1, 1, 3],
+                merges: vec!["h e".to_owned()],
+                pre_tokenizer: NativeGpt2PreTokenizer::Llama3,
+                add_bos_token: true,
+                add_eos_token: false,
+                ignore_merges: true,
             },
         };
 
