@@ -80,9 +80,9 @@ The CPU reference provider defines executable correctness behavior for:
 - RmsNorm;
 - Softmax.
 
-`Gather` and `RotaryPosition` remain explicitly unsupported by the provider until their operator attributes/semantics are added canonically to NTD97 IR. They are not guessed or silently implemented with source-format behavior.
+At the Major Block A boundary, `Gather` and `RotaryPosition` were intentionally left unsupported rather than guessed from a source format. Major Block B subsequently defines and implements their canonical generative semantics and adds `CausalAttention` under IR 0.2.
 
-Optimized CPU, Vulkan and NPU providers must preserve observable semantics against this reference path.
+Optimized CPU, Vulkan and NPU providers must preserve observable semantics against the expanded native reference path.
 
 ## 6. NTD97 IR graph executor
 
