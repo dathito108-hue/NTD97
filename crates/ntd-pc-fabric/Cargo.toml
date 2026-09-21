@@ -8,7 +8,7 @@ rust-version.workspace = true
 [dependencies]
 zeroize = "=1.8.1"
 zeroize_derive = "=1.4.2"
-base64ct = "=1.7.3"
+base64ct = "=1.6.0"
 chacha20poly1305 = "=0.10.1"
 ed25519-dalek = "=2.1.1"
 hkdf = "=0.12.4"
