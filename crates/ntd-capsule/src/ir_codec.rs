@@ -312,6 +312,8 @@ fn decode_op(family: u8, opcode: u8, attrs: &[u8]) -> Result<OpKind, IrCodecErro
                 10 => TensorOp::Silu,
                 11 => TensorOp::Reshape,
                 12 => TensorOp::Transpose,
+                13 => TensorOp::Linear,
+                14 => TensorOp::PositionIds,
                 other => {
                     return Err(IrCodecError::InvalidOpCode {
                         family,
@@ -436,6 +438,8 @@ fn tensor_op_tag(op: TensorOp) -> u8 {
         TensorOp::Silu => 10,
         TensorOp::Reshape => 11,
         TensorOp::Transpose => 12,
+        TensorOp::Linear => 13,
+        TensorOp::PositionIds => 14,
     }
 }
 
@@ -613,6 +617,8 @@ mod tests {
             OpKind::Tensor(TensorOp::Silu),
             OpKind::Tensor(TensorOp::Reshape),
             OpKind::Tensor(TensorOp::Transpose),
+            OpKind::Tensor(TensorOp::Linear),
+            OpKind::Tensor(TensorOp::PositionIds),
             OpKind::State(StateOp::Read),
             OpKind::State(StateOp::Write),
             OpKind::State(StateOp::Checkpoint),
@@ -734,7 +740,7 @@ mod tests {
         assert_eq!(
             encode_graph(&graph).expect("encode"),
             vec![
-                0x4e, 0x49, 0x52, 0x39, 0x37, 0x00, 0x18, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+                0x4e, 0x49, 0x52, 0x39, 0x37, 0x00, 0x18, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             ]
         );
