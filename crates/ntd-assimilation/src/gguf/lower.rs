@@ -252,7 +252,7 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
         2,
     )?;
 
-    let output_source = tensor_map.get("output.weight").copied();
+    let output_source = source_tensors.tensors.get("output.weight").copied();
     let output = match output_source {
         Some(_) => source_tensors.add(
             &mut builder,
