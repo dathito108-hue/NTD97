@@ -205,6 +205,7 @@ pub enum ActionFabricError {
         capability: CapabilityId,
         reason: String,
     },
+    RollbackUnavailable(ActionId),
     TerminalPlan(ActionPlanStatus),
     InvalidActionStatus(u8),
     InvalidPlanStatus(u8),
@@ -488,12 +489,16 @@ impl ActionFabric {
             }
 
             let descriptor = self.registry.descriptor(&action.capability)?.clone();
-            let Some(token) = action.rollback_token.as_deref() else {
-                continue;
-            };
-            if !descriptor.rollback_supported {
+            if action.side_effect == SideEffectClass::ReadOnly {
                 continue;
             }
+            if !descriptor.rollback_supported {
+                return Err(ActionFabricError::RollbackUnavailable(action.id));
+            }
+            let token = action
+                .rollback_token
+                .as_deref()
+                .ok_or(ActionFabricError::RollbackUnavailable(action.id))?;
 
             let adapter = self
                 .adapters
@@ -542,6 +547,10 @@ impl ActionFabric {
         match result {
             AdapterResult::Suspended { resume_token, note } => {
                 if !descriptor.resumable {
+                    let action = self.action_mut(plan_id, cursor)?;
+                    action.status = ActionStatus::Failed;
+                    action.last_error = Some("adapter attempted unsupported suspension".into());
+                    self.finish_plan(plan_id, ActionPlanStatus::Failed)?;
                     return Err(ActionFabricError::NonResumableSuspension(
                         snapshot.capability,
                     ));
