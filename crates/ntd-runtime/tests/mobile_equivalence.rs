@@ -152,12 +152,14 @@ fn representative_mobile_profiles_preserve_graph_output() {
             kind: ProviderKind::CpuTiled,
             op: TensorOp::MatMul,
             latency_nanos: 300,
+            verified_equivalent: true,
         });
         if device.supports_vulkan {
             autotune.record(ProviderMeasurement {
                 kind: ProviderKind::Vulkan,
                 op: TensorOp::MatMul,
                 latency_nanos: 200,
+                verified_equivalent: true,
             });
         }
         if device.supports_npu {
@@ -165,6 +167,7 @@ fn representative_mobile_profiles_preserve_graph_output() {
                 kind: ProviderKind::Npu,
                 op: TensorOp::MatMul,
                 latency_nanos: 100,
+                verified_equivalent: true,
             });
         }
         adaptive.set_autotune(autotune);
