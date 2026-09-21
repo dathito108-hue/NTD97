@@ -848,7 +848,9 @@ mod tests {
         );
         assert_eq!(tokenizer.decode(&tokens, true).expect("decode"), "hello!");
         assert_eq!(
-            tokenizer.decode(&tokens[1..], true).expect("decode without bos"),
+            tokenizer
+                .decode(&tokens[1..], true)
+                .expect("decode without bos"),
             " hello!"
         );
     }
