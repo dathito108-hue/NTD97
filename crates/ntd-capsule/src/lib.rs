@@ -49,7 +49,7 @@ use ntd_ir::IrVersion;
 
 pub const NCC97_MAGIC: [u8; 6] = *b"NCC97\0";
 pub const NCC97_MAJOR: u16 = 0;
-pub const NCC97_MINOR: u16 = 1;
+pub const NCC97_MINOR: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
