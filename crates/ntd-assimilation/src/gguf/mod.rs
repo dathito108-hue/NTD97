@@ -381,6 +381,63 @@ fn llama_spm_blocker(tokenizer: &GgufTokenizer) -> Option<String> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GgufGpt2PreTokenizer {
+    Gpt2,
+    Llama3,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GgufGpt2Semantics {
+    pre_tokenizer: GgufGpt2PreTokenizer,
+    add_bos_token: bool,
+    add_eos_token: bool,
+    ignore_merges: bool,
+}
+
+fn gpt2_bpe_semantics(tokenizer: &GgufTokenizer) -> Result<GgufGpt2Semantics, String> {
+    if tokenizer.token_types.is_none() {
+        return Err("gpt2 tokenizer metadata is missing token types".into());
+    }
+    if tokenizer.merges.is_empty() {
+        return Err(
+            "gpt2 tokenizer metadata is missing merge ranks required for native BPE semantics"
+                .into(),
+        );
+    }
+    if tokenizer.remove_extra_whitespaces == Some(true)
+        || tokenizer.normalizer_lowercase == Some(true)
+        || tokenizer.normalizer_strip_accents == Some(true)
+        || tokenizer.has_precompiled_charsmap
+    {
+        return Err(
+            "gpt2 tokenizer requires normalization semantics outside the native byte-level BPE contract"
+                .into(),
+        );
+    }
+
+    match tokenizer.pre_tokenizer.as_deref() {
+        Some("gpt-2") | Some("gpt2") => Ok(GgufGpt2Semantics {
+            pre_tokenizer: GgufGpt2PreTokenizer::Gpt2,
+            add_bos_token: tokenizer.add_bos_token.unwrap_or(false),
+            add_eos_token: tokenizer.add_eos_token.unwrap_or(false),
+            ignore_merges: false,
+        }),
+        Some("llama3") | Some("llama-v3") | Some("llama-bpe") | Some("falcon3") => {
+            Ok(GgufGpt2Semantics {
+                pre_tokenizer: GgufGpt2PreTokenizer::Llama3,
+                add_bos_token: tokenizer.add_bos_token.unwrap_or(true),
+                add_eos_token: tokenizer.add_eos_token.unwrap_or(false),
+                ignore_merges: true,
+            })
+        }
+        Some(other) => Err(format!(
+            "gpt2 pre-tokenizer profile '{other}' is not supported by native BPE execution"
+        )),
+        None => Err("gpt2 tokenizer is missing tokenizer.ggml.pre".into()),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GgufTensorDisposition {
     NativeF32,
     NativeF16,
@@ -471,14 +528,9 @@ impl GgufConversionPlan {
                 }
             }
             "gpt2" => {
-                if tokenizer.merges.is_empty() {
-                    blockers.push(
-                        "gpt2 tokenizer metadata is missing merge ranks required for source-equivalent BPE semantics"
-                            .into(),
-                    );
+                if let Err(blocker) = gpt2_bpe_semantics(&tokenizer) {
+                    blockers.push(blocker);
                 }
-                blockers
-                    .push("native GPT-2 pre-tokenizer/BPE execution is not implemented yet".into());
             }
             _ => blockers.push(format!(
                 "tokenizer '{}' has no canonical NTD97 tokenizer lowering yet",
