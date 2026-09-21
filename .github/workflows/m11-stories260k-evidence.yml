@@ -54,8 +54,13 @@ jobs:
           curl --fail --location --retry 3 \
             --output llama2c-run.c \
             "https://raw.githubusercontent.com/karpathy/llama2.c/350e04fe35433e6d2941dce5a1f53308f87058eb/run.c"
-          sha256sum stories260K.bin tok512.bin
-          cc -O3 -std=c11 -o llama2c-reference llama2c-run.c -lm
+          printf '%s  %s\n' \
+            'b0a507e7ad0f626624f17112325e66691f9076d622e1d3274d103d00299f2696' \
+            'stories260K.bin' | sha256sum --check --strict
+          printf '%s  %s\n' \
+            '037cb335abb25d1fa9e8ecae30ed2a3a8ace9302862ebcdc05d51a6bbb10c312' \
+            'tok512.bin' | sha256sum --check --strict
+          cc -O3 -o llama2c-reference llama2c-run.c -lm
           ./llama2c-reference stories260K.bin \
             -z tok512.bin -t 0.0 -n 128 \
             > source-output.txt 2> source-stderr.txt
