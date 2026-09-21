@@ -25,9 +25,7 @@ pub use generation::{
     GenerationResult, GraphGenerator, KvCache, KvCacheError, KvLayerCache, PrefixCache,
     SamplingError, SamplingMode,
 };
-pub use memory::{
-    MemoryError, MemoryHit, MemoryKind, MemoryQuery, MemoryRecord, SovereignMemory,
-};
+pub use memory::{MemoryError, MemoryHit, MemoryKind, MemoryQuery, MemoryRecord, SovereignMemory};
 pub use mobile::{
     npu_provider, page_windows, plan_tensor_placement, verify_provider_equivalence,
     vulkan_provider, AdaptiveExecutionProvider, AutotuneTable, ByteRegion, ComputePolicy,
