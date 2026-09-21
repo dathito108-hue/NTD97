@@ -3,7 +3,8 @@
 use ntd_runtime::{
     decode_action_fabric_checkpoint, decode_cognitive_checkpoint, encode_action_fabric_checkpoint,
     encode_cognitive_checkpoint, ActionFabric, ActionFabricState, AuthorityScope,
-    CapabilityDescriptor, CapabilityDomain, CapabilityRegistry, CognitiveIdentity, CognitiveRuntime,
+    CapabilityDescriptor, CapabilityDomain, CapabilityRegistry, CognitiveIdentity,
+    CognitiveRuntime,
 };
 
 pub const MCS97_MAGIC: [u8; 6] = *b"MCS97\0";
@@ -323,7 +324,6 @@ pub fn decode_mobile_continuity_bundle(
     Ok(bundle)
 }
 
-
 fn registry_from_snapshot(
     descriptors: &[CapabilityDescriptor],
 ) -> Result<CapabilityRegistry, MobileContinuityError> {
@@ -350,8 +350,8 @@ fn push_capabilities(
         push_u8(out, u8::from(descriptor.verification_required));
         push_u8(out, u8::from(descriptor.rollback_supported));
         push_u8(out, u8::from(descriptor.resumable));
-        let scope_count =
-            u32::try_from(descriptor.required_scopes.len()).map_err(|_| MobileContinuityError::Overflow)?;
+        let scope_count = u32::try_from(descriptor.required_scopes.len())
+            .map_err(|_| MobileContinuityError::Overflow)?;
         push_u32(out, scope_count);
         for scope in &descriptor.required_scopes {
             push_string(out, scope.as_str())?;
@@ -565,7 +565,6 @@ impl<'a> Cursor<'a> {
         String::from_utf8(self.bytes()?.to_vec()).map_err(|_| MobileContinuityError::InvalidUtf8)
     }
 
-
     fn capabilities(&mut self) -> Result<Vec<CapabilityDescriptor>, MobileContinuityError> {
         let count = usize::try_from(self.u32()?).map_err(|_| MobileContinuityError::Overflow)?;
         let mut descriptors = Vec::with_capacity(count);
@@ -574,7 +573,9 @@ impl<'a> Cursor<'a> {
         for _ in 0..count {
             let id = self.string()?;
             if id.trim().is_empty()
-                || previous.as_ref().is_some_and(|previous_id| id <= *previous_id)
+                || previous
+                    .as_ref()
+                    .is_some_and(|previous_id| id <= *previous_id)
             {
                 return Err(MobileContinuityError::NonCanonicalEncoding);
             }
@@ -591,19 +592,16 @@ impl<'a> Cursor<'a> {
                 usize::try_from(self.u32()?).map_err(|_| MobileContinuityError::Overflow)?;
             let mut required_scopes = Vec::with_capacity(scope_count);
             for _ in 0..scope_count {
-                required_scopes.push(
-                    AuthorityScope::new(self.string()?)
-                        .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?,
-                );
+                required_scopes.push(AuthorityScope::new(self.string()?).map_err(|error| {
+                    MobileContinuityError::ActionCheckpoint(format!("{error:?}"))
+                })?);
             }
 
-            let mut descriptor = CapabilityDescriptor::new(
-                ntd_core::CapabilityId(id),
-                version,
-                domain,
-                side_effect,
-            )
-            .map_err(|error| MobileContinuityError::ActionCheckpoint(format!("{error:?}")))?;
+            let mut descriptor =
+                CapabilityDescriptor::new(ntd_core::CapabilityId(id), version, domain, side_effect)
+                    .map_err(|error| {
+                        MobileContinuityError::ActionCheckpoint(format!("{error:?}"))
+                    })?;
             descriptor.verification_required = verification_required;
             descriptor.rollback_supported = rollback_supported;
             descriptor.resumable = resumable;
@@ -679,8 +677,7 @@ mod tests {
         )
         .expect("descriptor");
         descriptor.resumable = true;
-        descriptor.required_scopes =
-            vec![AuthorityScope::new("network.read").expect("scope")];
+        descriptor.required_scopes = vec![AuthorityScope::new("network.read").expect("scope")];
         registry.register(descriptor).expect("register");
         registry
     }
@@ -742,13 +739,18 @@ mod tests {
         assert_eq!(first, second);
 
         let decoded = decode_mobile_continuity_bundle(&first).expect("decode");
-        let restored =
-            restore_mobile_continuity_bundle(decoded).expect("restore mobile session");
+        let restored = restore_mobile_continuity_bundle(decoded).expect("restore mobile session");
 
         assert_eq!(restored.cognitive.state().identity, bundle.identity);
         assert!(restored.cognitive.state().tasks.contains_key(&task_id));
         assert_eq!(
-            restored.actions.state().plans.get(&plan_id.0).expect("plan").task_id,
+            restored
+                .actions
+                .state()
+                .plans
+                .get(&plan_id.0)
+                .expect("plan")
+                .task_id,
             task_id
         );
         assert_eq!(restored.checkpoint_sequence, 1);
