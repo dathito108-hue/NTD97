@@ -43,7 +43,7 @@ The reader rejects malformed headers, future versions, duplicate metadata/tensor
 
 ## Conversion planning
 
-`GgufConversionPlan` classifies F32/F16/BF16 tensors as directly representable, Q4_0/Q8_0 as supported native transcodes, and every other GGML tensor encoding as unsupported until an explicit decoder exists. Q4_0/Q8_0 are currently decoded into NTD97-owned F32 payloads first so semantic correctness is established before mobile requantization.
+`GgufConversionPlan` classifies F32/F16/BF16 tensors as directly representable and Q4_0/Q8_0/Q4_K/Q5_K/Q6_K as supported native transcodes. These quantized formats are decoded clean-room into NTD97-owned F32 payloads first so semantic correctness is established before mobile requantization; every other GGML tensor encoding remains fail-closed until an explicit decoder exists.
 
 A parsed model is **not activation-ready** merely because its file structure is valid. The plan retains a hard semantic-equivalence blocker until architecture lowering and native execution have been verified.
 
@@ -104,7 +104,6 @@ M11 deliberately remains in progress because:
 - LLaMA-style SentencePiece metadata now lowers into NCC97 tokenizer v0.2 and executes natively with score-ordered BPE merges, U+2581 space normalization, byte fallback, and source BOS/EOS policy; a representative real tokenizer still needs source-vs-NTD97 differential validation;
 - canonical GPT-2 (`tokenizer.ggml.pre="gpt-2"`) now lowers into NCC97 tokenizer v0.3 and executes natively with Unicode-category pre-tokenization, GPT-2 byte-to-Unicode mapping, ranked BPE merges and source BOS/EOS policy; non-canonical BPE pre-tokenizers remain fail-closed;
 - a representative real GGUF has not yet passed source-vs-NIR97 semantic-equivalence testing;
-- common K-quant families such as Q4_K/Q5_K/Q6_K are not yet decoded;
 - large-file import still needs a streaming/mapped path rather than whole-file memory loading;
 - Android has not yet loaded and generated with the converted real native package.
 
