@@ -63,6 +63,7 @@ pub enum NativeTokenizerError {
     WrongDescriptorKind(DescriptorFrameKind),
     WrongFormat(String),
     Truncated,
+    InvalidUtf8,
     InvalidMagic,
     InvalidHeader,
     UnsupportedVersion { major: u16, minor: u16 },
@@ -121,6 +122,7 @@ pub fn encode_native_tokenizer(
     let model_tag = match &tokenizer.model {
         NativeTokenizerModel::Vocabulary => TOKENIZER_MODEL_VOCABULARY,
         NativeTokenizerModel::LlamaSpm { .. } => TOKENIZER_MODEL_LLAMA_SPM,
+        NativeTokenizerModel::Gpt2Bpe { .. } => TOKENIZER_MODEL_GPT2_BPE,
     };
     push_u32(&mut payload, model_tag);
 
@@ -130,39 +132,65 @@ pub fn encode_native_tokenizer(
         payload.extend_from_slice(token);
     }
 
-    if let NativeTokenizerModel::LlamaSpm {
-        score_bits,
-        token_types,
-        add_space_prefix,
-        add_bos_token,
-        add_eos_token,
-    } = &tokenizer.model
-    {
-        let score_count =
-            u32::try_from(score_bits.len()).map_err(|_| NativeTokenizerError::Overflow)?;
-        push_u32(&mut payload, score_count);
-        for score in score_bits {
-            push_u32(&mut payload, *score);
-        }
+    match &tokenizer.model {
+        NativeTokenizerModel::Vocabulary => {}
+        NativeTokenizerModel::LlamaSpm {
+            score_bits,
+            token_types,
+            add_space_prefix,
+            add_bos_token,
+            add_eos_token,
+        } => {
+            let score_count =
+                u32::try_from(score_bits.len()).map_err(|_| NativeTokenizerError::Overflow)?;
+            push_u32(&mut payload, score_count);
+            for score in score_bits {
+                push_u32(&mut payload, *score);
+            }
 
-        let type_count =
-            u32::try_from(token_types.len()).map_err(|_| NativeTokenizerError::Overflow)?;
-        push_u32(&mut payload, type_count);
-        for token_type in token_types {
-            push_i32(&mut payload, *token_type);
-        }
+            let type_count =
+                u32::try_from(token_types.len()).map_err(|_| NativeTokenizerError::Overflow)?;
+            push_u32(&mut payload, type_count);
+            for token_type in token_types {
+                push_i32(&mut payload, *token_type);
+            }
 
-        let mut flags = 0u32;
-        if *add_space_prefix {
-            flags |= TOKENIZER_FLAG_ADD_SPACE_PREFIX;
+            let mut flags = 0u32;
+            if *add_space_prefix {
+                flags |= TOKENIZER_FLAG_ADD_SPACE_PREFIX;
+            }
+            if *add_bos_token {
+                flags |= TOKENIZER_FLAG_ADD_BOS;
+            }
+            if *add_eos_token {
+                flags |= TOKENIZER_FLAG_ADD_EOS;
+            }
+            push_u32(&mut payload, flags);
         }
-        if *add_bos_token {
-            flags |= TOKENIZER_FLAG_ADD_BOS;
+        NativeTokenizerModel::Gpt2Bpe {
+            merges,
+            add_bos_token,
+            add_eos_token,
+        } => {
+            let merge_count =
+                u32::try_from(merges.len()).map_err(|_| NativeTokenizerError::Overflow)?;
+            push_u32(&mut payload, merge_count);
+            for merge in merges {
+                let bytes = merge.as_bytes();
+                let len = u32::try_from(bytes.len()).map_err(|_| NativeTokenizerError::Overflow)?;
+                push_u32(&mut payload, len);
+                payload.extend_from_slice(bytes);
+            }
+
+            let mut flags = 0u32;
+            if *add_bos_token {
+                flags |= TOKENIZER_FLAG_ADD_BOS;
+            }
+            if *add_eos_token {
+                flags |= TOKENIZER_FLAG_ADD_EOS;
+            }
+            push_u32(&mut payload, flags);
         }
-        if *add_eos_token {
-            flags |= TOKENIZER_FLAG_ADD_EOS;
-        }
-        push_u32(&mut payload, flags);
     }
 
     encode_descriptor_frame(&DescriptorFrame {
@@ -244,6 +272,26 @@ pub fn decode_native_tokenizer(
                     score_bits,
                     token_types,
                     add_space_prefix: flags & TOKENIZER_FLAG_ADD_SPACE_PREFIX != 0,
+                    add_bos_token: flags & TOKENIZER_FLAG_ADD_BOS != 0,
+                    add_eos_token: flags & TOKENIZER_FLAG_ADD_EOS != 0,
+                }
+            }
+            TOKENIZER_MODEL_GPT2_BPE => {
+                if minor < 3 {
+                    return Err(NativeTokenizerError::NonCanonicalEncoding);
+                }
+                let merge_count =
+                    usize::try_from(cursor.u32()?).map_err(|_| NativeTokenizerError::Overflow)?;
+                let mut merges = Vec::with_capacity(merge_count);
+                for _ in 0..merge_count {
+                    merges.push(cursor.string()?);
+                }
+                let flags = cursor.u32()?;
+                if flags & !(TOKENIZER_FLAG_ADD_BOS | TOKENIZER_FLAG_ADD_EOS) != 0 {
+                    return Err(NativeTokenizerError::NonCanonicalEncoding);
+                }
+                NativeTokenizerModel::Gpt2Bpe {
+                    merges,
                     add_bos_token: flags & TOKENIZER_FLAG_ADD_BOS != 0,
                     add_eos_token: flags & TOKENIZER_FLAG_ADD_EOS != 0,
                 }
