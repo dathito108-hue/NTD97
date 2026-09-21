@@ -225,8 +225,7 @@ fn process_death_and_reboot_resume_without_duplicate_committed_side_effect() {
     drop(actions);
 
     let decoded = decode_mobile_continuity_bundle(&bytes).expect("decode");
-    let mut restored =
-        restore_mobile_continuity_bundle(registry, decoded).expect("restore session");
+    let mut restored = restore_mobile_continuity_bundle(decoded).expect("restore session");
 
     restored
         .actions
