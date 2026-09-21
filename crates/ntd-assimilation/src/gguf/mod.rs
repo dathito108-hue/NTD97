@@ -313,13 +313,9 @@ impl GgufModel {
             merges,
             pre_tokenizer,
             add_space_prefix: optional_bool("tokenizer.ggml.add_space_prefix")?,
-            remove_extra_whitespaces: optional_bool(
-                "tokenizer.ggml.remove_extra_whitespaces",
-            )?,
+            remove_extra_whitespaces: optional_bool("tokenizer.ggml.remove_extra_whitespaces")?,
             normalizer_lowercase: optional_bool("tokenizer.ggml.normalizer.lowercase")?,
-            normalizer_strip_accents: optional_bool(
-                "tokenizer.ggml.normalizer.strip_accents",
-            )?,
+            normalizer_strip_accents: optional_bool("tokenizer.ggml.normalizer.strip_accents")?,
             has_precompiled_charsmap: self
                 .metadata
                 .contains_key("tokenizer.ggml.precompiled_charsmap"),
@@ -481,9 +477,8 @@ impl GgufConversionPlan {
                             .into(),
                     );
                 }
-                blockers.push(
-                    "native GPT-2 pre-tokenizer/BPE execution is not implemented yet".into(),
-                );
+                blockers
+                    .push("native GPT-2 pre-tokenizer/BPE execution is not implemented yet".into());
             }
             _ => blockers.push(format!(
                 "tokenizer '{}' has no canonical NTD97 tokenizer lowering yet",
