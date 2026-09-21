@@ -4,9 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use ntd_capsule::{
-    encode_native_tensor, sha256, Digest, NativeTensor, TensorDescriptor,
-};
+use ntd_capsule::{encode_native_tensor, sha256, Digest, NativeTensor, TensorDescriptor};
 use ntd_ir::ValueId;
 
 use super::GgufError;
@@ -56,31 +54,21 @@ impl FileTensorShardStore {
         Ok(bytes)
     }
 
-    fn persist_content_addressed(
-        &self,
-        hash: Digest,
-        bytes: &[u8],
-    ) -> Result<PathBuf, GgufError> {
+    fn persist_content_addressed(&self, hash: Digest, bytes: &[u8]) -> Result<PathBuf, GgufError> {
         let destination = self.shard_path(&hash);
         if destination.exists() {
-            let existing = fs::read(&destination)
-                .map_err(|error| GgufError::Io(error.to_string()))?;
+            let existing =
+                fs::read(&destination).map_err(|error| GgufError::Io(error.to_string()))?;
             if existing.len() != bytes.len() || sha256(&existing) != hash {
                 return Err(GgufError::InvalidTensor);
             }
             return Ok(destination);
         }
 
-        let temp = self.root.join(format!(
-            ".{}.{}.tmp",
-            digest_hex(&hash),
-            std::process::id()
-        ));
-        let mut file = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-        {
+        let temp = self
+            .root
+            .join(format!(".{}.{}.tmp", digest_hex(&hash), std::process::id()));
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(&temp) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 fs::remove_file(&temp).map_err(|remove| GgufError::Io(remove.to_string()))?;
@@ -110,8 +98,8 @@ impl FileTensorShardStore {
             Ok(()) => Ok(destination),
             Err(error) if destination.exists() => {
                 let _ = fs::remove_file(&temp);
-                let existing = fs::read(&destination)
-                    .map_err(|read| GgufError::Io(read.to_string()))?;
+                let existing =
+                    fs::read(&destination).map_err(|read| GgufError::Io(read.to_string()))?;
                 if existing.len() == bytes.len() && sha256(&existing) == hash {
                     Ok(destination)
                 } else {
@@ -164,10 +152,7 @@ mod tests {
 
     fn temp_root() -> PathBuf {
         let id = NEXT_DIR_ID.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "ntd97-shards-{}-{id}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("ntd97-shards-{}-{id}", std::process::id()))
     }
 
     fn sample_tensor() -> NativeTensor {
@@ -216,10 +201,7 @@ mod tests {
         let reference = store.store_tensor(&tensor).expect("store tensor");
 
         fs::write(store.shard_path(&reference.hash), b"tampered").expect("tamper");
-        assert_eq!(
-            store.store_tensor(&tensor),
-            Err(GgufError::InvalidTensor)
-        );
+        assert_eq!(store.store_tensor(&tensor), Err(GgufError::InvalidTensor));
 
         fs::remove_dir_all(root).expect("cleanup");
     }
