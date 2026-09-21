@@ -8,9 +8,12 @@ on:
       - "crates/ntd-android-bridge/**"
       - "crates/ntd-mobile-shell/**"
       - "crates/ntd-runtime/**"
+      - "crates/ntd-validation/**"
       - "platform/android/**"
       - ".github/workflows/android.yml"
       - ".github/scripts/android-lifecycle-probe.sh"
+      - ".github/scripts/no-third-party-ai-dependency-audit.sh"
+      - ".github/scripts/collect-physical-evidence.sh"
   push:
     branches: [main]
     paths:
@@ -19,9 +22,12 @@ on:
       - "crates/ntd-android-bridge/**"
       - "crates/ntd-mobile-shell/**"
       - "crates/ntd-runtime/**"
+      - "crates/ntd-validation/**"
       - "platform/android/**"
       - ".github/workflows/android.yml"
       - ".github/scripts/android-lifecycle-probe.sh"
+      - ".github/scripts/no-third-party-ai-dependency-audit.sh"
+      - ".github/scripts/collect-physical-evidence.sh"
   workflow_dispatch:
 
 jobs:
@@ -82,8 +88,14 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Audit sovereignty dependency boundary
+        run: bash .github/scripts/no-third-party-ai-dependency-audit.sh
+
       - name: Assemble debug APK
-        run: gradle -p platform/android :app:assembleDebug --stacktrace
+        run: |
+          gradle -p platform/android :app:assembleDebug --stacktrace \
+            -PntdGitSha="${GITHUB_SHA}" \
+            -PntdSovereigntyAuditPassed=true
 
       - uses: actions/upload-artifact@v4
         with:
