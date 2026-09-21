@@ -287,6 +287,35 @@ impl SovereignConversationState {
         Ok(())
     }
 
+    pub fn record_reasoning_iterations(
+        &mut self,
+        task_id: u64,
+        iterations: u32,
+    ) -> Result<(), ConversationStateError> {
+        if !self.cognition.state().tasks.contains_key(&task_id) {
+            return Err(ConversationStateError::TaskMismatch {
+                expected: task_id,
+                actual: 0,
+            });
+        }
+        self.cognition.state_mut().set_world_fact(
+            format!("conversation.task.{task_id}.reasoning_iterations"),
+            iterations.to_string(),
+        )?;
+        Ok(())
+    }
+
+    pub fn reasoning_iterations_for_task(&self, task_id: u64) -> Option<u32> {
+        let key = format!("conversation.task.{task_id}.reasoning_iterations");
+        self.cognition
+            .state()
+            .world
+            .get(&key)?
+            .value
+            .parse::<u32>()
+            .ok()
+    }
+
     pub fn reasoning_budget_for_task(&self, task_id: u64) -> Option<ReasoningBudget> {
         let key = format!("conversation.task.{task_id}.reasoning_budget");
         let value = self.cognition.state().world.get(&key)?.value.as_str();
@@ -786,6 +815,21 @@ mod tests {
             Some(ReasoningBudget::Deep)
         );
         assert_eq!(restored.recalled_memory_items_for_task(task), Some(4));
+    }
+
+    #[test]
+    fn reasoning_iteration_count_survives_checkpoint() {
+        let mut state = SovereignConversationState::new(identity());
+        let task = state
+            .begin_turn("model.test", 1, "reason about this", vec![1, 2], 8)
+            .expect("begin");
+        state
+            .record_reasoning_iterations(task, 4)
+            .expect("iterations");
+
+        let encoded = encode_conversation_checkpoint(&state).expect("encode");
+        let restored = decode_conversation_checkpoint(&encoded).expect("decode");
+        assert_eq!(restored.reasoning_iterations_for_task(task), Some(4));
     }
 
     #[test]
