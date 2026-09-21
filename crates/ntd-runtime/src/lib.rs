@@ -3,6 +3,7 @@
 mod action_checkpoint;
 mod action_fabric;
 mod assistant;
+mod assistant_actions;
 mod capability;
 mod checkpoint;
 mod cognition;
@@ -29,6 +30,11 @@ pub use assistant::{
     decode_conversation_checkpoint, encode_conversation_checkpoint, memory_recall_limit_for_budget,
     ActiveConversationTurn, ConversationStateError, SovereignConversationState, NCS97_HEADER_LEN,
     NCS97_MAGIC, NCS97_MAJOR, NCS97_MINOR,
+};
+pub use assistant_actions::{
+    build_verified_answer_prompt, collect_verified_action_evidence, parse_native_action_plan,
+    AssistantActionPlan, AssistantPlanDecision, AssistantPlanError, VerifiedActionEvidence,
+    VerifiedActionEvidenceError, NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
 };
 pub use capability::{
     ActionOutput, ActionValue, AuthorityGrant, AuthorityScope, CapabilityDescriptor,
