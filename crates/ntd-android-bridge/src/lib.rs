@@ -1115,6 +1115,59 @@ fn chat_reasoning_iterations(request_id: u64) -> i32 {
         .and_then(|value| i32::try_from(value).ok())
         .unwrap_or(0)
 }
+fn chat_action_planner_status(request_id: u64) -> i32 {
+    let guard = lock_state();
+    let Some(session) = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
+    else {
+        return 0;
+    };
+    match guard
+        .conversation
+        .action_planner_status_for_task(session.task_id)
+    {
+        Some("direct") => 1,
+        Some("actions") => 2,
+        Some("invalid") => 3,
+        Some("unsupported") => 4,
+        _ => 0,
+    }
+}
+
+fn chat_action_count(request_id: u64) -> i32 {
+    let guard = lock_state();
+    let Some(session) = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
+    else {
+        return 0;
+    };
+    guard
+        .conversation
+        .action_count_for_task(session.task_id)
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or(0)
+}
+
+fn chat_verified_action_count(request_id: u64) -> i32 {
+    let guard = lock_state();
+    let Some(session) = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
+    else {
+        return 0;
+    };
+    guard
+        .conversation
+        .verified_action_count_for_task(session.task_id)
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or(0)
+}
+
 
 fn cancel_chat(request_id: u64) -> bool {
     let (task_id, cancel) = {
@@ -1511,6 +1564,45 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatReaso
         return 0;
     };
     chat_reasoning_iterations(request_id)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatActionPlannerStatus(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jint {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    chat_action_planner_status(request_id)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatActionCount(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jint {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    chat_action_count(request_id)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatVerifiedActionCount(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jint {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    chat_verified_action_count(request_id)
 }
 
 #[allow(unsafe_code)]
