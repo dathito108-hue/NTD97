@@ -44,7 +44,7 @@ impl DeviceCapabilities {
         supports_npu: bool,
     ) -> Self {
         let logical_cores = std::thread::available_parallelism()
-            .map(usize::from)
+            .map(|value| value.get())
             .unwrap_or(1);
 
         Self {
@@ -150,6 +150,68 @@ pub struct TensorPlacementPlan {
 pub struct PageWindow {
     pub offset: u64,
     pub len: u64,
+}
+
+
+pub trait ByteRegion {
+    fn len(&self) -> u64;
+    fn read_range(&self, offset: u64, len: u64) -> Option<&[u8]>;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SliceByteRegion<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> SliceByteRegion<'a> {
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+}
+
+impl ByteRegion for SliceByteRegion<'_> {
+    fn len(&self) -> u64 {
+        u64::try_from(self.bytes.len()).unwrap_or(u64::MAX)
+    }
+
+    fn read_range(&self, offset: u64, len: u64) -> Option<&[u8]> {
+        let start = usize::try_from(offset).ok()?;
+        let width = usize::try_from(len).ok()?;
+        let end = start.checked_add(width)?;
+        self.bytes.get(start..end)
+    }
+}
+
+pub struct PagedByteReader<R> {
+    region: R,
+    windows: Vec<PageWindow>,
+}
+
+impl<R> PagedByteReader<R>
+where
+    R: ByteRegion,
+{
+    pub fn new(region: R, page_bytes: u64) -> Result<Self, MobileComputeError> {
+        let windows = page_windows(region.len(), page_bytes)?;
+        Ok(Self { region, windows })
+    }
+
+    pub fn page_count(&self) -> usize {
+        self.windows.len()
+    }
+
+    pub fn page(&self, index: usize) -> Option<&[u8]> {
+        let window = self.windows.get(index)?;
+        self.region.read_range(window.offset, window.len)
+    }
+
+    pub fn windows(&self) -> &[PageWindow] {
+        &self.windows
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -771,6 +833,18 @@ mod tests {
             .expect("reference");
 
         assert_eq!(adaptive_output, reference_output);
+    }
+
+    #[test]
+    fn paged_reader_exposes_exact_non_overlapping_pages() {
+        let bytes = [1u8, 2, 3, 4, 5, 6, 7];
+        let reader = PagedByteReader::new(SliceByteRegion::new(&bytes), 3).expect("reader");
+
+        assert_eq!(reader.page_count(), 3);
+        assert_eq!(reader.page(0), Some(&[1, 2, 3][..]));
+        assert_eq!(reader.page(1), Some(&[4, 5, 6][..]));
+        assert_eq!(reader.page(2), Some(&[7][..]));
+        assert_eq!(reader.page(3), None);
     }
 
     #[test]
