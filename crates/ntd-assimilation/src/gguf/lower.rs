@@ -78,9 +78,7 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
                 GgufError::UnsupportedModelFeature("missing LLaMA tokenizer token types".into())
             })?;
             let add_space_prefix = source_tokenizer.add_space_prefix.ok_or_else(|| {
-                GgufError::UnsupportedModelFeature(
-                    "missing LLaMA add-space-prefix policy".into(),
-                )
+                GgufError::UnsupportedModelFeature("missing LLaMA add-space-prefix policy".into())
             })?;
             let add_bos_token = source_tokenizer.add_bos_token.ok_or_else(|| {
                 GgufError::UnsupportedModelFeature("missing LLaMA add-BOS policy".into())
