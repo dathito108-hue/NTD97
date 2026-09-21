@@ -21,7 +21,7 @@ public final class NtdPhysicalEvidenceActivity extends Activity {
     private static final String EVIDENCE_FILE = "ntd97-device-evidence.nde97";
     private static final String SUMMARY_FILE = "ntd97-device-evidence.txt";
     private static final int MIN_SAMPLES = 32;
-    private static final int MAX_SAMPLES = 512;
+    private static final int MAX_SAMPLES = 8192;
     private static final long MIN_MEASUREMENT_NANOS = 5_000_000_000L;
     private static final int RECOVERY_ATTEMPTS = 12;
     private static final long GIB = 1024L * 1024L * 1024L;
