@@ -51,8 +51,7 @@ fn registry() -> CapabilityRegistry {
     )
     .expect("descriptor");
     descriptor.resumable = true;
-    descriptor.required_scopes =
-        vec![AuthorityScope::new("network.read").expect("scope")];
+    descriptor.required_scopes = vec![AuthorityScope::new("network.read").expect("scope")];
     registry.register(descriptor).expect("register");
     registry
 }
@@ -114,8 +113,7 @@ fn ncc97_state_capsule_restores_suspended_action_plan() {
         ChunkStorageView::External => panic!("action checkpoint should be embedded"),
     };
 
-    let restored_state =
-        decode_action_fabric_checkpoint(&registry, stored).expect("decode TAF97");
+    let restored_state = decode_action_fabric_checkpoint(&registry, stored).expect("decode TAF97");
     let restored = ActionFabric::from_state(registry, restored_state).expect("restore fabric");
 
     let restored_plan = restored.state().plans.get(&plan.0).expect("plan");
