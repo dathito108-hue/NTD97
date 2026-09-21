@@ -32,9 +32,10 @@ pub use native_tensor::{
 pub use tokenizer::{
     decode_native_tokenizer, encode_native_tokenizer, load_native_generative_program,
     push_native_tokenizer_section, NativeGenerativeError, NativeGenerativeProgram,
-    NativeTokenizerDescriptor, NativeTokenizerError, NativeTokenizerModel,
+    NativeGpt2PreTokenizer, NativeTokenizerDescriptor, NativeTokenizerError, NativeTokenizerModel,
     LEGACY_NATIVE_TOKENIZER_FORMAT, NATIVE_TOKENIZER_FORMAT, NATIVE_TOKENIZER_HEADER_LEN,
-    NATIVE_TOKENIZER_MAGIC, NATIVE_TOKENIZER_MAJOR, NATIVE_TOKENIZER_MINOR, NO_SPECIAL_TOKEN,
+    NATIVE_TOKENIZER_MAGIC, NATIVE_TOKENIZER_MAJOR, NATIVE_TOKENIZER_MINOR,
+    PREVIOUS_NATIVE_TOKENIZER_FORMAT, NO_SPECIAL_TOKEN,
 };
 
 use ntd_ir::IrVersion;
