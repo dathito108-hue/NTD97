@@ -62,7 +62,7 @@ public final class NtdRealModelProbeActivity extends Activity {
     private String runChatApiProbe() throws IOException {
         NtdNativeRuntimeHost host = NtdNativeRuntimeHost.create(this);
         if (host == null || !host.chatReady()) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_deliberation=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         long requestId = host.submitChat("Once upon a time", 4);
@@ -87,7 +87,9 @@ public final class NtdRealModelProbeActivity extends Activity {
 
         boolean statusOk = completed && tokenCount > 0 && host.chatStatus(requestId) == 2;
         int firstBudget = host.chatReasoningBudget(requestId);
+        int firstIterations = host.chatReasoningIterations(requestId);
         boolean reasoningOk = firstBudget >= 1 && firstBudget <= 4;
+        boolean deliberationOk = firstIterations == expectedReasoningIterations(firstBudget);
 
         long checkpointRequest = host.submitChat("Once upon a time resume this response", 4);
         boolean restoreOk = false;
@@ -98,7 +100,10 @@ public final class NtdRealModelProbeActivity extends Activity {
             if (checkpointRequest >= 0) {
                 int memoryItems = host.chatRecalledMemoryItems(checkpointRequest);
                 int checkpointBudget = host.chatReasoningBudget(checkpointRequest);
+                int checkpointIterations = host.chatReasoningIterations(checkpointRequest);
                 memoryOk = memoryItems > 0 && checkpointBudget >= 1 && checkpointBudget <= 4;
+                deliberationOk = deliberationOk
+                        && checkpointIterations == expectedReasoningIterations(checkpointBudget);
                 NtdRuntimeHost.ChatEvent first = host.nextChatEvent(checkpointRequest);
                 byte[] checkpoint = host.chatCheckpoint();
                 if (first.kind == NtdRuntimeHost.ChatEvent.TOKEN && checkpoint.length > 0) {
@@ -120,10 +125,12 @@ public final class NtdRealModelProbeActivity extends Activity {
                         }
                         int restoredBudget = host.chatReasoningBudget(restoredRequest);
                         int restoredMemory = host.chatRecalledMemoryItems(restoredRequest);
+                        int restoredIterations = host.chatReasoningIterations(restoredRequest);
                         restoreOk = restoredComplete
                                 && host.chatStatus(restoredRequest) == 2
                                 && restoredBudget >= 1
                                 && restoredBudget <= 4
+                                && restoredIterations == expectedReasoningIterations(restoredBudget)
                                 && restoredMemory > 0
                                 && host.chatTranscript().contains("resume this response");
                     }
@@ -142,11 +149,27 @@ public final class NtdRealModelProbeActivity extends Activity {
         return "chat_submit=ok\n"
                 + "chat_stream=" + (completed && tokenCount > 0 ? "ok" : "failed") + "\n"
                 + "chat_reasoning=" + (reasoningOk ? "ok" : "failed") + "\n"
+                + "chat_deliberation=" + (deliberationOk ? "ok" : "failed") + "\n"
                 + "chat_memory=" + (memoryOk ? "ok" : "failed") + "\n"
                 + "chat_restore=" + (restoreOk ? "ok" : "failed") + "\n"
                 + "chat_store=" + (storeOk ? "ok" : "failed") + "\n"
                 + "chat_cancel=" + (cancelOk ? "ok" : "failed") + "\n"
                 + "chat_status=" + (statusOk ? "ok" : "failed") + "\n";
+    }
+
+    private int expectedReasoningIterations(int budget) {
+        switch (budget) {
+            case 1:
+                return 1;
+            case 2:
+                return 2;
+            case 3:
+                return 4;
+            case 4:
+                return 3;
+            default:
+                return -1;
+        }
     }
 
     private void copyAssetTree(
