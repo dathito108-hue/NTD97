@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::hash::{sha256, Digest};
-use crate::{CapsuleVersion, NativeIntelligenceContract, SectionKind, NCC97_MAGIC};
+use crate::{CapsuleVersion, NativeIntelligenceContract, SectionKind, NCC97_MAGIC, NCC97_MINOR};
 use ntd_ir::IrVersion;
 
 pub const HEADER_LEN: usize = 112;
