@@ -408,6 +408,44 @@ impl MobileExecutionProvider for CpuTiledProvider {
     }
 }
 
+pub fn vulkan_provider<P>(
+    backend: P,
+    name: impl Into<String>,
+    minimum_working_set_bytes: u64,
+    supported_ops: Vec<TensorOp>,
+) -> ProfiledProvider<P> {
+    ProfiledProvider::new(
+        backend,
+        ProviderProfile {
+            kind: ProviderKind::Vulkan,
+            name: name.into(),
+            minimum_working_set_bytes,
+            power: PowerClass::High,
+            priority: 100,
+            supported_ops,
+        },
+    )
+}
+
+pub fn npu_provider<P>(
+    backend: P,
+    name: impl Into<String>,
+    minimum_working_set_bytes: u64,
+    supported_ops: Vec<TensorOp>,
+) -> ProfiledProvider<P> {
+    ProfiledProvider::new(
+        backend,
+        ProviderProfile {
+            kind: ProviderKind::Npu,
+            name: name.into(),
+            minimum_working_set_bytes,
+            power: PowerClass::Low,
+            priority: 50,
+            supported_ops,
+        },
+    )
+}
+
 pub struct ProfiledProvider<P> {
     backend: P,
     profile: ProviderProfile,
