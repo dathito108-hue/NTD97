@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
-use ntd_core::{Intent, TaskGraph};
+use ntd_core::{Intent, ReasoningBudget, TaskGraph};
 
 use crate::{
     decode_cognitive_checkpoint, encode_cognitive_checkpoint, CheckpointError, CognitiveError,
-    CognitiveIdentity, CognitiveRuntime, ConversationRole, ConversationTurn, MemoryError,
-    MemoryKind, TaskStatus,
+    CognitiveIdentity, CognitiveRuntime, CognitiveSignals, ConversationRole, ConversationTurn,
+    MemoryError, MemoryKind, TaskStatus,
 };
 
 pub const NCS97_MAGIC: [u8; 6] = *b"NCS97\0";
@@ -245,6 +245,71 @@ impl SovereignConversationState {
         Ok(())
     }
 
+    pub fn prior_conversation_failure(&self) -> bool {
+        self.cognition
+            .state()
+            .tasks
+            .values()
+            .next_back()
+            .is_some_and(|task| matches!(task.status, TaskStatus::Paused | TaskStatus::Failed))
+    }
+
+    pub fn record_reasoning_profile(
+        &mut self,
+        task_id: u64,
+        budget: ReasoningBudget,
+        signals: CognitiveSignals,
+        recalled_memory_items: usize,
+    ) -> Result<(), ConversationStateError> {
+        if !self.cognition.state().tasks.contains_key(&task_id) {
+            return Err(ConversationStateError::TaskMismatch {
+                expected: task_id,
+                actual: 0,
+            });
+        }
+        let prefix = format!("conversation.task.{task_id}");
+        self.cognition.state_mut().set_world_fact(
+            format!("{prefix}.reasoning_budget"),
+            reasoning_budget_name(budget),
+        )?;
+        self.cognition.state_mut().set_world_fact(
+            format!("{prefix}.complexity_milli"),
+            signal_milli(signals.complexity).to_string(),
+        )?;
+        self.cognition.state_mut().set_world_fact(
+            format!("{prefix}.uncertainty_milli"),
+            signal_milli(signals.uncertainty).to_string(),
+        )?;
+        self.cognition.state_mut().set_world_fact(
+            format!("{prefix}.recalled_memory_items"),
+            recalled_memory_items.to_string(),
+        )?;
+        Ok(())
+    }
+
+    pub fn reasoning_budget_for_task(&self, task_id: u64) -> Option<ReasoningBudget> {
+        let key = format!("conversation.task.{task_id}.reasoning_budget");
+        let value = self.cognition.state().world.get(&key)?.value.as_str();
+        match value {
+            "reflex" => Some(ReasoningBudget::Reflex),
+            "standard" => Some(ReasoningBudget::Standard),
+            "deep" => Some(ReasoningBudget::Deep),
+            "recovery" => Some(ReasoningBudget::Recovery),
+            _ => None,
+        }
+    }
+
+    pub fn recalled_memory_items_for_task(&self, task_id: u64) -> Option<usize> {
+        let key = format!("conversation.task.{task_id}.recalled_memory_items");
+        self.cognition
+            .state()
+            .world
+            .get(&key)?
+            .value
+            .parse::<usize>()
+            .ok()
+    }
+
     pub fn recall_conversation_context(
         &mut self,
         query: &str,
@@ -291,6 +356,28 @@ impl SovereignConversationState {
         tokens.extend_from_slice(&active.generated_tokens);
         Ok(tokens)
     }
+}
+
+pub fn memory_recall_limit_for_budget(budget: ReasoningBudget) -> usize {
+    match budget {
+        ReasoningBudget::Reflex => 1,
+        ReasoningBudget::Standard => 2,
+        ReasoningBudget::Deep => 4,
+        ReasoningBudget::Recovery => 6,
+    }
+}
+
+fn reasoning_budget_name(budget: ReasoningBudget) -> &'static str {
+    match budget {
+        ReasoningBudget::Reflex => "reflex",
+        ReasoningBudget::Standard => "standard",
+        ReasoningBudget::Deep => "deep",
+        ReasoningBudget::Recovery => "recovery",
+    }
+}
+
+fn signal_milli(value: f32) -> u16 {
+    (value.clamp(0.0, 1.0) * 1000.0).round() as u16
 }
 
 pub fn encode_conversation_checkpoint(
@@ -669,6 +756,49 @@ mod tests {
                 .expect("task")
                 .status,
             TaskStatus::Paused
+        );
+    }
+
+    #[test]
+    fn reasoning_profile_is_sovereign_and_survives_checkpoint() {
+        let mut state = SovereignConversationState::new(identity());
+        let task = state
+            .begin_turn("model.test", 1, "analyze this", vec![1, 2], 8)
+            .expect("begin");
+        state
+            .record_reasoning_profile(
+                task,
+                ReasoningBudget::Deep,
+                CognitiveSignals {
+                    complexity: 0.72,
+                    uncertainty: 0.81,
+                    prior_failure: false,
+                },
+                4,
+            )
+            .expect("profile");
+
+        let encoded = encode_conversation_checkpoint(&state).expect("encode");
+        let restored = decode_conversation_checkpoint(&encoded).expect("decode");
+
+        assert_eq!(
+            restored.reasoning_budget_for_task(task),
+            Some(ReasoningBudget::Deep)
+        );
+        assert_eq!(restored.recalled_memory_items_for_task(task), Some(4));
+    }
+
+    #[test]
+    fn paused_conversation_marks_next_turn_as_prior_failure() {
+        let mut state = SovereignConversationState::new(identity());
+        let task = state
+            .begin_turn("model.test", 1, "cancel me", vec![1], 8)
+            .expect("begin");
+        state.cancel_turn(task, "cancelled").expect("cancel");
+        assert!(state.prior_conversation_failure());
+        assert_eq!(
+            memory_recall_limit_for_budget(ReasoningBudget::Recovery),
+            6
         );
     }
 
