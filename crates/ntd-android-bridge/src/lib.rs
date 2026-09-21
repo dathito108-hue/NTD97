@@ -34,9 +34,10 @@ use ntd_runtime::{
     AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, CapabilityAdapter,
     CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
     CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
-    GenerationConfig, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer, NativeChatPromptCompiler,
-    NativeReasoningProbe, ResourceSnapshot, SamplingMode, SideEffectClass,
-    SovereignConversationState, TaskStatus, ThermalState, TypedAction,
+    GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
+    NativeChatPromptCompiler, NativeReasoningProbe, ResourceSnapshot, SamplingMode,
+    SideEffectClass, SovereignConversationState, TaskStatus, ThermalState, TypedAction,
+    NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
@@ -777,8 +778,11 @@ fn run_native_action_planner(
             .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
     )
     .map_err(|error| format!("build native action planner generator: {error:?}"))?;
+    let previous_token = prompt_tokens.last().copied();
+    let mut early_decision = None;
+    let mut decode_failed = false;
     let generated = generator
-        .generate_tokens_with_resolver(
+        .generate_tokens_with_resolver_streaming(
             &model.resolver,
             &prompt_tokens,
             GenerationConfig {
@@ -788,17 +792,62 @@ fn run_native_action_planner(
                 distribution: DistributionKind::Logits,
                 sampling: SamplingMode::Greedy,
             },
+            |_, generated_tokens| {
+                let decoded = match model
+                    .tokenizer
+                    .decode_after(previous_token, generated_tokens, true)
+                {
+                    Ok(decoded) => decoded,
+                    Err(_) => {
+                        decode_failed = true;
+                        return GenerationControl::Cancel;
+                    }
+                };
+                let candidate = decoded.trim();
+                if candidate == NATIVE_ACTION_DIRECT {
+                    early_decision = Some(NativeActionPlanningOutcome::Direct);
+                    return GenerationControl::Cancel;
+                }
+                if candidate.starts_with(NATIVE_ACTION_PROTOCOL_V1)
+                    && candidate.lines().any(|line| line == "END")
+                {
+                    early_decision = Some(match parse_native_action_plan(candidate) {
+                        Ok(AssistantPlanDecision::Actions(plan)) => {
+                            NativeActionPlanningOutcome::Actions(plan)
+                        }
+                        _ => NativeActionPlanningOutcome::Invalid,
+                    });
+                    return GenerationControl::Cancel;
+                }
+
+                let direct_prefix = NATIVE_ACTION_DIRECT.starts_with(candidate);
+                let action_prefix = NATIVE_ACTION_PROTOCOL_V1.starts_with(candidate)
+                    || candidate.starts_with(NATIVE_ACTION_PROTOCOL_V1);
+                if candidate.is_empty() || direct_prefix || action_prefix {
+                    GenerationControl::Continue
+                } else {
+                    early_decision = Some(NativeActionPlanningOutcome::Invalid);
+                    GenerationControl::Cancel
+                }
+            },
         )
         .map_err(|error| format!("native action planner generation: {error:?}"))?;
+
+    if decode_failed {
+        return Ok(NativeActionPlanningOutcome::Invalid);
+    }
+    if let Some(decision) = early_decision {
+        return Ok(decision);
+    }
+
     let decoded = model
         .tokenizer
         .decode_after(
-            prompt_tokens.last().copied(),
-            &generated.generated_tokens,
+            previous_token,
+            &generated.generation.generated_tokens,
             true,
         )
         .map_err(|error| format!("decode native action planner output: {error:?}"))?;
-
     Ok(match parse_native_action_plan(&decoded) {
         Ok(AssistantPlanDecision::Direct) => NativeActionPlanningOutcome::Direct,
         Ok(AssistantPlanDecision::Actions(plan)) => {
