@@ -557,14 +557,7 @@ fn bounded_text(bytes: &[u8], max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        cell::RefCell,
-        rc::Rc,
-    };
-
-    use crate::{
-        ClientHandshake, HandshakeEntropy, PairedIdentity, PairingRecord, ServerHello,
-    };
+    use crate::{ClientHandshake, HandshakeEntropy, PairedIdentity, ServerHello};
 
     use super::*;
 
