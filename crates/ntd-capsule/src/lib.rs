@@ -1,13 +1,26 @@
 #![forbid(unsafe_code)]
 
 mod binary;
+mod descriptors;
 mod hash;
+mod ir_codec;
 
 pub use binary::{
     CapsuleBuilder, CapsuleError, CapsuleKind, CapsuleView, ChunkSource, ChunkSpec,
     ChunkStorageView, ChunkView, HEADER_LEN, INDEX_ENTRY_LEN, MANIFEST_LEN,
 };
+pub use descriptors::{
+    decode_descriptor_frame, decode_tensor_descriptors, encode_descriptor_frame,
+    encode_tensor_descriptors, DescriptorError, DescriptorFrame, DescriptorFrameKind,
+    TensorDescriptor, DESCRIPTOR_FRAME_HEADER_LEN, DESCRIPTOR_FRAME_MAGIC, DESCRIPTOR_MAJOR,
+    DESCRIPTOR_MINOR, TENSOR_DESCRIPTOR_HEADER_LEN, TENSOR_DESCRIPTOR_MAGIC,
+    TENSOR_RECORD_HEADER_LEN,
+};
 pub use hash::{sha256, Digest};
+pub use ir_codec::{
+    decode_graph, decode_graph_section, encode_graph, push_graph_section, GraphSectionError,
+    IrCodecError, IR_GRAPH_HEADER_LEN, IR_GRAPH_MAGIC, NODE_HEADER_LEN, VALUE_DECL_LEN,
+};
 
 use ntd_ir::IrVersion;
 
