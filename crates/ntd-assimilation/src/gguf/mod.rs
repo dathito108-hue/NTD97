@@ -380,6 +380,44 @@ fn llama_spm_blocker(tokenizer: &GgufTokenizer) -> Option<String> {
     None
 }
 
+fn gpt2_bpe_blocker(tokenizer: &GgufTokenizer) -> Option<String> {
+    if tokenizer.merges.is_empty() {
+        return Some(
+            "gpt2 tokenizer metadata is missing merge ranks required for native BPE semantics"
+                .into(),
+        );
+    }
+    match tokenizer.pre_tokenizer.as_deref() {
+        Some("gpt-2") => {}
+        Some(pre) => {
+            return Some(format!(
+                "gpt2 pre-tokenizer '{pre}' is not the canonical GPT-2 regex supported by NTD97"
+            ));
+        }
+        None => {
+            return Some(
+                "gpt2 tokenizer is missing tokenizer.ggml.pre required to select native pre-tokenizer semantics"
+                    .into(),
+            );
+        }
+    }
+    if tokenizer.add_bos_token.is_none() || tokenizer.add_eos_token.is_none() {
+        return Some("gpt2 tokenizer is missing explicit add-BOS/add-EOS policy metadata".into());
+    }
+    if tokenizer.add_space_prefix == Some(true)
+        || tokenizer.remove_extra_whitespaces == Some(true)
+        || tokenizer.normalizer_lowercase == Some(true)
+        || tokenizer.normalizer_strip_accents == Some(true)
+        || tokenizer.has_precompiled_charsmap
+    {
+        return Some(
+            "gpt2 tokenizer requires normalization semantics outside canonical native GPT-2 BPE"
+                .into(),
+        );
+    }
+    None
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GgufTensorDisposition {
     NativeF32,
@@ -471,14 +509,9 @@ impl GgufConversionPlan {
                 }
             }
             "gpt2" => {
-                if tokenizer.merges.is_empty() {
-                    blockers.push(
-                        "gpt2 tokenizer metadata is missing merge ranks required for source-equivalent BPE semantics"
-                            .into(),
-                    );
+                if let Some(blocker) = gpt2_bpe_blocker(&tokenizer) {
+                    blockers.push(blocker);
                 }
-                blockers
-                    .push("native GPT-2 pre-tokenizer/BPE execution is not implemented yet".into());
             }
             _ => blockers.push(format!(
                 "tokenizer '{}' has no canonical NTD97 tokenizer lowering yet",
