@@ -2,6 +2,8 @@
 #![allow(non_snake_case)]
 
 use std::{
+    collections::BTreeMap,
+    fs,
     ptr::null_mut,
     sync::{Mutex, OnceLock},
 };
@@ -11,18 +13,38 @@ use jni::{
     sys::{jboolean, jbyteArray, jint, jlong},
     JNIEnv,
 };
+use ntd_assimilation::{
+    activate_thin_generative_capsule, verify_native_package_with_shards, AssetKind,
+    FileBackedTensorResolver, FileTensorShardStore, NativePackage,
+};
+use ntd_capsule::{sha256, NativeTokenizerDescriptor, NativeTokenizerModel};
 use ntd_mobile_shell::{
     decode_mobile_continuity_bundle, encode_mobile_continuity_bundle,
     restore_mobile_continuity_bundle, AvatarController, AvatarSurface, LipSyncState,
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
-use ntd_runtime::{ResourceSnapshot, ThermalState};
+use ntd_runtime::{
+    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
+    LlamaSpmTokenizer, ResourceSnapshot, SamplingMode, ThermalState,
+};
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
     DeviceEvidence, EvidenceClass, PhysicalEvidenceRecord,
 };
 
 const BRIDGE_PROTOCOL_VERSION: u8 = 1;
+const REAL_MODEL_VERIFY_KEY: [u8; 32] = [
+    0xe1, 0xb7, 0x1a, 0xbf, 0xd3, 0x23, 0x28, 0x04, 0x26, 0x1e, 0x42, 0x3f, 0x36, 0x55, 0x6f,
+    0x6b, 0x41, 0x85, 0xbe, 0xd4, 0x1f, 0xdf, 0xd0, 0x0d, 0x76, 0x9c, 0xe1, 0x5a, 0x39, 0x4f,
+    0x43, 0xce,
+];
+const REAL_MODEL_OUTPUT_SHA256: [u8; 32] = [
+    0x59, 0x4a, 0x91, 0x1e, 0xbb, 0x2e, 0xcf, 0xeb, 0x60, 0x89, 0x19, 0xbf, 0x15, 0x78, 0x87,
+    0xe8, 0x2d, 0x00, 0x90, 0x50, 0x7f, 0xa1, 0x87, 0xd4, 0x5b, 0x2b, 0x7e, 0x23, 0xe5, 0xe8,
+    0xf5, 0x83,
+];
+const REAL_MODEL_CONTEXT: usize = 128;
+const REAL_MODEL_TEXT_BYTES: usize = 322;
 
 struct NativeState {
     bundle: Option<MobileContinuityBundle>,
@@ -175,6 +197,135 @@ fn java_bytes(env: &JNIEnv<'_>, bytes: &[u8]) -> jbyteArray {
     env.byte_array_from_slice(bytes)
         .map(JByteArray::into_raw)
         .unwrap_or_else(|_| null_mut())
+}
+
+fn real_model_tokenizer(
+    descriptor: &NativeTokenizerDescriptor,
+) -> Result<LlamaSpmTokenizer, String> {
+    let NativeTokenizerModel::LlamaSpm {
+        score_bits,
+        token_types,
+        add_space_prefix,
+        add_bos_token,
+        add_eos_token,
+    } = &descriptor.model
+    else {
+        return Err("real model tokenizer is not native LLaMA SPM".into());
+    };
+
+    LlamaSpmTokenizer::new(
+        descriptor.tokens.clone(),
+        score_bits.clone(),
+        token_types.clone(),
+        LlamaSpmConfig {
+            bos_token: descriptor.bos_token,
+            eos_token: descriptor.eos_token,
+            unknown_token: descriptor.unknown_token,
+            add_space_prefix: *add_space_prefix,
+            add_bos_token: *add_bos_token,
+            add_eos_token: *add_eos_token,
+        },
+    )
+    .map_err(|error| format!("native tokenizer: {error:?}"))
+}
+
+fn real_model_probe(capsule_path: &str, shard_root: &str) -> Result<Vec<u8>, String> {
+    let native_capsule =
+        fs::read(capsule_path).map_err(|error| format!("read NCC97 capsule: {error}"))?;
+    let capsule_hash = sha256(&native_capsule);
+    let package = NativePackage {
+        asset_id: "model.ntd97.stories260k".into(),
+        version: 1,
+        kind: AssetKind::Intelligence,
+        native_capsule,
+        capsule_hash,
+        capability: None,
+    };
+    let shard_store =
+        FileTensorShardStore::open(shard_root).map_err(|error| format!("open shards: {error:?}"))?;
+
+    verify_native_package_with_shards(&package, &REAL_MODEL_VERIFY_KEY, &shard_store)
+        .map_err(|error| format!("verify signed native package: {error:?}"))?;
+    let activation = activate_thin_generative_capsule(&package.native_capsule, &shard_store)
+        .map_err(|error| format!("activate native package: {error:?}"))?;
+    if activation.manifest.vocabulary_size != 512 {
+        return Err(format!(
+            "real model vocabulary drift: {}",
+            activation.manifest.vocabulary_size
+        ));
+    }
+
+    let tokenizer = real_model_tokenizer(&activation.tokenizer)?;
+    let bos = tokenizer
+        .bos_token()
+        .ok_or_else(|| "real model is missing BOS".to_owned())?;
+    if bos != 1 {
+        return Err(format!("real model BOS drift: {bos}"));
+    }
+
+    let resolver = FileBackedTensorResolver::from_activation(shard_store, &activation);
+    let generator = GraphGenerator::new(
+        activation.graph.clone(),
+        CpuReferenceProvider,
+        BTreeMap::new(),
+        activation.manifest.token_input,
+        usize::try_from(activation.manifest.distribution_output)
+            .map_err(|_| "distribution output does not fit usize".to_owned())?,
+        usize::try_from(activation.manifest.vocabulary_size)
+            .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
+    )
+    .map_err(|error| format!("build native generator: {error:?}"))?;
+
+    let generated = generator
+        .generate_tokens_with_resolver(
+            &resolver,
+            &[bos],
+            GenerationConfig {
+                max_new_tokens: REAL_MODEL_CONTEXT,
+                context_limit: REAL_MODEL_CONTEXT,
+                eos_token: Some(bos),
+                distribution: DistributionKind::Logits,
+                sampling: SamplingMode::Greedy,
+            },
+        )
+        .map_err(|error| format!("native generation: {error:?}"))?;
+    if generated.generated_tokens.len() != REAL_MODEL_CONTEXT {
+        return Err(format!(
+            "generated token count drift: expected {}, got {}",
+            REAL_MODEL_CONTEXT,
+            generated.generated_tokens.len()
+        ));
+    }
+
+    let text = tokenizer
+        .decode_after(Some(bos), &generated.generated_tokens, true)
+        .map_err(|error| format!("native decode: {error:?}"))?;
+    let output_hash = sha256(text.as_bytes());
+    if text.len() != REAL_MODEL_TEXT_BYTES || output_hash != REAL_MODEL_OUTPUT_SHA256 {
+        return Err(format!(
+            "generated output drift: bytes={} sha256={}",
+            text.len(),
+            digest_hex(&output_hash)
+        ));
+    }
+
+    Ok(format!(
+        "real_model_package=ok\nreal_model_generation=ok\ngenerated_tokens={}\ngenerated_bytes={}\ngenerated_sha256={}\ncapsule_sha256={}\n",
+        generated.generated_tokens.len(),
+        text.len(),
+        digest_hex(&output_hash),
+        digest_hex(&capsule_hash),
+    )
+    .into_bytes())
+}
+
+fn digest_hex(digest: &[u8; 32]) -> String {
+    let mut output = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut output, "{byte:02x}").expect("write digest");
+    }
+    output
 }
 
 #[allow(unsafe_code)]
@@ -381,6 +532,28 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativePullSpeak
     _sample_rate_hz: jint,
 ) -> jbyteArray {
     java_bytes(&env, &[])
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeProbeRealModel(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    capsule_path: JString<'_>,
+    shard_root: JString<'_>,
+) -> jbyteArray {
+    let Some(capsule_path) = java_string(&mut env, &capsule_path) else {
+        return java_bytes(&env, b"real_model_generation=failed\nreason=invalid capsule path\n");
+    };
+    let Some(shard_root) = java_string(&mut env, &shard_root) else {
+        return java_bytes(&env, b"real_model_generation=failed\nreason=invalid shard root\n");
+    };
+
+    let result = match real_model_probe(&capsule_path, &shard_root) {
+        Ok(result) => result,
+        Err(error) => format!("real_model_generation=failed\nreason={error}\n").into_bytes(),
+    };
+    java_bytes(&env, &result)
 }
 
 fn java_string(env: &mut JNIEnv<'_>, value: &JString<'_>) -> Option<String> {
