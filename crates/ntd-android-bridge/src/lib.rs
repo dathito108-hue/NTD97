@@ -879,6 +879,22 @@ fn chat_recalled_memory_items(request_id: u64) -> i32 {
         .unwrap_or(0)
 }
 
+fn chat_reasoning_iterations(request_id: u64) -> i32 {
+    let guard = lock_state();
+    let Some(session) = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
+    else {
+        return 0;
+    };
+    guard
+        .conversation
+        .reasoning_iterations_for_task(session.task_id)
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or(0)
+}
+
 fn cancel_chat(request_id: u64) -> bool {
     let (task_id, cancel) = {
         let guard = lock_state();
@@ -1262,6 +1278,19 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatRecal
         return 0;
     };
     chat_recalled_memory_items(request_id)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatReasoningIterations(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jint {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    chat_reasoning_iterations(request_id)
 }
 
 #[allow(unsafe_code)]
