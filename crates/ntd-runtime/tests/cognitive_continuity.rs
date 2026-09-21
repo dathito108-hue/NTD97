@@ -4,8 +4,8 @@ use ntd_core::{Intent, TaskGraph};
 use ntd_runtime::{
     decode_cognitive_checkpoint, encode_cognitive_checkpoint, CognitiveContext, CognitiveDirective,
     CognitiveExecutor, CognitiveIdentity, CognitiveObservation, CognitivePlanner, CognitiveRuntime,
-    CognitiveSignals, CognitiveVerifier, GoalStatus, MemoryKind, MemoryQuery, TaskStatus,
-    VerificationDecision,
+    CognitiveSignals, CognitiveVerifier, DeltaActivationHook, GoalStatus, LearnedDelta, MemoryKind,
+    MemoryQuery, TaskStatus, VerificationDecision,
 };
 
 struct ContinuityPlanner;
@@ -45,6 +45,20 @@ impl CognitiveExecutor for ContinuityExecutor {
             }),
             _ => Err("executor received internal directive".into()),
         }
+    }
+}
+
+struct DeltaHook {
+    activated: bool,
+}
+
+impl DeltaActivationHook for DeltaHook {
+    fn activate(&mut self, delta: &LearnedDelta) -> Result<(), String> {
+        if delta.namespace != "reasoning.local" {
+            return Err("wrong delta namespace".into());
+        }
+        self.activated = true;
+        Ok(())
     }
 }
 
@@ -94,6 +108,16 @@ fn checkpoint_restore_continues_same_identity_and_task() {
         )
         .expect("seed memory");
 
+    let delta_id = runtime
+        .state_mut()
+        .install_delta("reasoning.local", 1, vec![9, 7])
+        .expect("delta");
+    let mut delta_hook = DeltaHook { activated: false };
+    runtime
+        .activate_delta(delta_id, &mut delta_hook)
+        .expect("activate delta");
+    assert!(delta_hook.activated);
+
     let task_id = runtime
         .state_mut()
         .submit_task(
@@ -126,6 +150,14 @@ fn checkpoint_restore_continues_same_identity_and_task() {
     let mut restored = CognitiveRuntime::from_state(restored_state).expect("restore runtime");
 
     assert_eq!(restored.state().identity, identity);
+    assert!(
+        restored
+            .state()
+            .deltas
+            .get(&delta_id)
+            .expect("delta")
+            .active
+    );
     assert_eq!(
         restored
             .state()
@@ -168,10 +200,11 @@ fn checkpoint_restore_continues_same_identity_and_task() {
 
     let mut query = MemoryQuery::new("task completed");
     query.kinds.push(MemoryKind::Episodic);
+    let recall_tick = restored.state().tick.saturating_add(1);
     let hits = restored
         .state_mut()
         .memory
-        .retrieve(&query, restored.state().tick.saturating_add(1))
+        .retrieve(&query, recall_tick)
         .expect("completion memory");
     assert!(!hits.is_empty());
 }
