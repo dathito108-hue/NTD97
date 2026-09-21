@@ -239,14 +239,18 @@ fn render_action_value(value: &ActionValue) -> String {
         ActionValue::None => "none".into(),
         ActionValue::Text(text) => text.clone(),
         ActionValue::Bytes(bytes) => format!("{} bytes", bytes.len()),
-        ActionValue::TextList(items) => items.join("
-"),
+        ActionValue::TextList(items) => items.join(
+            "
+",
+        ),
         ActionValue::Fields(fields) => fields
             .iter()
             .map(|(key, value)| format!("{key}={value}"))
             .collect::<Vec<_>>()
-            .join("
-"),
+            .join(
+                "
+",
+            ),
     }
 }
 
@@ -257,8 +261,10 @@ pub fn build_verified_answer_prompt(
     if evidence.is_empty() {
         return Err(VerifiedActionEvidenceError::EmptyPlan);
     }
-    let mut out = String::from("Verified action results:
-");
+    let mut out = String::from(
+        "Verified action results:
+",
+    );
     for item in evidence {
         out.push_str(&format!(
             "[{} {}] {}
@@ -276,11 +282,15 @@ pub fn build_verified_answer_prompt(
             out.push('\n');
         }
     }
-    out.push_str("
-User: ");
+    out.push_str(
+        "
+User: ",
+    );
     out.push_str(user_message);
-    out.push_str("
-Assistant:");
+    out.push_str(
+        "
+Assistant:",
+    );
     Ok(out)
 }
 
@@ -329,8 +339,7 @@ where
         return Err(AssistantActionRunError::TaskGraphMismatch);
     }
 
-    let plan_id =
-        fabric.prepare_cognitive_task(task, action_plan.payloads.clone())?;
+    let plan_id = fabric.prepare_cognitive_task(task, action_plan.payloads.clone())?;
     let mut reports = Vec::with_capacity(action_plan.graph.actions.len());
 
     for _ in 0..action_plan.graph.actions.len() {
@@ -492,8 +501,10 @@ END"
         assert!(prompt.contains("battery observed"));
         assert!(prompt.contains("percent=77"));
         assert!(prompt.contains("evidence: device-local"));
-        assert!(prompt.ends_with("User: battery?
-Assistant:"));
+        assert!(prompt.ends_with(
+            "User: battery?
+Assistant:"
+        ));
     }
 
     struct DeviceAdapter;
@@ -530,7 +541,11 @@ Assistant:"));
             _action: &TypedAction,
             output: &ActionOutput,
         ) -> crate::ActionVerification {
-            if output.evidence.iter().any(|item| item == "verified:device-local") {
+            if output
+                .evidence
+                .iter()
+                .any(|item| item == "verified:device-local")
+            {
                 crate::ActionVerification::Accept
             } else {
                 crate::ActionVerification::Reject {
@@ -664,9 +679,7 @@ Assistant:"));
                 &mut AcceptVerifier,
                 "battery status",
             ),
-            Err(AssistantActionRunError::Incomplete(
-                ActionPlanStatus::Ready
-            ))
+            Err(AssistantActionRunError::Incomplete(ActionPlanStatus::Ready))
         ));
     }
 
