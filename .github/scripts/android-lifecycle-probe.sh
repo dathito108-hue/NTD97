@@ -4,6 +4,7 @@ set -euo pipefail
 APK="platform/android/app/build/outputs/apk/debug/app-debug.apk"
 PACKAGE="ai.ntd97.mobile"
 PROBE_ACTIVITY="${PACKAGE}/.NtdLifecycleProbeActivity"
+PHYSICAL_ACTIVITY="${PACKAGE}/.NtdPhysicalEvidenceActivity"
 MAIN_ACTIVITY="${PACKAGE}/.MainActivity"
 
 adb install -r "${APK}"
@@ -21,6 +22,7 @@ PROBE="$(adb shell run-as "${PACKAGE}" cat files/ntd97-lifecycle-probe.txt | tr 
 printf '%s\n' "${PROBE}"
 
 for REQUIRED in \
+  build_attestation=ok \
   native_host=ok \
   avatar=ok \
   audio_bridge=ok \
@@ -35,6 +37,54 @@ do
 done
 
 adb shell dumpsys activity services "${PACKAGE}" | grep -q "NtdOverlayService"
+
+adb shell run-as "${PACKAGE}" rm -f \
+  files/ntd97-device-evidence.nde97 \
+  files/ntd97-device-evidence.txt || true
+adb shell am start -W -n "${PHYSICAL_ACTIVITY}" >/dev/null
+for ATTEMPT in $(seq 1 30); do
+  if adb shell run-as "${PACKAGE}" test -f files/ntd97-device-evidence.txt; then
+    break
+  fi
+  sleep 1
+done
+PHYSICAL_REJECTION="$(adb shell run-as "${PACKAGE}" cat files/ntd97-device-evidence.txt | tr -d '\r')"
+printf '%s\n' "${PHYSICAL_REJECTION}"
+printf '%s\n' "${PHYSICAL_REJECTION}" | grep -q '^status=emulator-rejectedadb wait-for-device
+for ATTEMPT in $(seq 1 90); do
+  if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; then
+    break
+  fi
+  sleep 2
+done
+
+test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+adb shell input keyevent 82 || true
+
+adb shell am start -W -n "${MAIN_ACTIVITY}"
+test -n "$(adb shell pidof "${PACKAGE}" | tr -d '\r')"
+
+adb shell am start -W -n "${PROBE_ACTIVITY}"
+sleep 2
+
+POST_REBOOT="$(adb shell run-as "${PACKAGE}" cat files/ntd97-lifecycle-probe.txt | tr -d '\r')"
+printf '%s\n' "${POST_REBOOT}"
+
+for REQUIRED in \
+  build_attestation=ok \
+  native_host=ok \
+  avatar=ok \
+  audio_bridge=ok \
+  notification_channels=ok
+
+do
+  printf '%s\n' "${POST_REBOOT}" | grep -q "^${REQUIRED}$"
+done
+
+if adb shell run-as "${PACKAGE}" test -f files/ntd97-device-evidence.nde97; then
+  echo "emulator unexpectedly produced PhysicalDevice evidence" >&2
+  exit 1
+fi
 
 adb reboot
 adb wait-for-device
