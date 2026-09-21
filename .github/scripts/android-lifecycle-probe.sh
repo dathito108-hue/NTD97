@@ -58,6 +58,7 @@ for REQUIRED in \
   chat_submit=ok \
   chat_stream=ok \
   chat_restore=ok \
+  chat_store=ok \
   chat_cancel=ok \
   chat_status=ok
 do
