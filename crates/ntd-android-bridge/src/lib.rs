@@ -13,8 +13,8 @@ use jni::{
 };
 use ntd_core::{CapabilityId, SideEffectClass};
 use ntd_platform::{
-    AssistantMode, CheckpointStore, ContinuityPhase, ContinuitySupervisor, EmbodimentController,
-    LipViseme, PlatformConstraints, WakeReason,
+    CheckpointStore, ContinuityPhase, ContinuitySupervisor, EmbodimentController,
+    PlatformConstraints, WakeReason,
 };
 use ntd_runtime::{
     ActionFabric, ActionOutput, ActionPlanStatus, ActionValue, ActionVerification, ActionVerifier,
@@ -818,6 +818,23 @@ pub extern "system" fn Java_com_ntd97_app_NativeBridge_nativeFrame(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_ntd97_app_NativeBridge_nativeSnapshot(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    path: JString<'_>,
+) -> jstring {
+    let result = (|| {
+        let path = get_string(&mut env, path)?;
+        let supervisor = restore(&path)?;
+        Ok(json!({
+            "status":"ok",
+            "snapshot":snapshot_json(&supervisor),
+        }))
+    })();
+    java_response(&mut env, result)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_ntd97_app_NativeBridge_nativeNextPlanId(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
@@ -943,6 +960,7 @@ pub extern "system" fn Java_com_ntd97_app_NativeBridge_nativeSuspend(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ntd_platform::{AssistantMode, LipViseme};
 
     #[test]
     fn hex_round_trip_is_stable() {
