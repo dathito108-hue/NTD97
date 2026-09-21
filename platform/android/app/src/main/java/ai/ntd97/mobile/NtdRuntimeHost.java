@@ -75,6 +75,18 @@ public interface NtdRuntimeHost {
         return 0;
     }
 
+    default byte[] chatCheckpoint() {
+        return new byte[0];
+    }
+
+    default long restoreChatCheckpoint(byte[] checkpoint) {
+        return -1L;
+    }
+
+    default String chatTranscript() {
+        return "";
+    }
+
     default void acceptMicrophonePcm(short[] samples, int sampleRateHz) {}
 
     default short[] pullSpeakerPcm(int maxSamples, int sampleRateHz) {
