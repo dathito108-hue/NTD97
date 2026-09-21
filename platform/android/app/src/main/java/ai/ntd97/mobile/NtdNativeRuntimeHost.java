@@ -2,6 +2,7 @@ package ai.ntd97.mobile;
 
 import android.content.Context;
 
+import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +23,17 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
             return null;
         }
         return new NtdNativeRuntimeHost(context);
+    }
+
+    static byte[] probeRealModel(File capsule, File shardRoot) {
+        if (capsule == null || shardRoot == null || !ensureLoaded()) {
+            return "real_model_generation=failed\nreason=native runtime unavailable\n"
+                    .getBytes(StandardCharsets.UTF_8);
+        }
+        byte[] result = nativeProbeRealModel(
+                capsule.getAbsolutePath(),
+                shardRoot.getAbsolutePath());
+        return result == null ? new byte[0] : result;
     }
 
     private static synchronized boolean ensureLoaded() {
@@ -211,4 +223,6 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static native void nativeAcceptMicrophonePcm(byte[] pcmLittleEndian, int sampleRateHz);
 
     private static native byte[] nativePullSpeakerPcm(int maxSamples, int sampleRateHz);
+
+    private static native byte[] nativeProbeRealModel(String capsulePath, String shardRoot);
 }
