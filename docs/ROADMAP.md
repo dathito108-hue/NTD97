@@ -275,3 +275,147 @@ Exit: complete.
 Current status: CI validation foundation is implemented and green. Final M10 completion remains blocked until distinct physical 4 GB / 8 GB / 12 GB device records satisfy the declared latency, energy, reliability, recovery and sovereignty targets.
 
 Exit: measurable capability, latency, reliability, recovery and sovereignty targets are met on representative mobile hardware.
+
+
+## Post-M10 roadmap lock
+
+From M11 onward NTD97 is developed only as large end-to-end capability blocks. Small phases may exist locally while implementing a block, but they are not standalone roadmap milestones and are not merged merely because an interface or mock passes.
+
+M10 physical-device evidence remains a parallel hardware-validation gate. It does not block implementation of the intelligence/product blocks below, and it cannot substitute for them.
+
+A post-M10 block is complete only when its production path, deterministic regression coverage, failure behavior, sovereignty boundary and mobile integration are all present.
+
+## M11 — Major Block K: Real Native Intelligence — in progress
+
+Goal: replace toy/reference intelligence with importable, executable, source-runtime-independent model intelligence that actually exercises the NTD97 generative stack.
+
+Required contract:
+
+- clean-room GGUF v3 intake in Rust with no llama.cpp/third-party model runtime dependency;
+- bounded parsing of typed metadata, arrays, tensor tables, alignment and tokenizer metadata;
+- fail-closed rejection of malformed, unsupported-version, duplicate or structurally invalid inputs;
+- explicit conversion plan separating directly materializable tensors from tensors requiring native transcode;
+- additive NTD97 IR transformer semantics required for production lowering;
+- learned-weight RMSNorm, SiLU, reshape/transpose and grouped-query causal attention;
+- canonical Llama-family architecture/tensor-name lowering into NIR97;
+- GGML quantized-tensor transcode into an NTD97-owned tensor representation supported by mobile execution;
+- native tokenizer conversion into the canonical NCC97 tokenizer section;
+- content-addressed tensor shard emission and graph/tensor binding validation;
+- source-vs-NIR97 semantic equivalence fixtures before activation;
+- signed NCC97 native package production through the existing assimilation/forge boundary;
+- CLI/import API suitable for large model files without retaining the source runtime after successful commit;
+- end-to-end test: GGUF fixture -> NTD97 IR/NCC97 -> native generator -> deterministic text.
+
+Current implementation:
+
+- GGUF v3 parser/intake and conversion planning are implemented on the M11 branch;
+- GGUF tokenizer/tensor-table validation is fail-closed;
+- IR 0.3 adds SiLU, Reshape and Transpose;
+- RMSNorm accepts learned scale;
+- causal attention supports grouped-query heads;
+- transformer semantics have direct execution tests.
+
+Still required before M11 completion:
+
+- canonical Llama-family graph lowering;
+- production quantized tensor transcode;
+- NCC97 model-package emission from real GGUF;
+- semantic-equivalence execution on a representative real model;
+- Android loading/generation using the resulting native model.
+
+Exit: at least one real supported external model can be imported once, converted to signed NTD97-native NCC97 assets, then loaded and used for local text generation without the source model runtime or a hosted AI backend.
+
+## M12 — Major Block L: End-to-End Native Assistant Loop
+
+Goal: make the Android product use the real native intelligence path rather than lifecycle/test harnesses.
+
+Required contract:
+
+- chat composer, conversation surface and token streaming;
+- prompt/chat-template compilation into the native tokenizer path;
+- user input -> native generation -> adaptive cognition -> memory -> task graph -> response;
+- Reflex/Standard/Deep/Recovery budgets driven by real model inference;
+- sovereign conversation/context memory with bounded context construction;
+- interruption/cancellation without committing partial invalid state;
+- checkpointable generation/task state across UI exit and process death;
+- final answer synthesis from verified action results;
+- Android JNI surface for submit/cancel/stream/status rather than test-only lifecycle calls;
+- end-to-end offline chat and reasoning acceptance tests.
+
+Exit: the canonical APK can hold a useful local conversation, reason through the native model, remember relevant state and resume interrupted work without any external AI backend.
+
+## M13 — Major Block M: Real-World Capability Adapters
+
+Goal: replace mock capability adapters with production adapters while preserving the existing authority/verification model.
+
+Required contract:
+
+- real HTTP/WebSearch/WebFetch boundary;
+- browser observe/interact adapter;
+- scoped Android file read/write through platform storage APIs;
+- Android device observation/control where platform policy permits;
+- app launch/intents/accessibility-assisted interaction behind explicit user authority;
+- verified download/upload/artifact handling;
+- network/offline transitions and resumable actions;
+- side-effect receipts, rollback where feasible and idempotent cold resume;
+- paired-PC fabric integrated into the same production task graph;
+- real mixed Web -> File -> App/Device -> PC acceptance tasks.
+
+Exit: NTD97 can complete useful multi-surface tasks on a real phone with verifiable results and no mock adapter in the canonical path.
+
+## M14 — Major Block N: Cognitive Quality + Capability Growth
+
+Goal: turn the runtime/capability substrate into a progressively more capable general agent.
+
+Required contract:
+
+- task-conditioned retrieval across semantic/procedural/episodic memory;
+- long-context compression and context budgeting;
+- model-grounded planning with verifier-driven revision;
+- persistent learned deltas/adapters with pre-activation evaluation;
+- capability-gap detection;
+- capability discovery/build/test/package/install loop using the existing forge;
+- signed/versioned activation with rollback to known-good state;
+- benchmark corpus for reasoning, planning, memory, tool use and recovery;
+- safeguards preventing unverified generated code/capability state from silently becoming active.
+
+Exit: NTD97 can detect a missing supported capability, build or assimilate a candidate, validate it in isolation, activate it transactionally and use it in a later task while preserving rollback.
+
+## M15 — Major Block O: Embodied Multimodal Assistant
+
+Goal: make the 3D assistant and voice path a first-class interface to the same sovereign intelligence.
+
+Required contract:
+
+- native/local speech-to-text path;
+- native/local text-to-speech path;
+- streaming speech turn-taking and interruption;
+- real character mesh/rig, skeletal animation and expression state;
+- viseme-driven lip sync from actual speech output;
+- gaze/gesture/progress driven by cognitive/action state;
+- floating assistant interaction within Android policy;
+- camera/screen/sensor perception only through explicit capability/permission boundaries;
+- thermal-aware fidelity degradation without cognition loss.
+
+Exit: the user can converse with and interact with an embodied NTD97 assistant while all reasoning, memory and governed actions remain tied to the same NTD97 identity.
+
+## M16 — Major Block P: Production General-Agent Convergence
+
+Goal: validate NTD97 as a durable mobile general-agent product rather than a collection of subsystem demonstrations.
+
+Required contract:
+
+- real-model latency/energy/RAM profiling across representative 4/8/12+ GB phones;
+- CPU/Vulkan/NPU provider equivalence and autotuning on real hardware;
+- long-horizon mixed-task reliability and recovery;
+- multi-day logical-continuity soak under Android lifecycle constraints;
+- cold boot/reboot/update/backup/restore migration tests;
+- security and sovereignty boundary audits;
+- no-third-party-AI-dependency audit on release artifacts;
+- model/capability corruption and rollback drills;
+- Android-version/device-vendor compatibility matrix;
+- production signing/update path;
+- measurable quality benchmark for conversation, reasoning, memory, tool use and task completion;
+- portable platform boundary prepared for future non-Android shells without moving cognition out of the NTD97 core.
+
+Exit: a release candidate demonstrates useful native intelligence, governed real-world agency, continuity, portability and measured mobile performance on representative physical hardware. Passing M16 is a product-readiness milestone; it is not by itself a scientific proof of AGI.
