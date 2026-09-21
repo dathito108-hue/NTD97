@@ -249,32 +249,29 @@ impl GgufModel {
                 None => Ok(None),
             }
         };
-        let optional_f32_array =
-            |key: &'static str| -> Result<Option<Vec<f32>>, GgufError> {
-                match self.metadata.get(key) {
-                    Some(value) => value
-                        .as_f32_array()
-                        .map(Some)
-                        .ok_or(GgufError::InvalidMetadataType(key)),
-                    None => Ok(None),
-                }
-            };
-        let optional_i32_array =
-            |key: &'static str| -> Result<Option<Vec<i32>>, GgufError> {
-                match self.metadata.get(key) {
-                    Some(value) => value
-                        .as_i32_array()
-                        .map(Some)
-                        .ok_or(GgufError::InvalidMetadataType(key)),
-                    None => Ok(None),
-                }
-            };
+        let optional_f32_array = |key: &'static str| -> Result<Option<Vec<f32>>, GgufError> {
+            match self.metadata.get(key) {
+                Some(value) => value
+                    .as_f32_array()
+                    .map(Some)
+                    .ok_or(GgufError::InvalidMetadataType(key)),
+                None => Ok(None),
+            }
+        };
+        let optional_i32_array = |key: &'static str| -> Result<Option<Vec<i32>>, GgufError> {
+            match self.metadata.get(key) {
+                Some(value) => value
+                    .as_i32_array()
+                    .map(Some)
+                    .ok_or(GgufError::InvalidMetadataType(key)),
+                None => Ok(None),
+            }
+        };
 
         let scores = optional_f32_array("tokenizer.ggml.scores")?;
-        if scores
-            .as_ref()
-            .is_some_and(|scores| scores.len() != tokens.len() || scores.iter().any(|score| !score.is_finite()))
-        {
+        if scores.as_ref().is_some_and(|scores| {
+            scores.len() != tokens.len() || scores.iter().any(|score| !score.is_finite())
+        }) {
             return Err(GgufError::InvalidTokenizer);
         }
         let token_types = optional_i32_array("tokenizer.ggml.token_type")?;
