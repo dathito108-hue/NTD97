@@ -211,6 +211,21 @@ fn hot_pressure_forces_cpu_fallback_without_output_drift() {
     adaptive.register(CpuTiledProvider::default());
     adaptive.register(CpuReferenceMobileProvider);
 
+    let mut autotune = AutotuneTable::default();
+    autotune.record(ProviderMeasurement {
+        kind: ProviderKind::Vulkan,
+        op: TensorOp::MatMul,
+        latency_nanos: 20,
+        verified_equivalent: true,
+    });
+    autotune.record(ProviderMeasurement {
+        kind: ProviderKind::Npu,
+        op: TensorOp::MatMul,
+        latency_nanos: 10,
+        verified_equivalent: true,
+    });
+    adaptive.set_autotune(autotune);
+
     assert_eq!(
         adaptive
             .selected_provider(TensorOp::MatMul)
