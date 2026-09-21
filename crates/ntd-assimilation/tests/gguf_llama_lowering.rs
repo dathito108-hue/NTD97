@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
 
 use ntd_assimilation::{
-    lower_llama_model, GgufModel, GgufValueType, GGUF_MAGIC, GGUF_VERSION,
+    build_native_package, lower_llama_model, lowered_llama_candidate, verify_native_package,
+    AssimilationIdentity, ForgeSandbox, GgufModel, GgufValueType, LicenseRecord,
+    NativeValidationSandbox, SourcePackage, GGUF_MAGIC, GGUF_VERSION,
 };
+use ntd_capsule::{load_native_generative_program, CapsuleView, MemoryContentStore};
 use ntd_runtime::{
     CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, QuantizationParams,
     SamplingMode, TensorLoader,
@@ -255,4 +258,42 @@ fn lowering_rejects_unsupported_rope_scaling_instead_of_drifting() {
 
     let model = GgufModel::parse(&bytes).expect("parse modified");
     assert!(lower_llama_model(&bytes, &model).is_err());
+}
+
+#[test]
+fn lowered_llama_packages_as_signed_native_generative_intelligence() {
+    let bytes = fixture();
+    let model = GgufModel::parse(&bytes).expect("parse");
+    let lowered = lower_llama_model(&bytes, &model).expect("lower");
+    let candidate =
+        lowered_llama_candidate("model.ntd97-tiny-llama", 1, &lowered).expect("candidate");
+
+    let source = SourcePackage::new(
+        "application/x-gguf",
+        bytes,
+        "memory://ntd97-tiny-llama.gguf",
+        LicenseRecord::new("MIT", "test fixture").expect("license"),
+        "NTD97 deterministic GGUF fixture",
+    )
+    .expect("source");
+
+    let mut sandbox = NativeValidationSandbox;
+    let report = sandbox.validate(&candidate).expect("sandbox");
+    let identity = AssimilationIdentity::from_seed([97; 32]);
+    let package = build_native_package(
+        &candidate,
+        &source.provenance,
+        "ntd97.gguf.v3",
+        &report,
+        &identity,
+    )
+    .expect("package");
+    verify_native_package(&package, &identity.verify_key()).expect("verify package");
+
+    let view = CapsuleView::read(&package.native_capsule).expect("capsule");
+    let loaded =
+        load_native_generative_program(&view, &MemoryContentStore::default()).expect("load");
+    assert_eq!(loaded.program.graph, lowered.graph);
+    assert_eq!(loaded.program.tensors, lowered.tensors);
+    assert_eq!(loaded.tokenizer, lowered.tokenizer);
 }
