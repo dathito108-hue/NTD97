@@ -10,12 +10,30 @@ use crate::tensor::{ExecutionProvider, Tensor, TensorError};
 pub enum ExecutionError {
     InvalidGraph(ValidationError),
     MissingGraphInput(ValueId),
-    MissingValue { node: NodeId, value: ValueId },
+    MissingValue {
+        node: NodeId,
+        value: ValueId,
+    },
     UnsupportedNode(NodeId),
-    Provider { node: NodeId, source: TensorError },
-    OutputArity { node: NodeId, expected: usize, actual: usize },
-    OutputType { node: NodeId, value: ValueId },
-    OutputRank { node: NodeId, value: ValueId, expected: usize, actual: usize },
+    Provider {
+        node: NodeId,
+        source: TensorError,
+    },
+    OutputArity {
+        node: NodeId,
+        expected: usize,
+        actual: usize,
+    },
+    OutputType {
+        node: NodeId,
+        value: ValueId,
+    },
+    OutputRank {
+        node: NodeId,
+        value: ValueId,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 pub struct GraphExecutor<P> {
@@ -60,13 +78,12 @@ where
                 })?);
             }
 
-            let outputs = self
-                .provider
-                .execute(op, &node_inputs)
-                .map_err(|source| ExecutionError::Provider {
+            let outputs = self.provider.execute(op, &node_inputs).map_err(|source| {
+                ExecutionError::Provider {
                     node: node.id,
                     source,
-                })?;
+                }
+            })?;
 
             if outputs.len() != node.outputs.len() {
                 return Err(ExecutionError::OutputArity {
