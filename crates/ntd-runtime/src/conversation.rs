@@ -246,10 +246,7 @@ mod tests {
             ConversationTurn::user("recent question"),
             ConversationTurn::assistant("recent answer"),
         ];
-        let memory = vec![
-            "highest relevance".to_owned(),
-            "lower relevance".to_owned(),
-        ];
+        let memory = vec!["highest relevance".to_owned(), "lower relevance".to_owned()];
         let tokenizer = byte_tokenizer();
         let one_memory = "Relevant memory:\n- highest relevance\n\nUser: recent question\nAssistant: recent answer\nUser: now\nAssistant:";
         let limit = tokenizer
