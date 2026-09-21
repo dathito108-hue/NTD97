@@ -722,6 +722,7 @@ fn submit_chat_reserved(
         )
         .map_err(|error| format!("compile memory-augmented chat prompt: {error:?}"))?;
 
+    let reasoning_prompt_tokens = compiled.token_ids.clone();
     let task_id = conversation
         .begin_turn(
             model.asset_id.clone(),
@@ -735,7 +736,7 @@ fn submit_chat_reserved(
         .record_reasoning_profile(task_id, budget, signals, compiled.retained_memory_items)
         .map_err(|error| format!("record sovereign reasoning profile: {error:?}"))?;
 
-    let mut probe = NativeModelReasoningProbe::new(model, compiled.token_ids.clone())?;
+    let mut probe = NativeModelReasoningProbe::new(model, reasoning_prompt_tokens)?;
     let report =
         run_budgeted_reasoning_cycle(conversation.cognition_mut(), task_id, signals, &mut probe)
             .map_err(|error| format!("run budgeted native reasoning cycle: {error:?}"))?;
