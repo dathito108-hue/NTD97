@@ -156,6 +156,7 @@ pub enum MobileContinuityError {
     ActionCheckpoint(String),
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_mobile_continuity_bundle(
     cognitive: &CognitiveRuntime,
     registry: &CapabilityRegistry,
