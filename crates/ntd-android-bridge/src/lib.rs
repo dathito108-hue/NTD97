@@ -764,14 +764,17 @@ fn next_chat_event(request_id: u64) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("decode chat token: {error:?}"))?;
 
     let mut guard = lock_state();
-    let cancelled = guard
+    let cancelled = match guard
         .chat_session
         .as_ref()
         .filter(|session| session.request_id == request_id)
-        .is_none_or(|session| {
+    {
+        Some(session) => {
             session.status != NativeChatSessionStatus::Running
                 || session.cancel.load(Ordering::Acquire)
-        });
+        }
+        None => true,
+    };
     if cancelled {
         return Ok(encode_chat_event(CHAT_EVENT_CANCELLED, None, ""));
     }
