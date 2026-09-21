@@ -14,7 +14,7 @@ use ntd_runtime::{Gpt2BpeConfig, Gpt2BpeTokenizer};
 
 use super::{
     gpt2_bpe_blocker, llama_spm_blocker, transcode_tensor_from_source, GgufByteSource, GgufError,
-    GgufModel, GgufTensorInfo, GgufValue, SliceGgufSource,
+    GgufModel, GgufTensorInfo, GgufValue, SliceGgufSource, TensorShardRef, TensorShardSink,
 };
 use crate::{NativeCandidate, NativeSection, RegressionCase, RegressionProbe};
 
@@ -51,6 +51,30 @@ pub struct LoweredLlamaModel {
     pub bindings: Vec<LlamaTensorBinding>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamedLoweredLlamaModel {
+    pub config: LlamaConfig,
+    pub graph: Graph,
+    pub tensor_shards: Vec<TensorShardRef>,
+    pub tokenizer: NativeTokenizerDescriptor,
+    pub token_input: ValueId,
+    pub distribution_output: usize,
+    pub vocabulary_size: usize,
+    pub bindings: Vec<LlamaTensorBinding>,
+}
+
+struct LoweredLlamaParts {
+    config: LlamaConfig,
+    graph: Graph,
+    tensors: Vec<NativeTensor>,
+    tensor_shards: Vec<TensorShardRef>,
+    tokenizer: NativeTokenizerDescriptor,
+    token_input: ValueId,
+    distribution_output: usize,
+    vocabulary_size: usize,
+    bindings: Vec<LlamaTensorBinding>,
+}
+
 pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaModel, GgufError> {
     lower_llama_model_from_source(&SliceGgufSource::new(file), model)
 }
@@ -59,6 +83,52 @@ pub fn lower_llama_model_from_source(
     source: &dyn GgufByteSource,
     model: &GgufModel,
 ) -> Result<LoweredLlamaModel, GgufError> {
+    let parts = lower_llama_model_internal(source, model, None)?;
+    if !parts.tensor_shards.is_empty() {
+        return Err(GgufError::NativeLowering(
+            "in-memory lowering unexpectedly emitted external tensor shards".into(),
+        ));
+    }
+    Ok(LoweredLlamaModel {
+        config: parts.config,
+        graph: parts.graph,
+        tensors: parts.tensors,
+        tokenizer: parts.tokenizer,
+        token_input: parts.token_input,
+        distribution_output: parts.distribution_output,
+        vocabulary_size: parts.vocabulary_size,
+        bindings: parts.bindings,
+    })
+}
+
+pub fn lower_llama_model_to_shards(
+    source: &dyn GgufByteSource,
+    model: &GgufModel,
+    sink: &mut dyn TensorShardSink,
+) -> Result<StreamedLoweredLlamaModel, GgufError> {
+    let parts = lower_llama_model_internal(source, model, Some(sink))?;
+    if !parts.tensors.is_empty() {
+        return Err(GgufError::NativeLowering(
+            "streamed lowering retained native tensor payloads".into(),
+        ));
+    }
+    Ok(StreamedLoweredLlamaModel {
+        config: parts.config,
+        graph: parts.graph,
+        tensor_shards: parts.tensor_shards,
+        tokenizer: parts.tokenizer,
+        token_input: parts.token_input,
+        distribution_output: parts.distribution_output,
+        vocabulary_size: parts.vocabulary_size,
+        bindings: parts.bindings,
+    })
+}
+
+fn lower_llama_model_internal(
+    source: &dyn GgufByteSource,
+    model: &GgufModel,
+    sink: Option<&mut dyn TensorShardSink>,
+) -> Result<LoweredLlamaParts, GgufError> {
     if model.architecture()? != "llama" {
         return Err(GgufError::UnsupportedArchitecture(
             model.architecture()?.to_owned(),
@@ -165,7 +235,7 @@ pub fn lower_llama_model_from_source(
     let source_tensors = SourceTensorTable::new(source, model);
 
     let mut consumed = BTreeSet::new();
-    let mut builder = GraphBuilder::new();
+    let mut builder = GraphBuilder::new(sink);
 
     let token_input = builder.add_external_input(DType::I32, 1)?;
     let positions = builder.add_node(TensorOp::PositionIds, vec![token_input], DType::I32, 1)?;
@@ -363,10 +433,11 @@ pub fn lower_llama_model_from_source(
     reject_unconsumed_model_tensors(model, &consumed)?;
 
     let graph = builder.finish(vec![logits])?;
-    Ok(LoweredLlamaModel {
+    Ok(LoweredLlamaParts {
         config,
         graph,
         tensors: builder.tensors,
+        tensor_shards: builder.tensor_shards,
         tokenizer,
         token_input,
         distribution_output: 0,
