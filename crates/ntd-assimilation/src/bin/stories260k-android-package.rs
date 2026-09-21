@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use ntd_assimilation::{
-    activate_thin_generative_capsule, build_streamed_native_package,
-    lower_llama_model_to_shards, verify_native_package_with_shards, AssimilationIdentity,
-    FileBackedTensorResolver, FileGgufSource, FileTensorShardStore, GgufModel, LicenseRecord,
-    ProvenanceRecord, SandboxReport, StreamedPackageSpec,
+    activate_thin_generative_capsule, build_streamed_native_package, lower_llama_model_to_shards,
+    verify_native_package_with_shards, AssimilationIdentity, FileBackedTensorResolver,
+    FileGgufSource, FileTensorShardStore, GgufModel, LicenseRecord, ProvenanceRecord,
+    SandboxReport, StreamedPackageSpec,
 };
 use ntd_capsule::{decode_graph, encode_graph, sha256, Digest, NativeTokenizerModel};
 use ntd_runtime::{
@@ -20,9 +20,8 @@ use ntd_runtime::{
 
 const PINNED_MODEL_LEN: usize = 1_185_376;
 const PINNED_MODEL_SHA256: Digest = [
-    0x04, 0x7b, 0xf4, 0x64, 0x55, 0xa5, 0x44, 0x93, 0x1c, 0xff, 0x6f, 0xef, 0x14, 0xd7, 0x91,
-    0x01, 0x54, 0xc5, 0x6a, 0xfb, 0xc2, 0x3a, 0xb1, 0xc5, 0xe5, 0x6a, 0x72, 0xe6, 0x99, 0x12,
-    0xc0, 0x4b,
+    0x04, 0x7b, 0xf4, 0x64, 0x55, 0xa5, 0x44, 0x93, 0x1c, 0xff, 0x6f, 0xef, 0x14, 0xd7, 0x91, 0x01,
+    0x54, 0xc5, 0x6a, 0xfb, 0xc2, 0x3a, 0xb1, 0xc5, 0xe5, 0x6a, 0x72, 0xe6, 0x99, 0x12, 0xc0, 0x4b,
 ];
 const ANDROID_PROBE_TOKENS: usize = 16;
 
