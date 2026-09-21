@@ -1,0 +1,18 @@
+[package]
+name = "ntd-android-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "ntd97_android"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jni = { version = "0.21.1", default-features = false }
+ntd-mobile-shell = { path = "../ntd-mobile-shell" }
+ntd-runtime = { path = "../ntd-runtime" }
+
+[lints.clippy]
+all = "warn"
