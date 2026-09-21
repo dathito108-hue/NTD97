@@ -603,6 +603,83 @@ mod tests {
     }
 
     #[test]
+    fn all_current_operation_variants_round_trip() {
+        let operations = vec![
+            OpKind::Tensor(TensorOp::Add),
+            OpKind::Tensor(TensorOp::Mul),
+            OpKind::Tensor(TensorOp::MatMul),
+            OpKind::Tensor(TensorOp::QuantizedMatMul),
+            OpKind::Tensor(TensorOp::RmsNorm),
+            OpKind::Tensor(TensorOp::Softmax),
+            OpKind::Tensor(TensorOp::Gather),
+            OpKind::Tensor(TensorOp::RotaryPosition),
+            OpKind::State(StateOp::Read),
+            OpKind::State(StateOp::Write),
+            OpKind::State(StateOp::Checkpoint),
+            OpKind::Memory(MemoryOp::Retrieve),
+            OpKind::Memory(MemoryOp::Store),
+            OpKind::Memory(MemoryOp::Forget),
+            OpKind::Control(ControlOp::Select),
+            OpKind::Control(ControlOp::Merge),
+            OpKind::Control(ControlOp::Barrier),
+            OpKind::Tool(ToolOp::Invoke {
+                capability: "device.camera".to_owned(),
+            }),
+            OpKind::Tool(ToolOp::Observe),
+            OpKind::Tool(ToolOp::Verify),
+        ];
+
+        let nodes = operations
+            .into_iter()
+            .enumerate()
+            .map(|(index, op)| Node {
+                id: NodeId(index as u32),
+                op,
+                inputs: vec![ValueId(0)],
+                outputs: vec![scalar(index as u32 + 1, DType::F32)],
+            })
+            .collect::<Vec<_>>();
+
+        let graph = Graph {
+            version: IrVersion::CURRENT,
+            inputs: vec![scalar(0, DType::F32)],
+            outputs: vec![ValueId(nodes.len() as u32)],
+            nodes,
+        };
+
+        let encoded = encode_graph(&graph).expect("encode");
+        assert_eq!(decode_graph(&encoded).expect("decode"), graph);
+    }
+
+    #[test]
+    fn all_current_dtypes_round_trip() {
+        let dtypes = [
+            DType::F32,
+            DType::F16,
+            DType::Bf16,
+            DType::I8,
+            DType::U8,
+            DType::I32,
+            DType::I64,
+            DType::Bool,
+        ];
+
+        let graph = Graph {
+            version: IrVersion::CURRENT,
+            inputs: dtypes
+                .into_iter()
+                .enumerate()
+                .map(|(index, dtype)| scalar(index as u32, dtype))
+                .collect(),
+            outputs: vec![ValueId(0)],
+            nodes: Vec::new(),
+        };
+
+        let encoded = encode_graph(&graph).expect("encode");
+        assert_eq!(decode_graph(&encoded).expect("decode"), graph);
+    }
+
+    #[test]
     fn graph_section_round_trips_through_ncc97_capsule() {
         let graph = sample_graph();
         let mut builder =
