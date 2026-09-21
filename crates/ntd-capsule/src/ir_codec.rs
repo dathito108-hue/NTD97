@@ -34,10 +34,7 @@ pub enum GraphSectionError {
     Codec(IrCodecError),
 }
 
-pub fn push_graph_section(
-    builder: &mut CapsuleBuilder,
-    graph: &Graph,
-) -> Result<(), IrCodecError> {
+pub fn push_graph_section(builder: &mut CapsuleBuilder, graph: &Graph) -> Result<(), IrCodecError> {
     builder.push_embedded(SectionKind::Graph, encode_graph(graph)?);
     Ok(())
 }
@@ -114,16 +111,14 @@ pub fn decode_graph(bytes: &[u8]) -> Result<Graph, IrCodecError> {
     let output_count = cursor.u32()?;
     let node_count = cursor.u32()?;
 
-    let mut inputs = Vec::with_capacity(
-        usize::try_from(input_count).map_err(|_| IrCodecError::Overflow)?,
-    );
+    let mut inputs =
+        Vec::with_capacity(usize::try_from(input_count).map_err(|_| IrCodecError::Overflow)?);
     for _ in 0..input_count {
         inputs.push(decode_value_decl(&mut cursor)?);
     }
 
-    let mut outputs = Vec::with_capacity(
-        usize::try_from(output_count).map_err(|_| IrCodecError::Overflow)?,
-    );
+    let mut outputs =
+        Vec::with_capacity(usize::try_from(output_count).map_err(|_| IrCodecError::Overflow)?);
     for _ in 0..output_count {
         outputs.push(ValueId(cursor.u32()?));
     }
@@ -275,9 +270,7 @@ fn decode_node(cursor: &mut Cursor<'_>) -> Result<Node, IrCodecError> {
         outputs.push(decode_value_decl(cursor)?);
     }
 
-    let attrs = cursor.take(
-        usize::try_from(attr_len).map_err(|_| IrCodecError::Overflow)?,
-    )?;
+    let attrs = cursor.take(usize::try_from(attr_len).map_err(|_| IrCodecError::Overflow)?)?;
     let op = decode_op(family, opcode, attrs)?;
 
     Ok(Node {
@@ -483,10 +476,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn take(&mut self, len: usize) -> Result<&'a [u8], IrCodecError> {
-        let end = self
-            .offset
-            .checked_add(len)
-            .ok_or(IrCodecError::Overflow)?;
+        let end = self.offset.checked_add(len).ok_or(IrCodecError::Overflow)?;
         let bytes = self
             .bytes
             .get(self.offset..end)
@@ -682,8 +672,7 @@ mod tests {
     #[test]
     fn graph_section_round_trips_through_ncc97_capsule() {
         let graph = sample_graph();
-        let mut builder =
-            CapsuleBuilder::new(CapsuleKind::Full, *b"NTD97-IR-CAPS-01");
+        let mut builder = CapsuleBuilder::new(CapsuleKind::Full, *b"NTD97-IR-CAPS-01");
         push_graph_section(&mut builder, &graph).expect("push graph");
 
         let bytes = builder.write().expect("write capsule");
@@ -735,9 +724,8 @@ mod tests {
         assert_eq!(
             encode_graph(&graph).expect("encode"),
             vec![
-                0x4e, 0x49, 0x52, 0x39, 0x37, 0x00, 0x18, 0x00,
-                0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x4e, 0x49, 0x52, 0x39, 0x37, 0x00, 0x18, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             ]
         );
     }
