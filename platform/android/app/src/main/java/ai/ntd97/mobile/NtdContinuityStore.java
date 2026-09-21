@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.AtomicFile;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -14,7 +15,8 @@ public final class NtdContinuityStore {
     private final AtomicFile atomicFile;
 
     public NtdContinuityStore(Context context) {
-        File file = new File(context.getNoBackupFilesDir(), FILE_NAME);
+        Context storageContext = context.createDeviceProtectedStorageContext();
+        File file = new File(storageContext.getNoBackupFilesDir(), FILE_NAME);
         atomicFile = new AtomicFile(file);
     }
 
@@ -38,8 +40,14 @@ public final class NtdContinuityStore {
             return null;
         }
 
-        try (FileInputStream stream = atomicFile.openRead()) {
-            return stream.readAllBytes();
+        try (FileInputStream stream = atomicFile.openRead();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = stream.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
         }
     }
 
