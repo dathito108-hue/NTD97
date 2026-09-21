@@ -56,8 +56,8 @@ pub use tensor::{
 };
 pub use tokenizer::{
     LlamaSpmConfig, LlamaSpmTokenizer, TextTokenizer, TokenizerError, VocabularyTokenizer,
-    TOKEN_TYPE_BYTE, TOKEN_TYPE_CONTROL, TOKEN_TYPE_NORMAL, TOKEN_TYPE_UNKNOWN,
-    TOKEN_TYPE_UNUSED, TOKEN_TYPE_USER_DEFINED,
+    TOKEN_TYPE_BYTE, TOKEN_TYPE_CONTROL, TOKEN_TYPE_NORMAL, TOKEN_TYPE_UNKNOWN, TOKEN_TYPE_UNUSED,
+    TOKEN_TYPE_USER_DEFINED,
 };
 
 use ntd_core::ReasoningBudget;
