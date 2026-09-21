@@ -48,9 +48,9 @@ fn run() -> Result<(), String> {
         .unwrap_or_else(|| "stories260k-evidence".to_owned());
     let usage =
         || format!("usage: {program} <stories260K.gguf> <source-output> <source-token-ids>");
-    let model_path = args.next().ok_or_else(&usage)?;
-    let source_output_path = args.next().ok_or_else(&usage)?;
-    let source_token_ids_path = args.next().ok_or_else(&usage)?;
+    let model_path = args.next().ok_or_else(usage)?;
+    let source_output_path = args.next().ok_or_else(usage)?;
+    let source_token_ids_path = args.next().ok_or_else(usage)?;
     if args.next().is_some() {
         return Err(usage());
     }
