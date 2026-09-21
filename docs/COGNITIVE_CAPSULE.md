@@ -38,7 +38,7 @@ Chunk Index
   |- MEMORY_STATE (optional)
   |- DEVICE_PROFILES
   |- PROVENANCE
-  |- SIGNATURES
+  |- ASSIMILATION_LOG\n  |- WORLD_STATE_SCHEMA\n  |- CONTINUITY_STATE (optional)\n  |- EMBODIMENT_PROFILE (optional)\n  |- SIGNATURES
 Chunk Payloads / External Chunk References
 ```
 
@@ -78,7 +78,23 @@ Phase targets include import from:
 - ONNX;
 - TFLite.
 
-Import means parsing and normalizing supported content into NTD97 graph/tensor/tokenizer abstractions. Unsupported operators or metadata must fail explicitly rather than silently degrading semantics.
+Import means parsing, normalizing and assimilating supported content into NTD97 graph/tensor/tokenizer/knowledge/skill abstractions. Unsupported operators or metadata must fail explicitly rather than silently degrading semantics. A successful import produces native NTD97 chunks plus an assimilation transaction record; subsequent normal execution does not require the source runtime.
+
+## Assimilation transaction
+
+Each intelligence ingestion is represented by an atomic transaction with:
+
+- source identity/hash;
+- importer and converter versions;
+- normalized NTD97 IR artifacts;
+- new/replaced native chunks;
+- knowledge/skill namespace changes;
+- validation results;
+- previous capsule root;
+- resulting capsule root;
+- rollback descriptor.
+
+A transaction becomes visible to the live intelligence only after all required validation passes.
 
 ## Export / backup modes
 
