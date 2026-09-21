@@ -59,6 +59,8 @@ for REQUIRED in \
   chat_stream=ok \
   chat_reasoning=ok \
   chat_reasoning_loop=ok \
+  chat_action_planner=ok \
+  chat_action_safety=ok \
   chat_memory=ok \
   chat_restore=ok \
   chat_store=ok \
