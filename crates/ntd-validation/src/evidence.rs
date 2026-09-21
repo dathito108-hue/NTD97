@@ -289,22 +289,18 @@ pub fn evaluate_physical_records(
                 ));
         }
         if evidence.p95_latency_nanos > targets.max_p95_latency_nanos {
-            report
-                .failures
-                .push(EvidenceGateFailure::LatencyExceeded {
-                    profile: required.clone(),
-                    actual: evidence.p95_latency_nanos,
-                    maximum: targets.max_p95_latency_nanos,
-                });
+            report.failures.push(EvidenceGateFailure::LatencyExceeded {
+                profile: required.clone(),
+                actual: evidence.p95_latency_nanos,
+                maximum: targets.max_p95_latency_nanos,
+            });
         }
         if evidence.energy_per_task_microjoules > targets.max_energy_per_task_microjoules {
-            report
-                .failures
-                .push(EvidenceGateFailure::EnergyExceeded {
-                    profile: required.clone(),
-                    actual: evidence.energy_per_task_microjoules,
-                    maximum: targets.max_energy_per_task_microjoules,
-                });
+            report.failures.push(EvidenceGateFailure::EnergyExceeded {
+                profile: required.clone(),
+                actual: evidence.energy_per_task_microjoules,
+                maximum: targets.max_energy_per_task_microjoules,
+            });
         }
         if evidence.reliability_permille < targets.min_reliability_permille {
             report
@@ -531,20 +527,19 @@ mod tests {
             record.build_revision = revision.into();
             records.push(record);
         }
-        records[1].build_revision =
-            "fedcba9876543210fedcba9876543210fedcba98".into();
+        records[1].build_revision = "fedcba9876543210fedcba9876543210fedcba98".into();
 
         let report =
             evaluate_physical_records(&records, &ValidationTargets::m10_reference(), revision);
         assert!(!report.accepted);
-        assert!(report.failures.iter().any(|failure| matches!(
-            failure,
-            EvidenceGateFailure::BuildRevisionMismatch { .. }
-        )));
-        assert!(report.failures.iter().any(|failure| matches!(
-            failure,
-            EvidenceGateFailure::DuplicateFingerprint(_)
-        )));
+        assert!(report
+            .failures
+            .iter()
+            .any(|failure| matches!(failure, EvidenceGateFailure::BuildRevisionMismatch { .. })));
+        assert!(report
+            .failures
+            .iter()
+            .any(|failure| matches!(failure, EvidenceGateFailure::DuplicateFingerprint(_))));
     }
 
     #[test]
