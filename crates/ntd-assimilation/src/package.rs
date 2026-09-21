@@ -2,8 +2,8 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use ntd_capsule::{
-    decode_graph_section, sha256, CapsuleBuilder, CapsuleKind, CapsuleView, ChunkStorageView,
-    Digest, SectionKind,
+    decode_graph_section, load_native_generative_program, sha256, CapsuleBuilder, CapsuleKind,
+    CapsuleView, ChunkStorageView, Digest, MemoryContentStore, SectionKind,
 };
 use ntd_core::{CapabilityId, SideEffectClass};
 use ntd_runtime::{AuthorityScope, CapabilityDescriptor, CapabilityDomain};
@@ -216,6 +216,22 @@ pub fn verify_native_package(
             }
             decode_graph_section(graph_chunks[0])
                 .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+
+            let has_tensors = view
+                .chunks
+                .iter()
+                .any(|chunk| chunk.kind == SectionKind::Tensors);
+            let has_tokenizer = view
+                .chunks
+                .iter()
+                .any(|chunk| chunk.kind == SectionKind::Tokenizer);
+            if has_tensors || has_tokenizer {
+                if !has_tensors || !has_tokenizer {
+                    return Err(AssimilationError::InvalidPackage);
+                }
+                load_native_generative_program(&view, &MemoryContentStore::default())
+                    .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+            }
         }
     }
     Ok(())
