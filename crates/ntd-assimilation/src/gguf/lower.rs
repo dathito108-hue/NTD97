@@ -144,6 +144,13 @@ fn lower_llama_model_internal(
                 return Err(GgufError::UnsupportedModelFeature(blocker));
             }
 
+            let policy = source_tokenizer
+                .resolved_llama_spm_policy()
+                .ok_or_else(|| {
+                    GgufError::UnsupportedModelFeature(
+                        "LLaMA SPM policy requested for non-LLaMA tokenizer".into(),
+                    )
+                })?;
             let score_bits = source_tokenizer
                 .scores
                 .ok_or_else(|| {
@@ -155,13 +162,6 @@ fn lower_llama_model_internal(
             let token_types = source_tokenizer.token_types.ok_or_else(|| {
                 GgufError::UnsupportedModelFeature("missing LLaMA tokenizer token types".into())
             })?;
-            let policy = source_tokenizer
-                .resolved_llama_spm_policy()
-                .ok_or_else(|| {
-                    GgufError::UnsupportedModelFeature(
-                        "LLaMA SPM policy requested for non-LLaMA tokenizer".into(),
-                    )
-                })?;
             let add_space_prefix = policy.add_space_prefix;
             let add_bos_token = policy.add_bos_token;
             let add_eos_token = policy.add_eos_token;
