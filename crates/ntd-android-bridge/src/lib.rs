@@ -49,7 +49,9 @@ fn state() -> &'static Mutex<NativeState> {
 }
 
 fn lock_state() -> std::sync::MutexGuard<'static, NativeState> {
-    state().lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    state()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn wake_reason(value: &str) -> WakeReason {
@@ -272,8 +274,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeResolveAp
     let Some(current) = guard.bundle.as_ref() else {
         return 0;
     };
-    if current.state != MobileContinuityState::WaitingApproval
-        || current.pending_approval.is_none()
+    if current.state != MobileContinuityState::WaitingApproval || current.pending_approval.is_none()
     {
         return 0;
     }
