@@ -105,6 +105,19 @@ public final class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    @Override
+    public void onRequestPermissionsResult(
+            int requestCode,
+            String[] permissions,
+            int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == MICROPHONE_PERMISSION_REQUEST
+                && grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            toggleVoice();
+        }
+    }
+
     private void restoreFromUi() {
         NtdRuntimeHost.ResumeResult result =
                 NtdSessionController.restore(this, "user_interaction");
