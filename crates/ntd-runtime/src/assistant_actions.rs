@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use ntd_core::{ActionNode, CapabilityId, SideEffectClass, TaskGraph};
 
 use crate::{
-    ActionOutput, ActionPlanState, ActionPlanStatus, ActionStatus, ActionValue, TypedAction,
+    ActionFabric, ActionFabricError, ActionOutput, ActionPlanId, ActionPlanState, ActionPlanStatus,
+    ActionStatus, ActionStepReport, ActionValue, ActionVerifier, AuthorityGrant, CognitiveTask,
+    TypedAction,
 };
 
 pub const NATIVE_ACTION_PROTOCOL_V1: &str = "NTD97_ACTIONS_V1";
@@ -287,6 +289,98 @@ Assistant:");
     Ok(out)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedAssistantActionRun {
+    pub plan_id: ActionPlanId,
+    pub reports: Vec<ActionStepReport>,
+    pub evidence: Vec<VerifiedActionEvidence>,
+    pub synthesis_prompt: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssistantActionRunError {
+    TaskGraphMismatch,
+    Fabric(ActionFabricError),
+    Incomplete(ActionPlanStatus),
+    Evidence(VerifiedActionEvidenceError),
+    MissingPlan,
+    StepLimit,
+}
+
+impl From<ActionFabricError> for AssistantActionRunError {
+    fn from(value: ActionFabricError) -> Self {
+        Self::Fabric(value)
+    }
+}
+
+impl From<VerifiedActionEvidenceError> for AssistantActionRunError {
+    fn from(value: VerifiedActionEvidenceError) -> Self {
+        Self::Evidence(value)
+    }
+}
+
+pub fn execute_verified_assistant_plan<V>(
+    fabric: &mut ActionFabric,
+    task: &CognitiveTask,
+    action_plan: &AssistantActionPlan,
+    authority: &AuthorityGrant,
+    verifier: &mut V,
+    user_message: &str,
+) -> Result<VerifiedAssistantActionRun, AssistantActionRunError>
+where
+    V: ActionVerifier,
+{
+    if task.graph.actions.is_empty() || task.graph != action_plan.graph {
+        return Err(AssistantActionRunError::TaskGraphMismatch);
+    }
+
+    let plan_id =
+        fabric.prepare_cognitive_task(task, action_plan.payloads.clone())?;
+    let mut reports = Vec::with_capacity(action_plan.graph.actions.len());
+
+    for _ in 0..action_plan.graph.actions.len() {
+        let report = fabric.execute_next(plan_id, authority, verifier)?;
+        let status = report.plan_status;
+        let action_status = report.action_status;
+        reports.push(report);
+
+        match status {
+            ActionPlanStatus::Completed => break,
+            ActionPlanStatus::Failed
+            | ActionPlanStatus::RolledBack
+            | ActionPlanStatus::Suspended => {
+                return Err(AssistantActionRunError::Incomplete(status));
+            }
+            ActionPlanStatus::Ready => {
+                if matches!(
+                    action_status,
+                    Some(ActionStatus::Retryable | ActionStatus::Suspended)
+                ) {
+                    return Err(AssistantActionRunError::Incomplete(status));
+                }
+            }
+        }
+    }
+
+    let plan = fabric
+        .state()
+        .plans
+        .get(&plan_id.0)
+        .ok_or(AssistantActionRunError::MissingPlan)?;
+    if plan.status != ActionPlanStatus::Completed {
+        return Err(AssistantActionRunError::StepLimit);
+    }
+
+    let evidence = collect_verified_action_evidence(plan)?;
+    let synthesis_prompt = build_verified_answer_prompt(user_message, &evidence)?;
+    Ok(VerifiedAssistantActionRun {
+        plan_id,
+        reports,
+        evidence,
+        synthesis_prompt,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +499,180 @@ END"
         assert!(prompt.contains("evidence: device-local"));
         assert!(prompt.ends_with("User: battery?
 Assistant:"));
+    }
+
+    struct DeviceAdapter;
+
+    impl crate::CapabilityAdapter for DeviceAdapter {
+        fn execute(
+            &mut self,
+            _action_id: crate::ActionId,
+            action: &TypedAction,
+        ) -> Result<crate::AdapterResult, String> {
+            match action {
+                TypedAction::DeviceObserve { surface } => Ok(crate::AdapterResult::Completed {
+                    output: ActionOutput {
+                        summary: format!("observed {surface}"),
+                        value: ActionValue::Fields(BTreeMap::from([
+                            ("battery".into(), "77".into()),
+                            ("charging".into(), "true".into()),
+                        ])),
+                        evidence: vec!["verified:device-local".into()],
+                    },
+                    rollback_token: None,
+                }),
+                _ => Err("unexpected action".into()),
+            }
+        }
+    }
+
+    struct AcceptVerifier;
+
+    impl ActionVerifier for AcceptVerifier {
+        fn verify(
+            &mut self,
+            _descriptor: &crate::CapabilityDescriptor,
+            _action: &TypedAction,
+            output: &ActionOutput,
+        ) -> crate::ActionVerification {
+            if output.evidence.iter().any(|item| item == "verified:device-local") {
+                crate::ActionVerification::Accept
+            } else {
+                crate::ActionVerification::Reject {
+                    reason: "missing device evidence".into(),
+                }
+            }
+        }
+    }
+
+    fn device_fabric() -> ActionFabric {
+        let mut registry = crate::CapabilityRegistry::new();
+        registry
+            .register(
+                crate::CapabilityDescriptor::new(
+                    CapabilityId("device.observe".into()),
+                    1,
+                    crate::CapabilityDomain::Device,
+                    SideEffectClass::ReadOnly,
+                )
+                .expect("descriptor"),
+            )
+            .expect("register");
+        let mut fabric = ActionFabric::new(registry);
+        fabric
+            .register_adapter(CapabilityId("device.observe".into()), DeviceAdapter)
+            .expect("adapter");
+        fabric
+    }
+
+    #[test]
+    fn governed_execution_synthesizes_only_verified_committed_results() {
+        let parsed = parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|device.observe|battery\nEND",
+        )
+        .expect("parse");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+
+        let mut cognition =
+            crate::CognitiveRuntime::new(crate::CognitiveIdentity(*b"NTD97-ACTIONRUN1"));
+        let task_id = cognition
+            .state_mut()
+            .submit_task(
+                ntd_core::Intent::new("battery status"),
+                plan.graph.clone(),
+                None,
+            )
+            .expect("task");
+        let task = cognition.state().tasks.get(&task_id).expect("task").clone();
+
+        let result = execute_verified_assistant_plan(
+            &mut device_fabric(),
+            &task,
+            &plan,
+            &AuthorityGrant::new(),
+            &mut AcceptVerifier,
+            "battery status",
+        )
+        .expect("verified run");
+
+        assert_eq!(result.evidence.len(), 1);
+        assert_eq!(result.reports.len(), 1);
+        assert!(result.synthesis_prompt.contains("observed battery"));
+        assert!(result.synthesis_prompt.contains("battery=77"));
+        assert!(result
+            .synthesis_prompt
+            .contains("evidence: verified:device-local"));
+    }
+
+    struct RetryAdapter;
+
+    impl crate::CapabilityAdapter for RetryAdapter {
+        fn execute(
+            &mut self,
+            _action_id: crate::ActionId,
+            _action: &TypedAction,
+        ) -> Result<crate::AdapterResult, String> {
+            Ok(crate::AdapterResult::Retryable {
+                reason: "not ready".into(),
+                resume_token: None,
+            })
+        }
+    }
+
+    #[test]
+    fn incomplete_action_plan_never_produces_synthesis_prompt() {
+        let parsed = parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|device.observe|battery\nEND",
+        )
+        .expect("parse");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+
+        let mut registry = crate::CapabilityRegistry::new();
+        registry
+            .register(
+                crate::CapabilityDescriptor::new(
+                    CapabilityId("device.observe".into()),
+                    1,
+                    crate::CapabilityDomain::Device,
+                    SideEffectClass::ReadOnly,
+                )
+                .expect("descriptor"),
+            )
+            .expect("register");
+        let mut fabric = ActionFabric::new(registry);
+        fabric
+            .register_adapter(CapabilityId("device.observe".into()), RetryAdapter)
+            .expect("adapter");
+
+        let mut cognition =
+            crate::CognitiveRuntime::new(crate::CognitiveIdentity(*b"NTD97-ACTIONRUN1"));
+        let task_id = cognition
+            .state_mut()
+            .submit_task(
+                ntd_core::Intent::new("battery status"),
+                plan.graph.clone(),
+                None,
+            )
+            .expect("task");
+        let task = cognition.state().tasks.get(&task_id).expect("task").clone();
+
+        assert!(matches!(
+            execute_verified_assistant_plan(
+                &mut fabric,
+                &task,
+                &plan,
+                &AuthorityGrant::new(),
+                &mut AcceptVerifier,
+                "battery status",
+            ),
+            Err(AssistantActionRunError::Incomplete(
+                ActionPlanStatus::Ready
+            ))
+        ));
     }
 
     #[test]
