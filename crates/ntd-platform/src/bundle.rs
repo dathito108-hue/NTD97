@@ -1,8 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::{
-    ApprovalRequest, ContinuityError, ContinuityPhase, PlatformContinuityState, RetryBackoff,
-    WakeReason,
+    ApprovalRequest, ContinuityPhase, PlatformContinuityState, RetryBackoff, WakeReason,
 };
 use ntd_runtime::{ActionId, ActionPlanId};
 
