@@ -75,6 +75,14 @@ public interface NtdRuntimeHost {
         return 0;
     }
 
+    default int chatReasoningBudget(long requestId) {
+        return 0;
+    }
+
+    default int chatRecalledMemoryItems(long requestId) {
+        return 0;
+    }
+
     default byte[] chatCheckpoint() {
         return new byte[0];
     }

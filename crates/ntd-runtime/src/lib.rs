@@ -25,9 +25,9 @@ pub use action_fabric::{
     AdapterResult, CapabilityAdapter, PlannedAction,
 };
 pub use assistant::{
-    decode_conversation_checkpoint, encode_conversation_checkpoint, ActiveConversationTurn,
-    ConversationStateError, SovereignConversationState, NCS97_HEADER_LEN, NCS97_MAGIC, NCS97_MAJOR,
-    NCS97_MINOR,
+    decode_conversation_checkpoint, encode_conversation_checkpoint, memory_recall_limit_for_budget,
+    ActiveConversationTurn, ConversationStateError, SovereignConversationState, NCS97_HEADER_LEN,
+    NCS97_MAGIC, NCS97_MAJOR, NCS97_MINOR,
 };
 pub use capability::{
     ActionOutput, ActionValue, AuthorityGrant, AuthorityScope, CapabilityDescriptor,
@@ -51,10 +51,10 @@ pub use executor::{
     EmptyTensorResolver, ExecutionError, GraphExecutor, TensorResolveError, TensorResolver,
 };
 pub use generation::{
-    sample_token, DistributionKind, GeneratedText, GenerationConfig, GenerationControl,
-    GenerationError, GenerationFinishReason, GenerationResult, GraphGenerator, KvCache,
-    KvCacheError, KvLayerCache, PrefixCache, SamplingError, SamplingMode,
-    StreamingGenerationResult,
+    model_inference_signals, sample_token, DistributionKind, GeneratedText, GenerationConfig,
+    GenerationControl, GenerationError, GenerationFinishReason, GenerationResult, GraphGenerator,
+    KvCache, KvCacheError, KvLayerCache, ModelInferenceSignals, PrefixCache, SamplingError,
+    SamplingMode, StreamingGenerationResult,
 };
 pub use gpt2::{Gpt2BpeConfig, Gpt2BpeTokenizer};
 pub use memory::{MemoryError, MemoryHit, MemoryKind, MemoryQuery, MemoryRecord, SovereignMemory};
@@ -76,7 +76,7 @@ pub use tokenizer::{
     TOKEN_TYPE_USER_DEFINED,
 };
 
-use ntd_core::ReasoningBudget;
+pub use ntd_core::ReasoningBudget;
 use ntd_ir::IrVersion;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

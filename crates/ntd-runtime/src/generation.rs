@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use ntd_ir::{Graph, ValueId};
 
 use crate::{
-    ExecutionError, ExecutionProvider, GraphExecutor, Tensor, TensorError, TensorResolver,
-    TextTokenizer, TokenizerError,
+    CognitiveSignals, ExecutionError, ExecutionProvider, GraphExecutor, Tensor, TensorError,
+    TensorResolver, TextTokenizer, TokenizerError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +70,36 @@ pub enum GenerationFinishReason {
 pub struct StreamingGenerationResult {
     pub generation: GenerationResult,
     pub finish_reason: GenerationFinishReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModelInferenceSignals {
+    pub normalized_entropy: f32,
+    pub top_probability: f32,
+    pub top_margin: f32,
+}
+
+impl ModelInferenceSignals {
+    pub fn cognitive_signals(
+        self,
+        prompt_tokens: usize,
+        context_limit: usize,
+        prior_failure: bool,
+    ) -> CognitiveSignals {
+        let context_pressure = if context_limit == 0 {
+            1.0
+        } else {
+            (prompt_tokens as f32 / context_limit as f32).clamp(0.0, 1.0)
+        };
+        let uncertainty = (self.normalized_entropy * 0.75
+            + (1.0 - self.top_margin).clamp(0.0, 1.0) * 0.25)
+            .clamp(0.0, 1.0);
+        CognitiveSignals {
+            complexity: context_pressure,
+            uncertainty,
+            prior_failure,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +169,34 @@ where
             distribution_output,
             vocab_size,
         })
+    }
+
+    pub fn next_distribution_with_resolver<R: TensorResolver>(
+        &self,
+        resolver: &R,
+        prompt_tokens: &[u32],
+        context_limit: usize,
+    ) -> Result<Vec<f32>, GenerationError> {
+        validate_prompt_tokens(prompt_tokens, self.vocab_size, context_limit)?;
+        let start = prompt_tokens.len().saturating_sub(context_limit);
+        let window = &prompt_tokens[start..];
+        let token_tensor = Tensor::new(
+            vec![window.len()],
+            window.iter().map(|token| *token as f32).collect(),
+        )
+        .map_err(GenerationError::Tensor)?;
+
+        let mut inputs = self.static_inputs.clone();
+        inputs.insert(self.token_input, token_tensor);
+
+        let outputs = self
+            .executor
+            .execute_with_resolver(&self.graph, inputs, resolver)
+            .map_err(GenerationError::Execution)?;
+        let output = outputs.get(self.distribution_output).ok_or(
+            GenerationError::MissingDistributionOutput(self.distribution_output),
+        )?;
+        Ok(last_distribution(output, self.vocab_size)?.to_vec())
     }
 
     pub fn generate_tokens(
@@ -406,6 +464,54 @@ where
     }
 }
 
+pub fn model_inference_signals(logits: &[f32]) -> Result<ModelInferenceSignals, SamplingError> {
+    if logits.is_empty() {
+        return Err(SamplingError::EmptyDistribution);
+    }
+    if logits.iter().any(|value| !value.is_finite()) {
+        return Err(SamplingError::NonFinite);
+    }
+
+    let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let mut weights = Vec::with_capacity(logits.len());
+    let mut total = 0.0f32;
+    for value in logits {
+        let weight = (*value - max).exp();
+        weights.push(weight);
+        total += weight;
+    }
+    if !total.is_finite() || total <= 0.0 {
+        return Err(SamplingError::ZeroMass);
+    }
+
+    let mut entropy = 0.0f32;
+    let mut top = 0.0f32;
+    let mut second = 0.0f32;
+    for weight in weights {
+        let probability = weight / total;
+        if probability > 0.0 {
+            entropy -= probability * probability.ln();
+        }
+        if probability > top {
+            second = top;
+            top = probability;
+        } else if probability > second {
+            second = probability;
+        }
+    }
+
+    let normalized_entropy = if logits.len() <= 1 {
+        0.0
+    } else {
+        (entropy / (logits.len() as f32).ln()).clamp(0.0, 1.0)
+    };
+    Ok(ModelInferenceSignals {
+        normalized_entropy,
+        top_probability: top.clamp(0.0, 1.0),
+        top_margin: (top - second).clamp(0.0, 1.0),
+    })
+}
+
 pub fn sample_token(
     values: &[f32],
     kind: DistributionKind,
@@ -478,6 +584,26 @@ pub fn sample_token(
     }
 
     fallback.ok_or(SamplingError::ZeroMass)
+}
+
+fn validate_prompt_tokens(
+    prompt_tokens: &[u32],
+    vocab_size: usize,
+    context_limit: usize,
+) -> Result<(), GenerationError> {
+    if prompt_tokens.is_empty() {
+        return Err(GenerationError::EmptyPrompt);
+    }
+    if context_limit == 0 {
+        return Err(GenerationError::InvalidContextLimit);
+    }
+    for token in prompt_tokens {
+        let id = usize::try_from(*token).map_err(|_| GenerationError::TokenIdOutOfRange(*token))?;
+        if id >= vocab_size {
+            return Err(GenerationError::TokenIdOutOfRange(*token));
+        }
+    }
+    Ok(())
 }
 
 fn last_distribution(tensor: &Tensor, vocab_size: usize) -> Result<&[f32], GenerationError> {
@@ -725,6 +851,50 @@ mod tests {
             .expect("generate");
 
         assert_eq!(result.generated_tokens, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn inference_signals_capture_confidence_and_map_to_cognition() {
+        let confident = model_inference_signals(&[12.0, 1.0, 0.0]).expect("confident");
+        let uncertain = model_inference_signals(&[1.0, 1.0, 1.0]).expect("uncertain");
+
+        assert!(confident.top_probability > uncertain.top_probability);
+        assert!(confident.top_margin > uncertain.top_margin);
+        assert!(confident.normalized_entropy < uncertain.normalized_entropy);
+
+        let signals = uncertain.cognitive_signals(90, 100, false);
+        assert!(signals.complexity >= 0.9);
+        assert!(signals.uncertainty >= 0.7);
+    }
+
+    #[test]
+    fn next_distribution_probe_uses_native_graph_without_committing_a_token() {
+        let transitions = Tensor::new(
+            vec![4, 4],
+            vec![
+                0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0,
+            ],
+        )
+        .expect("transitions");
+        let mut static_inputs = BTreeMap::new();
+        static_inputs.insert(ValueId(1), transitions);
+        let generator = GraphGenerator::new(
+            transition_graph(),
+            crate::CpuReferenceProvider,
+            static_inputs,
+            ValueId(0),
+            0,
+            4,
+        )
+        .expect("generator");
+
+        let distribution = generator
+            .next_distribution_with_resolver(&crate::EmptyTensorResolver, &[0], 4)
+            .expect("distribution");
+
+        assert_eq!(distribution.len(), 4);
+        assert!(distribution[1] > distribution[0]);
+        assert!(distribution[1] > distribution[2]);
     }
 
     #[test]
