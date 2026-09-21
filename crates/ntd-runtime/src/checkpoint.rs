@@ -2,13 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use ntd_core::{
-    ActionNode, CapabilityId, Intent, SideEffectClass, TaskGraph,
-};
+use ntd_core::{ActionNode, CapabilityId, Intent, SideEffectClass, TaskGraph};
 
 use crate::{
-    CognitiveError, CognitiveIdentity, CognitiveState, CognitiveTask, Goal, GoalStatus, LearnedDelta,
-    MemoryError, MemoryKind, MemoryRecord, SovereignMemory, TaskStatus, WorldFact,
+    CognitiveError, CognitiveIdentity, CognitiveState, CognitiveTask, Goal, GoalStatus,
+    LearnedDelta, MemoryError, MemoryKind, MemoryRecord, SovereignMemory, TaskStatus, WorldFact,
 };
 
 pub const SIK97_MAGIC: [u8; 6] = *b"SIK97\0";
@@ -46,9 +44,7 @@ impl From<MemoryError> for CheckpointError {
     }
 }
 
-pub fn encode_cognitive_checkpoint(
-    state: &CognitiveState,
-) -> Result<Vec<u8>, CheckpointError> {
+pub fn encode_cognitive_checkpoint(state: &CognitiveState) -> Result<Vec<u8>, CheckpointError> {
     crate::CognitiveRuntime::from_state(state.clone())?;
 
     let mut payload = Vec::new();
@@ -231,8 +227,8 @@ fn encode_goal(out: &mut Vec<u8>, goal: &Goal) -> Result<(), CheckpointError> {
 fn decode_goal(cursor: &mut Cursor<'_>) -> Result<Goal, CheckpointError> {
     let id = cursor.u64()?;
     let status_raw = cursor.u8()?;
-    let status =
-        GoalStatus::try_from(status_raw).map_err(|_| CheckpointError::InvalidGoalStatus(status_raw))?;
+    let status = GoalStatus::try_from(status_raw)
+        .map_err(|_| CheckpointError::InvalidGoalStatus(status_raw))?;
     let created_tick = cursor.u64()?;
     let updated_tick = cursor.u64()?;
     let objective = cursor.string()?;
@@ -273,8 +269,8 @@ fn decode_task(cursor: &mut Cursor<'_>) -> Result<CognitiveTask, CheckpointError
     let raw_goal = cursor.u64()?;
     let goal_id = (raw_goal != 0).then_some(raw_goal);
     let status_raw = cursor.u8()?;
-    let status =
-        TaskStatus::try_from(status_raw).map_err(|_| CheckpointError::InvalidTaskStatus(status_raw))?;
+    let status = TaskStatus::try_from(status_raw)
+        .map_err(|_| CheckpointError::InvalidTaskStatus(status_raw))?;
     let steps_taken = cursor.u32()?;
     let verification_failures = cursor.u32()?;
     let created_tick = cursor.u64()?;
@@ -287,9 +283,8 @@ fn decode_task(cursor: &mut Cursor<'_>) -> Result<CognitiveTask, CheckpointError
     };
 
     let action_count = cursor.u32()?;
-    let mut actions = Vec::with_capacity(
-        usize::try_from(action_count).map_err(|_| CheckpointError::Overflow)?,
-    );
+    let mut actions =
+        Vec::with_capacity(usize::try_from(action_count).map_err(|_| CheckpointError::Overflow)?);
     for _ in 0..action_count {
         actions.push(decode_action(cursor)?);
     }
@@ -349,10 +344,7 @@ fn decode_world_fact(cursor: &mut Cursor<'_>) -> Result<WorldFact, CheckpointErr
     })
 }
 
-fn encode_memory_record(
-    out: &mut Vec<u8>,
-    record: &MemoryRecord,
-) -> Result<(), CheckpointError> {
+fn encode_memory_record(out: &mut Vec<u8>, record: &MemoryRecord) -> Result<(), CheckpointError> {
     push_u64(out, record.id);
     push_u8(out, record.kind as u8);
     push_u16(out, record.importance);
@@ -366,8 +358,8 @@ fn encode_memory_record(
 fn decode_memory_record(cursor: &mut Cursor<'_>) -> Result<MemoryRecord, CheckpointError> {
     let id = cursor.u64()?;
     let kind_raw = cursor.u8()?;
-    let kind = MemoryKind::try_from(kind_raw)
-        .map_err(|_| CheckpointError::InvalidMemoryKind(kind_raw))?;
+    let kind =
+        MemoryKind::try_from(kind_raw).map_err(|_| CheckpointError::InvalidMemoryKind(kind_raw))?;
     let importance = cursor.u16()?;
     let created_tick = cursor.u64()?;
     let last_recalled_tick = cursor.u64()?;
@@ -444,10 +436,7 @@ fn len_u32(value: usize) -> Result<u32, CheckpointError> {
     u32::try_from(value).map_err(|_| CheckpointError::Overflow)
 }
 
-fn push_optional_string(
-    out: &mut Vec<u8>,
-    value: Option<&str>,
-) -> Result<(), CheckpointError> {
+fn push_optional_string(out: &mut Vec<u8>, value: Option<&str>) -> Result<(), CheckpointError> {
     match value {
         Some(value) => {
             push_u8(out, 1);
