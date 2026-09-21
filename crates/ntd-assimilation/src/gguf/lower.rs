@@ -3,15 +3,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ntd_capsule::{
-    encode_native_tensor, encode_native_tokenizer, encode_tensor_descriptors, NativeTensor,
-    NativeTokenizerDescriptor, NativeTokenizerModel, QuantizationMetadata, SectionKind,
-    TensorDescriptor,
+    encode_native_tensor, encode_native_tokenizer, encode_tensor_descriptors,
+    NativeGpt2PreTokenizer, NativeTensor, NativeTokenizerDescriptor, NativeTokenizerModel,
+    QuantizationMetadata, SectionKind, TensorDescriptor,
 };
 use ntd_ir::{
     DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
 };
 
-use super::{llama_spm_blocker, transcode_tensor, GgufError, GgufModel, GgufTensorInfo, GgufValue};
+use super::{
+    gpt2_bpe_semantics, llama_spm_blocker, transcode_tensor, GgufError, GgufGpt2PreTokenizer,
+    GgufModel, GgufTensorInfo, GgufTokenizer, GgufValue,
+};
 use crate::{NativeCandidate, NativeSection, RegressionCase, RegressionProbe};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,49 +58,7 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
     }
 
     let config = LlamaConfig::from_model(model)?;
-    let source_tokenizer = model.tokenizer()?;
-    if source_tokenizer.model != "llama" {
-        return Err(GgufError::UnsupportedModelFeature(format!(
-            "tokenizer model '{}' requires a native source-equivalent tokenizer implementation",
-            source_tokenizer.model
-        )));
-    }
-    if let Some(blocker) = llama_spm_blocker(&source_tokenizer) {
-        return Err(GgufError::UnsupportedModelFeature(blocker));
-    }
-
-    let score_bits = source_tokenizer
-        .scores
-        .ok_or_else(|| GgufError::UnsupportedModelFeature("missing LLaMA tokenizer scores".into()))?
-        .into_iter()
-        .map(f32::to_bits)
-        .collect::<Vec<_>>();
-    let token_types = source_tokenizer.token_types.ok_or_else(|| {
-        GgufError::UnsupportedModelFeature("missing LLaMA tokenizer token types".into())
-    })?;
-    let add_space_prefix = source_tokenizer.add_space_prefix.ok_or_else(|| {
-        GgufError::UnsupportedModelFeature("missing LLaMA add-space-prefix policy".into())
-    })?;
-    let add_bos_token = source_tokenizer
-        .add_bos_token
-        .ok_or_else(|| GgufError::UnsupportedModelFeature("missing LLaMA add-BOS policy".into()))?;
-    let add_eos_token = source_tokenizer
-        .add_eos_token
-        .ok_or_else(|| GgufError::UnsupportedModelFeature("missing LLaMA add-EOS policy".into()))?;
-
-    let tokenizer = NativeTokenizerDescriptor {
-        tokens: source_tokenizer.tokens,
-        bos_token: source_tokenizer.bos_token,
-        eos_token: source_tokenizer.eos_token,
-        unknown_token: source_tokenizer.unknown_token,
-        model: NativeTokenizerModel::LlamaSpm {
-            score_bits,
-            token_types,
-            add_space_prefix,
-            add_bos_token,
-            add_eos_token,
-        },
-    };
+    let tokenizer = lower_native_tokenizer(model.tokenizer()?)?;
     encode_native_tokenizer(&tokenizer)
         .map_err(|error| GgufError::NativeLowering(format!("tokenizer: {error:?}")))?;
     let vocabulary_size = tokenizer.tokens.len();
@@ -313,6 +274,76 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
         distribution_output: 0,
         vocabulary_size,
         bindings: builder.bindings,
+    })
+}
+
+fn lower_native_tokenizer(
+    source: GgufTokenizer,
+) -> Result<NativeTokenizerDescriptor, GgufError> {
+    let model = match source.model.as_str() {
+        "llama" => {
+            if let Some(blocker) = llama_spm_blocker(&source) {
+                return Err(GgufError::UnsupportedModelFeature(blocker));
+            }
+            let score_bits = source
+                .scores
+                .clone()
+                .ok_or_else(|| {
+                    GgufError::UnsupportedModelFeature("missing LLaMA tokenizer scores".into())
+                })?
+                .into_iter()
+                .map(f32::to_bits)
+                .collect::<Vec<_>>();
+            let token_types = source.token_types.clone().ok_or_else(|| {
+                GgufError::UnsupportedModelFeature("missing LLaMA tokenizer token types".into())
+            })?;
+            NativeTokenizerModel::LlamaSpm {
+                score_bits,
+                token_types,
+                add_space_prefix: source.add_space_prefix.ok_or_else(|| {
+                    GgufError::UnsupportedModelFeature(
+                        "missing LLaMA add-space-prefix policy".into(),
+                    )
+                })?,
+                add_bos_token: source.add_bos_token.ok_or_else(|| {
+                    GgufError::UnsupportedModelFeature("missing LLaMA add-BOS policy".into())
+                })?,
+                add_eos_token: source.add_eos_token.ok_or_else(|| {
+                    GgufError::UnsupportedModelFeature("missing LLaMA add-EOS policy".into())
+                })?,
+            }
+        }
+        "gpt2" => {
+            let semantics =
+                gpt2_bpe_semantics(&source).map_err(GgufError::UnsupportedModelFeature)?;
+            let token_types = source.token_types.clone().ok_or_else(|| {
+                GgufError::UnsupportedModelFeature("missing GPT-2 token types".into())
+            })?;
+            NativeTokenizerModel::Gpt2Bpe {
+                token_types,
+                merges: source.merges.clone(),
+                pre_tokenizer: match semantics.pre_tokenizer {
+                    GgufGpt2PreTokenizer::Gpt2 => NativeGpt2PreTokenizer::Gpt2,
+                    GgufGpt2PreTokenizer::Llama3 => NativeGpt2PreTokenizer::Llama3,
+                },
+                add_bos_token: semantics.add_bos_token,
+                add_eos_token: semantics.add_eos_token,
+                ignore_merges: semantics.ignore_merges,
+            }
+        }
+        other => {
+            return Err(GgufError::UnsupportedModelFeature(format!(
+                "tokenizer model '{other}' requires a native source-equivalent tokenizer implementation"
+            )));
+        }
+    };
+
+    Ok(NativeTokenizerDescriptor {
+        tokens: source.tokens,
+        bos_token: source.bos_token,
+        eos_token: source.eos_token,
+        unknown_token: source.unknown_token,
+        model,
     })
 }
 
