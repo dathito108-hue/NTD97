@@ -221,10 +221,7 @@ fn preserves_sentencepiece_semantic_metadata_for_native_lowering() {
     assert_eq!(tokenizer.add_eos_token, Some(false));
 
     let plan = GgufConversionPlan::from_model(&model).expect("plan");
-    assert!(!plan
-        .blockers
-        .iter()
-        .any(|item| item.contains("tokenizer")));
+    assert!(!plan.blockers.iter().any(|item| item.contains("tokenizer")));
 }
 
 #[test]
