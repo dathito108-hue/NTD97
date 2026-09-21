@@ -108,7 +108,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             APK="platform/android/app/build/outputs/apk/debug/app-debug.apk"
             PACKAGE="ai.ntd97.mobile"
 
