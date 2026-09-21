@@ -319,6 +319,8 @@ Current implementation:
 - native tokenizer section, tensor descriptor table and NTP97 tensor shard emission;
 - canonical generative manifest carrying token-input, distribution-output and vocabulary bootstrap metadata;
 - preservation and validation of GGUF tokenizer semantic metadata;
+- resolved canonical LLaMA/SPM policy semantics for omitted optional GGUF flags, with explicit metadata overrides and CLI-visible provenance;
+- pinned `stories260K.gguf` real-model reference profile for the first M11 equivalence target;
 - native LLaMA-style SentencePiece execution carried through GGUF -> NCC97 v0.2 -> runtime, including score-ordered merges, U+2581 space normalization, byte fallback and source add-space/BOS/EOS policy;
 - native canonical GPT-2 Unicode pre-tokenization + byte-level ranked BPE carried through GGUF -> NCC97 v0.3 -> runtime;
 - file-backed bounded GGUF source reads, streamed content-addressed tensor staging and signed Thin NCC97 packaging;
