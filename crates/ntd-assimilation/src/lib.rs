@@ -21,9 +21,9 @@ pub use gguf::{
     tensor_disposition, transcode_tensor, transcode_tensor_from_source, FileGgufSource,
     FileTensorShardStore, GgufByteSource, GgufConversionPlan, GgufError, GgufModel,
     GgufTensorDisposition, GgufTensorInfo, GgufTokenizer, GgufValue, GgufValueType, LlamaConfig,
-    LlamaTensorBinding, LoweredLlamaModel, SliceGgufSource, StreamedLoweredLlamaModel,
-    TensorShardRef, TensorShardSink, TranscodedTensor, GGUF_DEFAULT_ALIGNMENT, GGUF_MAGIC,
-    GGUF_VERSION,
+    LlamaSpmPolicy, LlamaTensorBinding, LoweredLlamaModel, SliceGgufSource,
+    StreamedLoweredLlamaModel, TensorShardRef, TensorShardSink, TranscodedTensor,
+    GGUF_DEFAULT_ALIGNMENT, GGUF_MAGIC, GGUF_VERSION,
 };
 pub use importer::{ImporterRegistry, SourceImporter};
 pub use package::{

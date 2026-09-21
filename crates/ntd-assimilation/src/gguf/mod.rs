@@ -192,6 +192,30 @@ pub struct GgufTokenizer {
     pub unknown_token: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LlamaSpmPolicy {
+    pub add_space_prefix: bool,
+    pub add_bos_token: bool,
+    pub add_eos_token: bool,
+    pub inherited_defaults: bool,
+}
+
+impl GgufTokenizer {
+    pub fn resolved_llama_spm_policy(&self) -> Option<LlamaSpmPolicy> {
+        if self.model != "llama" {
+            return None;
+        }
+        Some(LlamaSpmPolicy {
+            add_space_prefix: self.add_space_prefix.unwrap_or(true),
+            add_bos_token: self.add_bos_token.unwrap_or(true),
+            add_eos_token: self.add_eos_token.unwrap_or(false),
+            inherited_defaults: self.add_space_prefix.is_none()
+                || self.add_bos_token.is_none()
+                || self.add_eos_token.is_none(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct GgufModel {
     pub version: u32,
@@ -368,14 +392,6 @@ fn llama_spm_blocker(tokenizer: &GgufTokenizer) -> Option<String> {
             "llama tokenizer pre-tokenizer '{}' is not supported by native SPM execution",
             tokenizer.pre_tokenizer.as_deref().unwrap_or_default()
         ));
-    }
-    if tokenizer.add_space_prefix.is_none()
-        || tokenizer.add_bos_token.is_none()
-        || tokenizer.add_eos_token.is_none()
-    {
-        return Some(
-            "llama tokenizer is missing explicit add-space-prefix/BOS/EOS policy metadata".into(),
-        );
     }
     if tokenizer.remove_extra_whitespaces == Some(true)
         || tokenizer.normalizer_lowercase == Some(true)

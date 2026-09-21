@@ -9,9 +9,9 @@ use ntd_assimilation::{
     lower_llama_model, lower_llama_model_from_source, lower_llama_model_to_shards,
     lowered_llama_candidate, streamed_llama_thin_capsule, verify_native_package,
     verify_native_package_with_shards, AssimilationIdentity, FileBackedTensorResolver,
-    FileTensorShardStore, ForgeSandbox, GgufByteSource, GgufError, GgufModel, GgufValueType,
-    LicenseRecord, NativeAssetStore, NativeValidationSandbox, SliceGgufSource, SourcePackage,
-    StreamedPackageSpec, GGUF_MAGIC, GGUF_VERSION,
+    FileTensorShardStore, ForgeSandbox, GgufByteSource, GgufConversionPlan, GgufError, GgufModel,
+    GgufValueType, LicenseRecord, NativeAssetStore, NativeValidationSandbox, SliceGgufSource,
+    SourcePackage, StreamedPackageSpec, GGUF_MAGIC, GGUF_VERSION,
 };
 use ntd_capsule::{
     load_native_generative_program, CapsuleKind, CapsuleView, MemoryContentStore,
@@ -780,6 +780,79 @@ fn canonical_gpt2_lowers_packages_and_executes_native_tokenizer() {
 
     assert_eq!(runtime.encode("ab!", false).expect("encode"), vec![256, 33]);
     assert_eq!(runtime.decode(&[256, 33], false).expect("decode"), "ab!");
+}
+
+#[test]
+fn llama_spm_omitted_policy_metadata_inherits_canonical_source_defaults() {
+    let bytes = fixture();
+    let mut model = GgufModel::parse(&bytes).expect("parse");
+    model.metadata.remove("tokenizer.ggml.add_space_prefix");
+    model.metadata.remove("tokenizer.ggml.add_bos_token");
+    model.metadata.remove("tokenizer.ggml.add_eos_token");
+
+    let source_tokenizer = model.tokenizer().expect("tokenizer");
+    let policy = source_tokenizer
+        .resolved_llama_spm_policy()
+        .expect("resolved llama policy");
+    assert!(policy.inherited_defaults);
+    assert!(policy.add_space_prefix);
+    assert!(policy.add_bos_token);
+    assert!(!policy.add_eos_token);
+
+    let plan = GgufConversionPlan::from_model(&model).expect("conversion plan");
+    assert_eq!(plan.unsupported_tensor_count, 0);
+    assert_eq!(
+        plan.blockers,
+        vec![
+            "representative real-model source-vs-NIR97 semantic equivalence is required before activation"
+                .to_owned()
+        ]
+    );
+
+    let lowered = lower_llama_model(&bytes, &model).expect("lower with source defaults");
+    let NativeTokenizerModel::LlamaSpm {
+        add_space_prefix,
+        add_bos_token,
+        add_eos_token,
+        ..
+    } = lowered.tokenizer.model
+    else {
+        panic!("expected native LLaMA SPM tokenizer");
+    };
+
+    assert!(add_space_prefix);
+    assert!(add_bos_token);
+    assert!(!add_eos_token);
+}
+
+#[test]
+fn llama_spm_explicit_policy_metadata_overrides_source_defaults() {
+    let bytes = fixture();
+    let model = GgufModel::parse(&bytes).expect("parse");
+    let source_tokenizer = model.tokenizer().expect("tokenizer");
+    let policy = source_tokenizer
+        .resolved_llama_spm_policy()
+        .expect("resolved llama policy");
+    assert!(!policy.inherited_defaults);
+    assert!(!policy.add_space_prefix);
+    assert!(!policy.add_bos_token);
+    assert!(!policy.add_eos_token);
+
+    let lowered = lower_llama_model(&bytes, &model).expect("lower");
+
+    let NativeTokenizerModel::LlamaSpm {
+        add_space_prefix,
+        add_bos_token,
+        add_eos_token,
+        ..
+    } = lowered.tokenizer.model
+    else {
+        panic!("expected native LLaMA SPM tokenizer");
+    };
+
+    assert!(!add_space_prefix);
+    assert!(!add_bos_token);
+    assert!(!add_eos_token);
 }
 
 #[test]

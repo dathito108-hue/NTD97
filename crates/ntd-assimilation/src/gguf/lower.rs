@@ -144,6 +144,13 @@ fn lower_llama_model_internal(
                 return Err(GgufError::UnsupportedModelFeature(blocker));
             }
 
+            let policy = source_tokenizer
+                .resolved_llama_spm_policy()
+                .ok_or_else(|| {
+                    GgufError::UnsupportedModelFeature(
+                        "LLaMA SPM policy requested for non-LLaMA tokenizer".into(),
+                    )
+                })?;
             let score_bits = source_tokenizer
                 .scores
                 .ok_or_else(|| {
@@ -155,15 +162,9 @@ fn lower_llama_model_internal(
             let token_types = source_tokenizer.token_types.ok_or_else(|| {
                 GgufError::UnsupportedModelFeature("missing LLaMA tokenizer token types".into())
             })?;
-            let add_space_prefix = source_tokenizer.add_space_prefix.ok_or_else(|| {
-                GgufError::UnsupportedModelFeature("missing LLaMA add-space-prefix policy".into())
-            })?;
-            let add_bos_token = source_tokenizer.add_bos_token.ok_or_else(|| {
-                GgufError::UnsupportedModelFeature("missing LLaMA add-BOS policy".into())
-            })?;
-            let add_eos_token = source_tokenizer.add_eos_token.ok_or_else(|| {
-                GgufError::UnsupportedModelFeature("missing LLaMA add-EOS policy".into())
-            })?;
+            let add_space_prefix = policy.add_space_prefix;
+            let add_bos_token = policy.add_bos_token;
+            let add_eos_token = policy.add_eos_token;
 
             NativeTokenizerDescriptor {
                 tokens: source_tokenizer.tokens,
