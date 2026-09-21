@@ -345,3 +345,91 @@ fn f16_to_f32(bits: u16) -> f32 {
     };
     f32::from_bits(value_bits)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    fn model_for(bytes: &[u8], tensor: GgufTensorInfo) -> GgufModel {
+        GgufModel {
+            version: 3,
+            alignment: 32,
+            metadata: BTreeMap::new(),
+            tensors: vec![tensor],
+            data_offset: 0,
+            file_len: bytes.len() as u64,
+        }
+    }
+
+    fn f32_payload(values: &[f32]) -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect()
+    }
+
+    fn decode_f32(bytes: &[u8]) -> Vec<f32> {
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
+    }
+
+    #[test]
+    fn linear_weight_transpose_matches_runtime_matmul_layout() {
+        let bytes = f32_payload(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let tensor = GgufTensorInfo {
+            name: "linear.weight".into(),
+            dimensions: vec![2, 3],
+            ggml_type: GGML_TYPE_F32,
+            data_offset: 0,
+        };
+        let model = model_for(&bytes, tensor.clone());
+
+        let native = transcode_tensor(&bytes, &model, &tensor, true).expect("transcode");
+        assert_eq!(native.dtype, DType::F32);
+        assert_eq!(native.shape, vec![2, 3]);
+        assert_eq!(
+            decode_f32(&native.payload),
+            vec![1.0, 3.0, 5.0, 2.0, 4.0, 6.0]
+        );
+    }
+
+    #[test]
+    fn q4_0_is_dequantized_into_native_f32() {
+        let mut bytes = vec![0x00, 0x3c];
+        bytes.extend(std::iter::repeat_n(0x98u8, 16));
+        let tensor = GgufTensorInfo {
+            name: "q4.weight".into(),
+            dimensions: vec![32],
+            ggml_type: GGML_TYPE_Q4_0,
+            data_offset: 0,
+        };
+        let model = model_for(&bytes, tensor.clone());
+
+        let native = transcode_tensor(&bytes, &model, &tensor, false).expect("transcode");
+        assert_eq!(native.dtype, DType::F32);
+        assert_eq!(native.shape, vec![32]);
+        let values = decode_f32(&native.payload);
+        assert_eq!(&values[..16], &[0.0; 16]);
+        assert_eq!(&values[16..], &[1.0; 16]);
+    }
+
+    #[test]
+    fn tensor_slice_fails_closed_when_payload_is_truncated() {
+        let bytes = f32_payload(&[1.0, 2.0, 3.0]);
+        let tensor = GgufTensorInfo {
+            name: "broken.weight".into(),
+            dimensions: vec![2, 2],
+            ggml_type: GGML_TYPE_F32,
+            data_offset: 0,
+        };
+        let model = model_for(&bytes, tensor.clone());
+        assert_eq!(
+            gguf_tensor_bytes(&bytes, &model, &tensor),
+            Err(GgufError::Truncated)
+        );
+    }
+}
