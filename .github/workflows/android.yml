@@ -53,18 +53,28 @@ jobs:
           toolchain: 1.80.1
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk --version 3.5.7 --locked
-
       - name: Build native NTD97 runtime bridge
         run: |
-          cargo ndk \
-            -t arm64-v8a \
-            -t armeabi-v7a \
-            -t x86_64 \
-            -p 26 \
-            -o platform/android/app/src/main/jniLibs \
-            build --release -p ntd-android-bridge
+          NDK_BIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${NDK_BIN}/aarch64-linux-android26-clang"
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="${NDK_BIN}/armv7a-linux-androideabi26-clang"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="${NDK_BIN}/x86_64-linux-android26-clang"
+
+          cargo build --release -p ntd-android-bridge --target aarch64-linux-android
+          cargo build --release -p ntd-android-bridge --target armv7-linux-androideabi
+          cargo build --release -p ntd-android-bridge --target x86_64-linux-android
+
+          mkdir -p \
+            platform/android/app/src/main/jniLibs/arm64-v8a \
+            platform/android/app/src/main/jniLibs/armeabi-v7a \
+            platform/android/app/src/main/jniLibs/x86_64
+
+          cp target/aarch64-linux-android/release/libntd97_android.so \
+            platform/android/app/src/main/jniLibs/arm64-v8a/
+          cp target/armv7-linux-androideabi/release/libntd97_android.so \
+            platform/android/app/src/main/jniLibs/armeabi-v7a/
+          cp target/x86_64-linux-android/release/libntd97_android.so \
+            platform/android/app/src/main/jniLibs/x86_64/
 
       - uses: gradle/actions/setup-gradle@v4
         with:
