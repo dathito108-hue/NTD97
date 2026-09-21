@@ -9,6 +9,7 @@ members = [
     "crates/ntd-android-bridge",
     "crates/ntd-pc-fabric",
     "crates/ntd-assimilation",
+    "crates/ntd-portability",
 ]
 
 [workspace.package]
