@@ -42,6 +42,14 @@ public final class NtdPhysicalEvidenceActivity extends Activity {
         byte[] encoded = new byte[0];
         String summary;
         try {
+            if (isProbablyEmulator()) {
+                writeFile(
+                        SUMMARY_FILE,
+                        "status=emulator-rejected\n".getBytes(StandardCharsets.UTF_8));
+                runOnUiThread(this::finish);
+                return;
+            }
+
             long totalRamBytes = totalRamBytes();
             String profile = profileForRam(totalRamBytes);
             String fingerprintHash = sha256Hex(Build.FINGERPRINT);
@@ -124,6 +132,28 @@ public final class NtdPhysicalEvidenceActivity extends Activity {
         }
         writeFile(SUMMARY_FILE, summary.getBytes(StandardCharsets.UTF_8));
         runOnUiThread(this::finish);
+    }
+
+    private static boolean isProbablyEmulator() {
+        String fingerprint = Build.FINGERPRINT == null ? "" : Build.FINGERPRINT.toLowerCase();
+        String model = Build.MODEL == null ? "" : Build.MODEL.toLowerCase();
+        String manufacturer =
+                Build.MANUFACTURER == null ? "" : Build.MANUFACTURER.toLowerCase();
+        String brand = Build.BRAND == null ? "" : Build.BRAND.toLowerCase();
+        String device = Build.DEVICE == null ? "" : Build.DEVICE.toLowerCase();
+        String product = Build.PRODUCT == null ? "" : Build.PRODUCT.toLowerCase();
+
+        return fingerprint.startsWith("generic")
+                || fingerprint.startsWith("unknown")
+                || model.contains("google_sdk")
+                || model.contains("emulator")
+                || model.contains("android sdk built for")
+                || manufacturer.contains("genymotion")
+                || (brand.startsWith("generic") && device.startsWith("generic"))
+                || product.contains("sdk_gphone")
+                || product.contains("google_sdk")
+                || product.contains("emulator")
+                || product.contains("simulator");
     }
 
     private long totalRamBytes() {
