@@ -8,12 +8,33 @@ use crate::{
     DescriptorFrameKind, Digest, NativeProgram, NativeTensorError, SectionKind,
 };
 
-pub const NATIVE_TOKENIZER_FORMAT: &str = "ntd97.tokenizer.vocab.v1";
+pub const NATIVE_TOKENIZER_FORMAT: &str = "ntd97.tokenizer.v2";
+pub const LEGACY_NATIVE_TOKENIZER_FORMAT: &str = "ntd97.tokenizer.vocab.v1";
 pub const NATIVE_TOKENIZER_MAGIC: [u8; 6] = *b"NTK97\0";
 pub const NATIVE_TOKENIZER_HEADER_LEN: usize = 32;
 pub const NATIVE_TOKENIZER_MAJOR: u16 = 0;
-pub const NATIVE_TOKENIZER_MINOR: u16 = 1;
+pub const NATIVE_TOKENIZER_MINOR: u16 = 2;
 pub const NO_SPECIAL_TOKEN: u32 = u32::MAX;
+
+const TOKENIZER_MODEL_VOCABULARY: u32 = 0;
+const TOKENIZER_MODEL_LLAMA_SPM: u32 = 1;
+const TOKENIZER_FLAG_ADD_SPACE_PREFIX: u32 = 1 << 0;
+const TOKENIZER_FLAG_ADD_BOS: u32 = 1 << 1;
+const TOKENIZER_FLAG_ADD_EOS: u32 = 1 << 2;
+const TOKENIZER_KNOWN_FLAGS: u32 =
+    TOKENIZER_FLAG_ADD_SPACE_PREFIX | TOKENIZER_FLAG_ADD_BOS | TOKENIZER_FLAG_ADD_EOS;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativeTokenizerModel {
+    Vocabulary,
+    LlamaSpm {
+        score_bits: Vec<u32>,
+        token_types: Vec<i32>,
+        add_space_prefix: bool,
+        add_bos_token: bool,
+        add_eos_token: bool,
+    },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeTokenizerDescriptor {
@@ -21,6 +42,7 @@ pub struct NativeTokenizerDescriptor {
     pub bos_token: Option<u32>,
     pub eos_token: Option<u32>,
     pub unknown_token: Option<u32>,
+    pub model: NativeTokenizerModel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +64,11 @@ pub enum NativeTokenizerError {
     EmptyToken(u32),
     DuplicateToken { first: u32, second: u32 },
     InvalidSpecialToken(u32),
+    InvalidTokenizerModel(u32),
+    InvalidScoreCount { expected: usize, actual: usize },
+    InvalidTokenTypeCount { expected: usize, actual: usize },
+    InvalidTokenType { token: u32, token_type: i32 },
+    NonFiniteScore(u32),
     NonCanonicalEncoding,
     Overflow,
 }
