@@ -167,16 +167,32 @@ Delivered contract:
 
 Acceptance result: Rust `fmt -> clippy -D warnings -> workspace tests` PASS and Android build/lifecycle gate PASS. UI exit, process death and reboot preserve the logical task/continuity contract through platform-approved mechanisms. Broader Android-version and representative-device soak/matrix validation remains part of M10 performance/general-agent validation.
 
-## M7 — Major Block G: Paired PC Fabric
+## M7 — Major Block G: Paired PC Fabric — complete
 
-- mutual authentication;
-- encrypted sessions;
-- typed remote capabilities;
-- artifact transfer;
-- desktop observation/execution agent;
-- returned-result verification.
+Goal: let phone-owned NTD97 delegate governed work to a trusted computer without moving cognition, memory or identity off the phone.
 
-Exit: the phone can delegate a typed task to a trusted PC without making the PC part of NTD97's identity.
+Delivered contract:
+
+- additive `Pc` capability domain and typed PC observe/execute/artifact actions;
+- TAF97 0.2 persistence for paired-PC actions and MCS97 0.2 compatibility;
+- pinned Ed25519 peer identities;
+- mutually authenticated X25519 session establishment;
+- HKDF-derived directional session keys;
+- ChaCha20-Poly1305 encrypted PCF97 frames with strict replay sequencing;
+- canonical capability, request, result and artifact wire messages;
+- request/result digest binding and returned-result verification;
+- SHA-256 verified chunked artifact transfer;
+- governed system observation, process execution and file artifact handlers;
+- execution program allowlists, working-root policy and artifact-root/write/size policy;
+- stable ActionId idempotency preventing remote side-effect replay;
+- ActionFabric-compatible `PairedPcAdapter`;
+- bounded length-prefixed TCP frame transport;
+- Rust 1.80-compatible pinned crypto dependency graph;
+- regression tests for unpaired identity rejection, encrypted-frame replay, artifact tampering, policy denial, result/request mismatch and TAF97 PC-action restore.
+
+Acceptance result: Rust `fmt -> clippy -D warnings -> workspace tests` PASS and Android build/lifecycle regression PASS. The phone can delegate typed work to an authenticated PC capability node while NTD97 identity, cognition and sovereign memory remain phone-owned.
+
+Exit: complete.
 
 ## M8 — Major Block H: Capability Forge + Native Assimilation
 

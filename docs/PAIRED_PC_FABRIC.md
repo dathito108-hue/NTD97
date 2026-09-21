@@ -1,0 +1,60 @@
+# Paired PC Fabric — PCF97
+
+Major Block G extends NTD97 with trusted-computer capabilities while preserving the architecture freeze: the phone remains the owner of NTD97 identity, cognition, memory and task state. A paired PC is an execution/observation capability node, not a second intelligence backend.
+
+## Boundaries
+
+- no hosted AI backend or cloud fallback;
+- no cognition or sovereign-memory migration to the PC;
+- every remote operation remains a typed NTD97 action;
+- ActionFabric authority and verification remain the governing phone-side contract;
+- remote side effects retain stable ActionId identity across retries.
+
+## Pairing and secure session
+
+The fabric pins Ed25519 peer identities and establishes mutually authenticated X25519 sessions. Directional traffic keys are derived with HKDF and PCF97 frames are protected with ChaCha20-Poly1305. Session sequencing rejects replayed encrypted frames and pairing rejects an identity that does not match the pinned peer record.
+
+## Typed protocol
+
+PCF97 carries canonical messages for:
+
+- remote capability discovery;
+- typed action requests;
+- typed action results;
+- artifact descriptors, pulls and chunks.
+
+Requests include a canonical digest. Results bind request identity, capability/version and request digest, then carry their own result digest. Phone-side verification rejects a result bound to a different request.
+
+## Desktop capability agent
+
+The desktop agent exposes installed handlers through explicit capability descriptors. The current canonical handlers cover:
+
+- system observation;
+- governed process execution;
+- governed artifact read;
+- governed artifact write.
+
+Execution policy constrains allowed programs, working roots and captured output size. Artifact policy constrains allowed roots, write permission and maximum byte size. Requests outside policy fail closed.
+
+## Artifact integrity
+
+Large returned artifacts use deterministic descriptors and chunk transfer. The receiver enforces transfer identity/offset sequencing and validates the final SHA-256 digest before materializing bytes as an NTD97 action result.
+
+## Continuity and idempotency
+
+TAF97 minor version 0.2 serializes the additive PC action variants. MCS97 minor version 0.2 accepts the updated action checkpoint. Stable ActionId request IDs let the desktop agent cache completed requests so a retry/cold continuation does not replay a committed remote side effect.
+
+## Acceptance
+
+The block is covered by regression tests for:
+
+- mutual authentication and rejection of an unpaired identity;
+- encrypted-frame replay rejection;
+- canonical request/result encoding;
+- result/request mismatch rejection;
+- chunked artifact integrity and tamper rejection;
+- desktop policy denial for unallowlisted execution and path escape;
+- stable ActionId remote-side-effect idempotency;
+- TAF97 paired-PC action checkpoint round-trip.
+
+Canonical Rust verification and the Android native/APK/lifecycle regression gate both passed before merge.
