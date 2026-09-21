@@ -44,6 +44,21 @@ fn main() {
         plan.model_name.as_deref().unwrap_or("<unnamed>")
     );
     println!("tokenizer={}", plan.tokenizer_model);
+    if let Ok(tokenizer) = model.tokenizer() {
+        if let Some(policy) = tokenizer.resolved_llama_spm_policy() {
+            println!("tokenizer_add_space_prefix={}", policy.add_space_prefix);
+            println!("tokenizer_add_bos_token={}", policy.add_bos_token);
+            println!("tokenizer_add_eos_token={}", policy.add_eos_token);
+            println!(
+                "tokenizer_policy_source={}",
+                if policy.inherited_defaults {
+                    "canonical-llama-spm-defaults"
+                } else {
+                    "explicit-gguf-metadata"
+                }
+            );
+        }
+    }
     println!("vocabulary_size={}", plan.vocabulary_size);
     println!("tensor_count={}", plan.tensor_count);
     println!("direct_tensor_count={}", plan.direct_tensor_count);
