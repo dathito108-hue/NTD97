@@ -565,6 +565,7 @@ impl AdaptiveExecutionProvider {
                 &right_profile,
                 op,
                 &self.autotune,
+                self.snapshot.latency_budget_ms,
                 self.policy.prefer_low_power,
             )
         });
@@ -652,15 +653,22 @@ fn compare_provider(
     right: &ProviderProfile,
     op: TensorOp,
     autotune: &AutotuneTable,
+    latency_budget_ms: u32,
     prefer_low_power: bool,
 ) -> Ordering {
     let left_latency = autotune.latency_nanos(left.kind, op);
     let right_latency = autotune.latency_nanos(right.kind, op);
+    let budget_nanos = u64::from(latency_budget_ms).saturating_mul(1_000_000);
 
     match (left_latency, right_latency) {
-        (Some(left_ns), Some(right_ns)) => left_ns
-            .cmp(&right_ns)
-            .then_with(|| left.priority.cmp(&right.priority)),
+        (Some(left_ns), Some(right_ns)) => {
+            let left_misses_budget = latency_budget_ms > 0 && left_ns > budget_nanos;
+            let right_misses_budget = latency_budget_ms > 0 && right_ns > budget_nanos;
+            left_misses_budget
+                .cmp(&right_misses_budget)
+                .then_with(|| left_ns.cmp(&right_ns))
+                .then_with(|| left.priority.cmp(&right.priority))
+        }
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
         (None, None) if prefer_low_power => left
