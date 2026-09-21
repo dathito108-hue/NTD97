@@ -13,8 +13,8 @@ use ntd_ir::{
 use ntd_runtime::{Gpt2BpeConfig, Gpt2BpeTokenizer};
 
 use super::{
-    gpt2_bpe_blocker, llama_spm_blocker, transcode_tensor, GgufError, GgufModel, GgufTensorInfo,
-    GgufValue,
+    gpt2_bpe_blocker, llama_spm_blocker, transcode_tensor_from_source, GgufByteSource, GgufError,
+    GgufModel, GgufTensorInfo, GgufValue, SliceGgufSource,
 };
 use crate::{NativeCandidate, NativeSection, RegressionCase, RegressionProbe};
 
@@ -52,6 +52,13 @@ pub struct LoweredLlamaModel {
 }
 
 pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaModel, GgufError> {
+    lower_llama_model_from_source(&SliceGgufSource::new(file), model)
+}
+
+pub fn lower_llama_model_from_source(
+    source: &dyn GgufByteSource,
+    model: &GgufModel,
+) -> Result<LoweredLlamaModel, GgufError> {
     if model.architecture()? != "llama" {
         return Err(GgufError::UnsupportedArchitecture(
             model.architecture()?.to_owned(),
@@ -155,7 +162,7 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
     let vocabulary_size = tokenizer.tokens.len();
     let vocab_u64 = u64::try_from(vocabulary_size).map_err(|_| GgufError::LimitExceeded)?;
 
-    let source_tensors = SourceTensorTable::new(file, model);
+    let source_tensors = SourceTensorTable::new(source, model);
 
     let mut consumed = BTreeSet::new();
     let mut builder = GraphBuilder::new();
@@ -537,20 +544,20 @@ fn numeric_f32(value: &GgufValue) -> Option<f32> {
 }
 
 struct SourceTensorTable<'a> {
-    file: &'a [u8],
+    source: &'a dyn GgufByteSource,
     model: &'a GgufModel,
     tensors: BTreeMap<&'a str, &'a GgufTensorInfo>,
 }
 
 impl<'a> SourceTensorTable<'a> {
-    fn new(file: &'a [u8], model: &'a GgufModel) -> Self {
+    fn new(source: &'a dyn GgufByteSource, model: &'a GgufModel) -> Self {
         let tensors = model
             .tensors
             .iter()
             .map(|tensor| (tensor.name.as_str(), tensor))
             .collect::<BTreeMap<_, _>>();
         Self {
-            file,
+            source,
             model,
             tensors,
         }
@@ -576,7 +583,8 @@ impl<'a> SourceTensorTable<'a> {
             )));
         }
 
-        let transcoded = transcode_tensor(self.file, self.model, tensor, transpose_2d)?;
+        let transcoded =
+            transcode_tensor_from_source(self.source, self.model, tensor, transpose_2d)?;
         consumed.insert(name.to_owned());
         builder.add_native_tensor(name, transcoded.dtype, transcoded.shape, transcoded.payload)
     }
