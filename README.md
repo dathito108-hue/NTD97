@@ -8,14 +8,14 @@ Its target is a single portable intelligence runtime designed for current phones
 
 - **NTD97 is the model.** NTD97 is one independent mobile AGI identity, not an app that switches among external models.
 - **One runtime, one architecture.** External models, weights, knowledge and skills are import sources, not permanent parallel backends.
-- **Native assimilation.** Successfully imported intelligence is converted into NTD97 IR + \`.ncc97\` native state and becomes part of NTD97 immediately after validation and atomic commit. The source runtime is not required afterward.
+- **Native assimilation.** Successfully imported intelligence is converted into NTD97 IR + `.ncc97` native state and becomes part of NTD97 immediately after validation and atomic commit. The source runtime is not required afterward.
 - **Sovereign-first.** Core reasoning, memory, planning, execution and recovery must work without third-party AI APIs, cloud control planes, hosted model services or mandatory accounts.
 - **Act before talking.** Executable requests should normally become: understand -> plan -> act -> verify -> concise result.
 - **Adaptive reasoning.** Simple work uses a low-latency reflex budget; difficult work receives progressively deeper compute inside the same cognitive runtime.
 - **Mobile-first execution.** Every plan is aware of RAM, CPU/GPU/NPU availability, battery, thermal pressure, connectivity, and Android/iOS lifecycle constraints.
 - **Tool-native intelligence.** Web, files, apps, device controls, automation, and paired computers are capabilities in one graph.
 - **Capability growth.** Missing capabilities may be discovered, learned, built, tested in isolation, versioned, installed, and rolled back.
-- **Portable intelligence.** NTD97 defines a native Cognitive Capsule format: \`.ncc97\`.
+- **Portable intelligence.** NTD97 defines a native Cognitive Capsule format: `.ncc97`.
 - **Local-first, network-capable.** Internet and remote execution extend the system but are not mandatory architectural foundations.
 - **Short communication, deep understanding.** User-facing responses should be minimal unless explanation is requested.
 - **Embodied 3D assistant.** A persistent interactive 3D character is a first-class interface, including an in-app scene and a user-authorized floating surface where the OS permits it.
@@ -23,7 +23,7 @@ Its target is a single portable intelligence runtime designed for current phones
 
 ## Canonical stack
 
-\`\`\`text
+```text
 Human / Sensors / 3D Assistant / App UI / Paired PC
                |
         Interaction Fabric
@@ -49,11 +49,11 @@ Human / Sensors / 3D Assistant / App UI / Paired PC
       Adaptive Mobile Runtime
                |
   NTD97 Cognitive Capsule (.ncc97)
-\`\`\`
+```
 
 ## Native intelligence format
 
-\`.ncc97\` is the canonical NTD97 container. It is designed to carry or reference:
+`.ncc97` is the canonical NTD97 container. It is designed to carry or reference:
 
 - tensor shards / quantized weights;
 - execution graph;
@@ -65,7 +65,7 @@ Human / Sensors / 3D Assistant / App UI / Paired PC
 - device execution profiles;
 - provenance, integrity hashes, signatures, and version metadata.
 
-Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, plus structured knowledge and skill packages, then assimilate supported semantics into NTD97 IR and native capsule state. A full backup can be exported as a self-contained or deduplicated \`.ncc97\` capsule.
+Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, plus structured knowledge and skill packages, then assimilate supported semantics into NTD97 IR and native capsule state. A full backup can be exported as a self-contained or deduplicated `.ncc97` capsule.
 
 ## Repository status
 
@@ -73,7 +73,7 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 The repository now contains the first end-to-end NTD97-native execution path:
 
-\`\`\`text
+```text
 NCC97 integrity verify
   -> NIR97 graph
   -> native tensor descriptors/shards
@@ -82,7 +82,7 @@ NCC97 integrity verify
   -> NTD97 IR graph executor
   -> CPU reference provider
   -> deterministic output
-\`\`\`
+```
 
 No GGUF/ONNX/TFLite runtime or hosted AI service participates in this path.
 
@@ -90,13 +90,13 @@ This repository starts from zero. No AMPER source tree or architecture is inheri
 
 See:
 
-- \`docs/ARCHITECTURE.md\`
-- \`docs/ARCHITECTURE_FREEZE.md\`
-- \`docs/IR_V0.md\`
-- \`docs/NCC97_BINARY_V0.md\`
-- \`docs/NCC97_IR_SERIALIZATION_V0.md\`
-- \`docs/NATIVE_EXECUTION_FOUNDATION.md\`
-- \`docs/COGNITIVE_CAPSULE.md\`
-- \`docs/SOVEREIGN_MODEL.md\`
-- \`docs/CONTINUITY_3D.md\`
-- \`docs/ROADMAP.md\`
+- `docs/ARCHITECTURE.md`
+- `docs/ARCHITECTURE_FREEZE.md`
+- `docs/IR_V0.md`
+- `docs/NCC97_BINARY_V0.md`
+- `docs/NCC97_IR_SERIALIZATION_V0.md`
+- `docs/NATIVE_EXECUTION_FOUNDATION.md`
+- `docs/COGNITIVE_CAPSULE.md`
+- `docs/SOVEREIGN_MODEL.md`
+- `docs/CONTINUITY_3D.md`
+- `docs/ROADMAP.md`

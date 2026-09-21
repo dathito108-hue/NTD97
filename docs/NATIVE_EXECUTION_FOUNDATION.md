@@ -8,7 +8,7 @@ This block establishes the first complete native execution path for NTD97. It ex
 
 The implemented path is:
 
-\`\`\`text
+```text
 NCC97 capsule
   -> capsule compatibility + integrity verification
   -> NIR97 graph decode + structural validation
@@ -19,18 +19,18 @@ NCC97 capsule
   -> NTD97 IR graph executor
   -> CPU reference execution provider
   -> deterministic observable tensor result
-\`\`\`
+```
 
 GGUF, ONNX, TFLite, SafeTensors, hosted AI services and source-model runtimes are not part of this path.
 
 ## 2. NTP97 native tensor shard
 
-Native tensor payloads use the \`NTP97\\0\` framing.
+Native tensor payloads use the `NTP97\0` framing.
 
 Each shard records:
 
 - tensor ID;
-- optional graph-input \`ValueId\` binding;
+- optional graph-input `ValueId` binding;
 - dtype;
 - shape/rank;
 - element count;
@@ -41,7 +41,7 @@ Each shard records:
 
 Encoding is deterministic and host-ABI independent.
 
-The descriptor table remains the canonical \`NTS97\\0\` contract introduced earlier. Loading requires each descriptor and shard to agree exactly.
+The descriptor table remains the canonical `NTS97\0` contract introduced earlier. Loading requires each descriptor and shard to agree exactly.
 
 ## 3. Content-addressed store
 
@@ -55,7 +55,7 @@ External content is accepted only when:
 
 This allows Thin capsules and deduplicated native intelligence without weakening the Full-capsule integrity model.
 
-The initial in-memory store is a replaceable reference implementation. The \`ContentStore\` contract can later be backed by mmap files, encrypted local storage or mobile storage APIs without changing NTD97 IR semantics.
+The initial in-memory store is a replaceable reference implementation. The `ContentStore` contract can later be backed by mmap files, encrypted local storage or mobile storage APIs without changing NTD97 IR semantics.
 
 ## 4. Quantization metadata and tensor materialization
 
@@ -80,7 +80,7 @@ The CPU reference provider defines executable correctness behavior for:
 - RmsNorm;
 - Softmax.
 
-\`Gather\` and \`RotaryPosition\` remain explicitly unsupported by the provider until their operator attributes/semantics are added canonically to NTD97 IR. They are not guessed or silently implemented with source-format behavior.
+`Gather` and `RotaryPosition` remain explicitly unsupported by the provider until their operator attributes/semantics are added canonically to NTD97 IR. They are not guessed or silently implemented with source-format behavior.
 
 Optimized CPU, Vulkan and NPU providers must preserve observable semantics against this reference path.
 
@@ -89,8 +89,8 @@ Optimized CPU, Vulkan and NPU providers must preserve observable semantics again
 The graph executor:
 
 - runs the canonical IR structural validator before execution;
-- binds typed graph inputs by \`ValueId\`;
-- executes only NTD97 tensor operations through an \`ExecutionProvider\`;
+- binds typed graph inputs by `ValueId`;
+- executes only NTD97 tensor operations through an `ExecutionProvider`;
 - checks output arity and declared rank;
 - rejects unsupported state/memory/control/tool nodes rather than bypassing their future authority contracts;
 - returns only declared graph outputs.
@@ -101,7 +101,7 @@ The executor has no dependency on NCC97 or an external model format.
 
 The architecture freeze remains intact:
 
-\`\`\`text
+```text
 ntd-ir
   ^
   |
@@ -111,9 +111,9 @@ ntd-core     ntd-ir
     ^          ^
      \        /
       ntd-runtime
-\`\`\`
+```
 
-\`ntd-capsule\` uses \`ntd-runtime\` only as a development dependency for the end-to-end integration test. Production code does not introduce a reverse dependency.
+`ntd-capsule` uses `ntd-runtime` only as a development dependency for the end-to-end integration test. Production code does not introduce a reverse dependency.
 
 ## 8. Deterministic acceptance test
 
@@ -124,7 +124,7 @@ The integration test creates a Thin NCC97 capsule containing:
 - one external content-addressed quantized weight shard;
 - one embedded F32 bias shard.
 
-It then reopens and integrity-verifies the capsule, resolves native tensor content, materializes the tensors, executes \`QuantizedMatMul -> Add\` through the CPU provider twice, and requires identical output.
+It then reopens and integrity-verifies the capsule, resolves native tensor content, materializes the tensors, executes `QuantizedMatMul -> Add` through the CPU provider twice, and requires identical output.
 
 This proves the complete native path without invoking any third-party model runtime.
 
