@@ -4,13 +4,16 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.widget.TextView;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -20,11 +23,17 @@ import java.util.List;
 public final class NtdPhysicalEvidenceActivity extends Activity {
     private static final String EVIDENCE_FILE = "ntd97-device-evidence.nde97";
     private static final String SUMMARY_FILE = "ntd97-device-evidence.txt";
+    private static final String EXTRA_HEADLESS = "headless";
+    private static final int EXPORT_REQUEST = 197;
     private static final int MIN_SAMPLES = 32;
     private static final int MAX_SAMPLES = 8192;
     private static final long MIN_MEASUREMENT_NANOS = 5_000_000_000L;
     private static final int RECOVERY_ATTEMPTS = 12;
     private static final long GIB = 1024L * 1024L * 1024L;
+
+    private TextView statusView;
+    private byte[] pendingExport = new byte[0];
+    private boolean headless;
 
     static {
         System.loadLibrary("ntd97_android");
@@ -33,8 +42,40 @@ public final class NtdPhysicalEvidenceActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        headless = getIntent().getBooleanExtra(EXTRA_HEADLESS, false);
+
+        statusView = new TextView(this);
+        statusView.setPadding(32, 32, 32, 32);
+        statusView.setText("NTD97 physical validation in progress…\nKeep the phone unplugged.");
+        setContentView(statusView);
+
         Thread worker = new Thread(this::collect, "ntd97-physical-evidence");
         worker.start();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != EXPORT_REQUEST) {
+            return;
+        }
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            statusView.append("\nExport canceled. Evidence remains inside the debug app.");
+            return;
+        }
+
+        Uri destination = data.getData();
+        try (OutputStream stream = getContentResolver().openOutputStream(destination, "w")) {
+            if (stream == null) {
+                throw new IllegalStateException("document output stream unavailable");
+            }
+            stream.write(pendingExport);
+            stream.flush();
+            statusView.append("\nNDE97 evidence saved successfully.");
+        } catch (Exception error) {
+            statusView.append(
+                    "\nEvidence export failed: " + error.getClass().getSimpleName());
+        }
     }
 
     private void collect() {
@@ -43,10 +84,13 @@ public final class NtdPhysicalEvidenceActivity extends Activity {
         String summary;
         try {
             if (isProbablyEmulator()) {
-                writeFile(
-                        SUMMARY_FILE,
-                        "status=emulator-rejected\n".getBytes(StandardCharsets.UTF_8));
-                runOnUiThread(this::finish);
+                summary = "status=emulator-rejected\n";
+                writeFile(SUMMARY_FILE, summary.getBytes(StandardCharsets.UTF_8));
+                String rejection = summary;
+                runOnUiThread(() -> {
+                    statusView.setText(rejection);
+                    finish();
+                });
                 return;
             }
 
@@ -131,7 +175,48 @@ public final class NtdPhysicalEvidenceActivity extends Activity {
             writeFile(EVIDENCE_FILE, encoded);
         }
         writeFile(SUMMARY_FILE, summary.getBytes(StandardCharsets.UTF_8));
-        runOnUiThread(this::finish);
+
+        byte[] export = encoded.clone();
+        String finalSummary = summary;
+        runOnUiThread(() -> collectionFinished(export, finalSummary));
+    }
+
+    private void collectionFinished(byte[] encoded, String summary) {
+        statusView.setText(summary);
+        if (encoded.length == 0) {
+            if (headless) {
+                finish();
+            }
+            return;
+        }
+
+        pendingExport = encoded;
+        if (headless) {
+            finish();
+            return;
+        }
+
+        Intent create = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        create.addCategory(Intent.CATEGORY_OPENABLE);
+        create.setType("application/octet-stream");
+        create.putExtra(
+                Intent.EXTRA_TITLE,
+                "ntd97-physical-evidence-" + shortBuildRevision() + ".nde97");
+        statusView.append("\nChoose where to save the NDE97 evidence file.");
+        try {
+            startActivityForResult(create, EXPORT_REQUEST);
+        } catch (RuntimeException error) {
+            statusView.append(
+                    "\nDocument picker unavailable: " + error.getClass().getSimpleName());
+        }
+    }
+
+    private static String shortBuildRevision() {
+        String revision = BuildConfig.NTD_GIT_SHA;
+        if (revision == null || revision.length() < 8) {
+            return "unattested";
+        }
+        return revision.substring(0, 8);
     }
 
     private static boolean isProbablyEmulator() {
