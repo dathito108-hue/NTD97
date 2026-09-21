@@ -1,13 +1,19 @@
-use std::{cell::Cell, collections::BTreeMap};
+use std::{
+    cell::Cell,
+    collections::BTreeMap,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use ntd_assimilation::{
     build_native_package, lower_llama_model, lower_llama_model_from_source,
-    lowered_llama_candidate, verify_native_package, AssimilationIdentity, ForgeSandbox,
+    lower_llama_model_to_shards, lowered_llama_candidate, streamed_llama_thin_capsule,
+    verify_native_package, AssimilationIdentity, FileTensorShardStore, ForgeSandbox,
     GgufByteSource, GgufError, GgufModel, GgufValueType, LicenseRecord, NativeValidationSandbox,
     SliceGgufSource, SourcePackage, GGUF_MAGIC, GGUF_VERSION,
 };
 use ntd_capsule::{
-    load_native_generative_program, CapsuleView, MemoryContentStore, NativeTokenizerModel,
+    load_native_generative_program, CapsuleKind, CapsuleView, MemoryContentStore,
+    NativeTokenizerModel,
 };
 use ntd_runtime::{
     CpuReferenceProvider, DistributionKind, GenerationConfig, Gpt2BpeConfig, Gpt2BpeTokenizer,
@@ -401,6 +407,16 @@ fn gpt2_fixture() -> Vec<u8> {
     out
 }
 
+static NEXT_SHARD_DIR: AtomicU64 = AtomicU64::new(1);
+
+fn shard_root() -> std::path::PathBuf {
+    let id = NEXT_SHARD_DIR.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "ntd97-streamed-lowering-{}-{id}",
+        std::process::id()
+    ))
+}
+
 struct CountingSource<'a> {
     bytes: &'a [u8],
     reads: Cell<usize>,
@@ -438,6 +454,62 @@ fn source_backed_lowering_matches_in_memory_lowering_with_bounded_reads() {
     assert_eq!(source_lowered, memory_lowered);
     assert!(source.reads.get() > source_model.tensors.len());
     assert!(source.max_read.get() < bytes.len());
+}
+
+#[test]
+fn streamed_ntp97_shards_reload_through_canonical_thin_capsule() {
+    let bytes = fixture();
+    let source = SliceGgufSource::new(&bytes);
+    let model = GgufModel::parse_source(&source).expect("parse");
+    let expected = lower_llama_model(&bytes, &model).expect("in-memory lower");
+
+    let root = shard_root();
+    let mut shard_store = FileTensorShardStore::open(&root).expect("shard store");
+    let streamed =
+        lower_llama_model_to_shards(&source, &model, &mut shard_store).expect("stream lower");
+
+    assert_eq!(streamed.graph, expected.graph);
+    assert_eq!(streamed.tokenizer, expected.tokenizer);
+    assert_eq!(streamed.bindings, expected.bindings);
+    assert_eq!(streamed.tensor_shards.len(), expected.tensors.len());
+    assert_eq!(
+        streamed
+            .tensor_shards
+            .iter()
+            .map(|shard| shard.descriptor.clone())
+            .collect::<Vec<_>>(),
+        expected
+            .tensors
+            .iter()
+            .map(|tensor| tensor.descriptor.clone())
+            .collect::<Vec<_>>()
+    );
+
+    let capsule = streamed_llama_thin_capsule(*b"NTD97-STREAM-001", &streamed)
+        .expect("thin capsule");
+    let view = CapsuleView::read(&capsule).expect("capsule");
+    assert_eq!(view.kind, CapsuleKind::Thin);
+    assert_eq!(
+        view.chunks
+            .iter()
+            .filter(|chunk| matches!(chunk.storage, ntd_capsule::ChunkStorageView::External))
+            .count(),
+        streamed.tensor_shards.len()
+    );
+
+    let mut content = MemoryContentStore::default();
+    for shard in &streamed.tensor_shards {
+        let bytes = shard_store.read_verified(shard).expect("read shard");
+        content
+            .insert_verified(shard.hash, bytes)
+            .expect("insert verified");
+    }
+    let loaded = load_native_generative_program(&view, &content).expect("canonical load");
+    assert_eq!(loaded.program.graph, expected.graph);
+    assert_eq!(loaded.program.tensors, expected.tensors);
+    assert_eq!(loaded.tokenizer, expected.tokenizer);
+
+    std::fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]
