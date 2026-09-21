@@ -3,14 +3,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ntd_capsule::{
-    encode_native_tokenizer, NativeTensor, NativeTokenizerDescriptor, QuantizationMetadata,
-    TensorDescriptor,
+    encode_native_tensor, encode_native_tokenizer, encode_tensor_descriptors, NativeTensor,
+    NativeTokenizerDescriptor, QuantizationMetadata, SectionKind, TensorDescriptor,
 };
 use ntd_ir::{
     DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
 };
 
 use super::{transcode_tensor, GgufError, GgufModel, GgufTensorInfo, GgufValue};
+use crate::{NativeCandidate, NativeSection, RegressionCase, RegressionProbe};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LlamaConfig {
@@ -319,6 +320,58 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
         vocabulary_size,
         bindings: builder.bindings,
     })
+}
+
+pub fn lowered_llama_candidate(
+    asset_id: impl Into<String>,
+    version: u32,
+    model: &LoweredLlamaModel,
+) -> Result<NativeCandidate, GgufError> {
+    let asset_id = asset_id.into().trim().to_owned();
+    if asset_id.is_empty() || version == 0 {
+        return Err(GgufError::NativeLowering(
+            "invalid native model identity".into(),
+        ));
+    }
+
+    let descriptors = model
+        .tensors
+        .iter()
+        .map(|tensor| tensor.descriptor.clone())
+        .collect::<Vec<_>>();
+    let mut sections = Vec::with_capacity(model.tensors.len().saturating_add(2));
+    sections.push(NativeSection {
+        kind: SectionKind::Tensors,
+        bytes: encode_tensor_descriptors(&descriptors)
+            .map_err(|error| GgufError::NativeLowering(format!("descriptors: {error:?}")))?,
+    });
+    for tensor in &model.tensors {
+        sections.push(NativeSection {
+            kind: SectionKind::Tensors,
+            bytes: encode_native_tensor(tensor)
+                .map_err(|error| GgufError::NativeLowering(format!("tensor: {error:?}")))?,
+        });
+    }
+    sections.push(NativeSection {
+        kind: SectionKind::Tokenizer,
+        bytes: encode_native_tokenizer(&model.tokenizer)
+            .map_err(|error| GgufError::NativeLowering(format!("tokenizer: {error:?}")))?,
+    });
+
+    let candidate = NativeCandidate::Intelligence {
+        asset_id,
+        version,
+        graph: model.graph.clone(),
+        sections,
+        regressions: vec![RegressionCase {
+            name: "nir97-roundtrip".into(),
+            probe: RegressionProbe::GraphRoundTrip,
+        }],
+    };
+    candidate
+        .validate()
+        .map_err(|error| GgufError::NativeLowering(format!("candidate: {error:?}")))?;
+    Ok(candidate)
 }
 
 impl LlamaConfig {
