@@ -5,8 +5,7 @@ use std::collections::BTreeSet;
 use ntd_capsule::Digest;
 
 use crate::{
-    AssetClass, EncryptedObject, PortabilityError, PortableAsset, RestoredSet,
-    SovereignObjectStore,
+    AssetClass, EncryptedObject, PortabilityError, PortableAsset, RestoredSet, SovereignObjectStore,
 };
 
 const BACKUP_MAGIC: [u8; 6] = *b"PSB97\0";
@@ -60,8 +59,7 @@ impl PortableBackup {
         out.extend_from_slice(&self.manifest_nonce);
         push_u64(
             &mut out,
-            u64::try_from(self.encrypted_manifest.len())
-                .map_err(|_| PortabilityError::Overflow)?,
+            u64::try_from(self.encrypted_manifest.len()).map_err(|_| PortabilityError::Overflow)?,
         );
         push_u32(
             &mut out,
@@ -76,8 +74,7 @@ impl PortableBackup {
             push_u64(&mut out, object.logical_len);
             push_u64(
                 &mut out,
-                u64::try_from(object.ciphertext.len())
-                    .map_err(|_| PortabilityError::Overflow)?,
+                u64::try_from(object.ciphertext.len()).map_err(|_| PortabilityError::Overflow)?,
             );
             out.extend_from_slice(&object.ciphertext);
         }
@@ -184,8 +181,11 @@ impl PortableBackupBuilder {
             });
         }
         manifest_assets.sort_by(|a, b| {
-            (a.class, a.asset_id.as_str(), a.version)
-                .cmp(&(b.class, b.asset_id.as_str(), b.version))
+            (a.class, a.asset_id.as_str(), a.version).cmp(&(
+                b.class,
+                b.asset_id.as_str(),
+                b.version,
+            ))
         });
 
         let manifest = encode_manifest(kind, backup_id, &manifest_assets)?;
@@ -227,11 +227,7 @@ pub fn restore_backup(
     }
 
     let aad = manifest_aad(backup.kind, backup.backup_id);
-    let manifest = store.open_manifest(
-        backup.manifest_nonce,
-        &aad,
-        &backup.encrypted_manifest,
-    )?;
+    let manifest = store.open_manifest(backup.manifest_nonce, &aad, &backup.encrypted_manifest)?;
     let entries = decode_manifest(&manifest, backup.kind, backup.backup_id)?;
 
     let mut assets = Vec::with_capacity(entries.len());
@@ -242,12 +238,8 @@ pub fn restore_backup(
         {
             return Err(PortabilityError::IntegrityMismatch);
         }
-        let asset = PortableAsset::from_capsule(
-            entry.class,
-            entry.asset_id,
-            entry.version,
-            capsule,
-        )?;
+        let asset =
+            PortableAsset::from_capsule(entry.class, entry.asset_id, entry.version, capsule)?;
         if asset.digest != entry.digest {
             return Err(PortabilityError::IntegrityMismatch);
         }
@@ -402,8 +394,7 @@ impl<'a> Cursor<'a> {
     fn u64(&mut self) -> Result<u64, PortabilityError> {
         let bytes = self.take(8)?;
         Ok(u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
 

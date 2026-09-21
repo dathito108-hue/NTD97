@@ -1,7 +1,7 @@
 use ntd_capsule::{CapsuleBuilder, CapsuleKind, SectionKind};
 use ntd_portability::{
-    restore_backup, AssetClass, BackupKey, BackupKind, PortableAsset, PortableBackup,
-    PortableBackupBuilder, PortabilityError, SovereignObjectStore,
+    restore_backup, AssetClass, BackupKey, BackupKind, PortabilityError, PortableAsset,
+    PortableBackup, PortableBackupBuilder, SovereignObjectStore,
 };
 
 fn full_capsule(tag: &[u8]) -> Vec<u8> {
@@ -18,13 +18,8 @@ fn state_capsule(tag: &[u8]) -> Vec<u8> {
 
 fn assets() -> Vec<PortableAsset> {
     vec![
-        PortableAsset::from_capsule(
-            AssetClass::Model,
-            "model.core",
-            3,
-            full_capsule(b"model"),
-        )
-        .expect("model"),
+        PortableAsset::from_capsule(AssetClass::Model, "model.core", 3, full_capsule(b"model"))
+            .expect("model"),
         PortableAsset::from_capsule(
             AssetClass::Capability,
             "cap.web",
@@ -72,12 +67,8 @@ fn full_backup_round_trips_offline_on_another_device() {
     let restored = restore_backup(&decoded, &mut destination_store).expect("restore");
     assert_eq!(restored.assets.len(), 4);
     assert!(restored.asset(AssetClass::Model, "model.core").is_some());
-    assert!(restored
-        .asset(AssetClass::Capability, "cap.web")
-        .is_some());
-    assert!(restored
-        .asset(AssetClass::Memory, "memory.user")
-        .is_some());
+    assert!(restored.asset(AssetClass::Capability, "cap.web").is_some());
+    assert!(restored.asset(AssetClass::Memory, "memory.user").is_some());
     assert!(restored
         .asset(AssetClass::State, "state.identity")
         .is_some());
@@ -119,24 +110,15 @@ fn thin_backup_uses_content_addressed_dedup_store() {
 fn state_backup_excludes_model_and_capability_assets() {
     let assets = assets();
     let mut store = SovereignObjectStore::new(key());
-    let backup = PortableBackupBuilder::create(
-        BackupKind::State,
-        [15; 16],
-        [16; 24],
-        &assets,
-        &mut store,
-    )
-    .expect("state backup");
+    let backup =
+        PortableBackupBuilder::create(BackupKind::State, [15; 16], [16; 24], &assets, &mut store)
+            .expect("state backup");
     let mut destination = SovereignObjectStore::new(key());
     let restored = restore_backup(&backup, &mut destination).expect("restore");
     assert_eq!(restored.assets.len(), 2);
     assert!(restored.asset(AssetClass::Model, "model.core").is_none());
-    assert!(restored
-        .asset(AssetClass::Capability, "cap.web")
-        .is_none());
-    assert!(restored
-        .asset(AssetClass::Memory, "memory.user")
-        .is_some());
+    assert!(restored.asset(AssetClass::Capability, "cap.web").is_none());
+    assert!(restored.asset(AssetClass::Memory, "memory.user").is_some());
     assert!(restored
         .asset(AssetClass::State, "state.identity")
         .is_some());
