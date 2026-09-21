@@ -61,3 +61,45 @@ fn causal_attention_supports_grouped_query_heads() {
     assert_eq!(output.shape(), &[1, 2, 2]);
     assert_eq!(output.data(), &[3.0, 4.0, 3.0, 4.0]);
 }
+
+#[test]
+fn position_ids_follow_dynamic_token_window() {
+    let tokens = Tensor::new(vec![4], vec![7.0, 8.0, 9.0, 10.0]).expect("tokens");
+    let positions = CpuReferenceProvider
+        .execute(TensorOp::PositionIds, &[&tokens])
+        .expect("positions")
+        .remove(0);
+    assert_eq!(positions.shape(), &[4]);
+    assert_eq!(positions.data(), &[0.0, 1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn dynamic_reshape_copies_and_infers_dimensions() {
+    let input = Tensor::new(
+        vec![2, 6],
+        (0..12).map(|value| value as f32).collect(),
+    )
+    .expect("input");
+    let shape = Tensor::new(vec![3], vec![0.0, 2.0, -1.0]).expect("shape");
+    let output = CpuReferenceProvider
+        .execute(TensorOp::Reshape, &[&input, &shape])
+        .expect("reshape")
+        .remove(0);
+    assert_eq!(output.shape(), &[2, 2, 3]);
+    assert_eq!(output.data(), input.data());
+}
+
+#[test]
+fn rms_norm_accepts_model_epsilon() {
+    let input = Tensor::new(vec![1, 2], vec![3.0, 4.0]).expect("input");
+    let weight = Tensor::new(vec![2], vec![1.0, 1.0]).expect("weight");
+    let epsilon = Tensor::scalar(1.0e-3);
+    let output = CpuReferenceProvider
+        .execute(TensorOp::RmsNorm, &[&input, &weight, &epsilon])
+        .expect("rms")
+        .remove(0);
+
+    let inv_rms = 1.0 / (((9.0f32 + 16.0) / 2.0) + 1.0e-3).sqrt();
+    assert!((output.data()[0] - 3.0 * inv_rms).abs() < 1.0e-6);
+    assert!((output.data()[1] - 4.0 * inv_rms).abs() < 1.0e-6);
+}
