@@ -216,25 +216,39 @@ impl<'a> CapsuleView<'a> {
             return Err(CapsuleError::UnsupportedContract(header.contract));
         }
 
+        let expected_index_len = usize::try_from(header.chunk_count)
+            .map_err(|_| CapsuleError::Overflow)?
+            .checked_mul(INDEX_ENTRY_LEN)
+            .ok_or(CapsuleError::Overflow)?;
+        let expected_index_offset = HEADER_LEN
+            .checked_add(MANIFEST_LEN)
+            .ok_or(CapsuleError::Overflow)?;
+        let expected_payload_offset = align_up(
+            expected_index_offset
+                .checked_add(expected_index_len)
+                .ok_or(CapsuleError::Overflow)?,
+            ALIGNMENT,
+        )?;
+
+        if header.manifest_offset != u64::try_from(HEADER_LEN).map_err(|_| CapsuleError::Overflow)?
+            || header.manifest_len
+                != u64::try_from(MANIFEST_LEN).map_err(|_| CapsuleError::Overflow)?
+            || header.index_offset
+                != u64::try_from(expected_index_offset).map_err(|_| CapsuleError::Overflow)?
+            || header.index_len
+                != u64::try_from(expected_index_len).map_err(|_| CapsuleError::Overflow)?
+            || header.payload_offset
+                != u64::try_from(expected_payload_offset).map_err(|_| CapsuleError::Overflow)?
+        {
+            return Err(CapsuleError::NonCanonicalLayout);
+        }
+
         let manifest_range = checked_range(
             bytes.len(),
             header.manifest_offset,
             header.manifest_len,
         )?;
         let index_range = checked_range(bytes.len(), header.index_offset, header.index_len)?;
-
-        if manifest_range.len() != MANIFEST_LEN {
-            return Err(CapsuleError::InvalidManifest);
-        }
-
-        let expected_index_len = usize::try_from(header.chunk_count)
-            .map_err(|_| CapsuleError::Overflow)?
-            .checked_mul(INDEX_ENTRY_LEN)
-            .ok_or(CapsuleError::Overflow)?;
-
-        if index_range.len() != expected_index_len {
-            return Err(CapsuleError::InvalidIndex);
-        }
 
         let manifest_bytes = &bytes[manifest_range.clone()];
         let index_bytes = &bytes[index_range.clone()];
@@ -247,6 +261,8 @@ impl<'a> CapsuleView<'a> {
         let entries = decode_index(index_bytes, header.chunk_count)?;
 
         let mut chunks = Vec::with_capacity(entries.len());
+        let mut expected_embedded_offset = expected_payload_offset;
+        let mut expected_file_len = expected_payload_offset;
 
         for entry in entries {
             if entry.flags & !CHUNK_FLAG_EXTERNAL != 0 {
@@ -271,11 +287,14 @@ impl<'a> CapsuleView<'a> {
                 continue;
             }
 
-            if entry.offset < header.payload_offset {
-                return Err(CapsuleError::InvalidIndex);
+            let offset = usize::try_from(entry.offset).map_err(|_| CapsuleError::Overflow)?;
+            if offset != expected_embedded_offset {
+                return Err(CapsuleError::NonCanonicalLayout);
             }
 
             let payload_range = checked_range(bytes.len(), entry.offset, entry.logical_len)?;
+            expected_file_len = payload_range.end;
+            expected_embedded_offset = align_up(payload_range.end, ALIGNMENT)?;
 
             if sha256(&bytes[payload_range.clone()]) != entry.hash {
                 return Err(CapsuleError::ChunkIntegrityMismatch(entry.kind));
@@ -287,6 +306,10 @@ impl<'a> CapsuleView<'a> {
                 hash: entry.hash,
                 storage: ChunkStorageView::Embedded(&bytes[payload_range]),
             });
+        }
+
+        if bytes.len() != expected_file_len {
+            return Err(CapsuleError::NonCanonicalLayout);
         }
 
         Ok(Self {
@@ -342,6 +365,7 @@ pub enum CapsuleError {
     MetadataIntegrityMismatch,
     ChunkIntegrityMismatch(SectionKind),
     ExternalChunkInFullCapsule,
+    NonCanonicalLayout,
     Overflow,
 }
 
@@ -667,6 +691,19 @@ mod tests {
         assert_eq!(
             CapsuleView::read(&bytes),
             Err(CapsuleError::MetadataIntegrityMismatch)
+        );
+    }
+
+    #[test]
+    fn rejects_trailing_bytes_as_noncanonical() {
+        let mut builder = CapsuleBuilder::new(CapsuleKind::Full, id());
+        builder.push_embedded(SectionKind::Graph, b"graph".to_vec());
+        let mut bytes = builder.write().expect("write");
+        bytes.push(0);
+
+        assert_eq!(
+            CapsuleView::read(&bytes),
+            Err(CapsuleError::NonCanonicalLayout)
         );
     }
 
