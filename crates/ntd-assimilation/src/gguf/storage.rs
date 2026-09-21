@@ -103,10 +103,8 @@ mod tests {
     #[test]
     fn file_source_reads_ranges_without_materializing_the_file() {
         let id = NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "ntd97-gguf-source-{}-{id}.bin",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("ntd97-gguf-source-{}-{id}.bin", std::process::id()));
         std::fs::write(&path, b"0123456789").expect("write fixture");
 
         let source = FileGgufSource::open(&path).expect("open source");
