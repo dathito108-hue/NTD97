@@ -10,9 +10,7 @@ use ntd_capsule::{
 use ntd_ir::{
     DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
 };
-use ntd_runtime::{
-    CpuReferenceProvider, GraphExecutor, QuantizationParams, Tensor, TensorLoader,
-};
+use ntd_runtime::{CpuReferenceProvider, GraphExecutor, QuantizationParams, Tensor, TensorLoader};
 
 fn tensor_decl(id: u32, dtype: DType, rank: u8) -> ValueDecl {
     ValueDecl {
