@@ -8,6 +8,9 @@ const GGML_TYPE_F32: u32 = 0;
 const GGML_TYPE_F16: u32 = 1;
 const GGML_TYPE_Q4_0: u32 = 2;
 const GGML_TYPE_Q8_0: u32 = 8;
+const GGML_TYPE_Q4_K: u32 = 12;
+const GGML_TYPE_Q5_K: u32 = 13;
+const GGML_TYPE_Q6_K: u32 = 14;
 const GGML_TYPE_BF16: u32 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +97,18 @@ pub fn transcode_tensor(
             let values = decode_q8_0(tensor, bytes)?;
             transcode_dequantized(tensor, values, transpose_2d)
         }
+        GGML_TYPE_Q4_K => {
+            let values = decode_q4_k(tensor, bytes)?;
+            transcode_dequantized(tensor, values, transpose_2d)
+        }
+        GGML_TYPE_Q5_K => {
+            let values = decode_q5_k(tensor, bytes)?;
+            transcode_dequantized(tensor, values, transpose_2d)
+        }
+        GGML_TYPE_Q6_K => {
+            let values = decode_q6_k(tensor, bytes)?;
+            transcode_dequantized(tensor, values, transpose_2d)
+        }
         other => Err(GgufError::UnsupportedTensorType(other)),
     }
 }
@@ -101,7 +116,14 @@ pub fn transcode_tensor(
 pub fn ggml_type_supported(ggml_type: u32) -> bool {
     matches!(
         ggml_type,
-        GGML_TYPE_F32 | GGML_TYPE_F16 | GGML_TYPE_Q4_0 | GGML_TYPE_Q8_0 | GGML_TYPE_BF16
+        GGML_TYPE_F32
+            | GGML_TYPE_F16
+            | GGML_TYPE_Q4_0
+            | GGML_TYPE_Q8_0
+            | GGML_TYPE_Q4_K
+            | GGML_TYPE_Q5_K
+            | GGML_TYPE_Q6_K
+            | GGML_TYPE_BF16
     )
 }
 
@@ -122,6 +144,18 @@ fn ggml_layout(ggml_type: u32) -> Result<GgmlLayout, GgufError> {
         GGML_TYPE_Q8_0 => Ok(GgmlLayout {
             block_elements: 32,
             block_bytes: 34,
+        }),
+        GGML_TYPE_Q4_K => Ok(GgmlLayout {
+            block_elements: 256,
+            block_bytes: 144,
+        }),
+        GGML_TYPE_Q5_K => Ok(GgmlLayout {
+            block_elements: 256,
+            block_bytes: 176,
+        }),
+        GGML_TYPE_Q6_K => Ok(GgmlLayout {
+            block_elements: 256,
+            block_bytes: 210,
         }),
         other => Err(GgufError::UnsupportedTensorType(other)),
     }
@@ -303,6 +337,164 @@ fn decode_q4_0(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<Vec<f32>, GgufEr
         return Err(GgufError::InvalidTensor);
     }
     Ok(output)
+}
+
+
+fn decode_q4_k(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<Vec<f32>, GgufError> {
+    validate_quantized_payload(tensor, bytes)?;
+    let capacity = usize::try_from(element_count(tensor)?).map_err(|_| GgufError::LimitExceeded)?;
+    let mut output = Vec::with_capacity(capacity);
+
+    for block in bytes.chunks_exact(144) {
+        let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+        let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
+        if !d.is_finite() || !dmin.is_finite() {
+            return Err(GgufError::InvalidTensor);
+        }
+
+        let scales = &block[4..16];
+        let qs = &block[16..144];
+        let mut scale_index = 0usize;
+        for group in 0..4 {
+            let (scale1, min1) = scale_min_k4(scale_index, scales)?;
+            let (scale2, min2) = scale_min_k4(scale_index + 1, scales)?;
+            let d1 = d * f32::from(scale1);
+            let m1 = dmin * f32::from(min1);
+            let d2 = d * f32::from(scale2);
+            let m2 = dmin * f32::from(min2);
+            let q = &qs[group * 32..group * 32 + 32];
+
+            output.extend(q.iter().map(|value| d1 * f32::from(value & 0x0f) - m1));
+            output.extend(q.iter().map(|value| d2 * f32::from(value >> 4) - m2));
+            scale_index += 2;
+        }
+    }
+
+    if output.len() != capacity || output.iter().any(|value| !value.is_finite()) {
+        return Err(GgufError::InvalidTensor);
+    }
+    Ok(output)
+}
+
+fn decode_q5_k(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<Vec<f32>, GgufError> {
+    validate_quantized_payload(tensor, bytes)?;
+    let capacity = usize::try_from(element_count(tensor)?).map_err(|_| GgufError::LimitExceeded)?;
+    let mut output = Vec::with_capacity(capacity);
+
+    for block in bytes.chunks_exact(176) {
+        let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+        let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
+        if !d.is_finite() || !dmin.is_finite() {
+            return Err(GgufError::InvalidTensor);
+        }
+
+        let scales = &block[4..16];
+        let qh = &block[16..48];
+        let qs = &block[48..176];
+        let mut scale_index = 0usize;
+        let mut high_low_mask = 1u8;
+        let mut high_high_mask = 2u8;
+
+        for group in 0..4 {
+            let (scale1, min1) = scale_min_k4(scale_index, scales)?;
+            let (scale2, min2) = scale_min_k4(scale_index + 1, scales)?;
+            let d1 = d * f32::from(scale1);
+            let m1 = dmin * f32::from(min1);
+            let d2 = d * f32::from(scale2);
+            let m2 = dmin * f32::from(min2);
+            let q = &qs[group * 32..group * 32 + 32];
+
+            for index in 0..32 {
+                let high = if qh[index] & high_low_mask != 0 { 16 } else { 0 };
+                output.push(d1 * f32::from((q[index] & 0x0f) + high) - m1);
+            }
+            for index in 0..32 {
+                let high = if qh[index] & high_high_mask != 0 { 16 } else { 0 };
+                output.push(d2 * f32::from((q[index] >> 4) + high) - m2);
+            }
+
+            scale_index += 2;
+            high_low_mask <<= 2;
+            high_high_mask <<= 2;
+        }
+    }
+
+    if output.len() != capacity || output.iter().any(|value| !value.is_finite()) {
+        return Err(GgufError::InvalidTensor);
+    }
+    Ok(output)
+}
+
+fn decode_q6_k(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<Vec<f32>, GgufError> {
+    validate_quantized_payload(tensor, bytes)?;
+    let capacity = usize::try_from(element_count(tensor)?).map_err(|_| GgufError::LimitExceeded)?;
+    let mut output = Vec::with_capacity(capacity);
+
+    for block in bytes.chunks_exact(210) {
+        let ql = &block[0..128];
+        let qh = &block[128..192];
+        let scales = &block[192..208];
+        let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
+        if !d.is_finite() {
+            return Err(GgufError::InvalidTensor);
+        }
+
+        let mut values = [0.0f32; 256];
+        for half in 0..2 {
+            let ql_base = half * 64;
+            let qh_base = half * 32;
+            let scale_base = half * 8;
+            let out_base = half * 128;
+
+            for lane in 0..32 {
+                let scale_pair = lane / 16;
+                let high = qh[qh_base + lane];
+                let q1 = i32::from((ql[ql_base + lane] & 0x0f) | (((high >> 0) & 0x03) << 4)) - 32;
+                let q2 = i32::from((ql[ql_base + lane + 32] & 0x0f) | (((high >> 2) & 0x03) << 4)) - 32;
+                let q3 = i32::from((ql[ql_base + lane] >> 4) | (((high >> 4) & 0x03) << 4)) - 32;
+                let q4 = i32::from((ql[ql_base + lane + 32] >> 4) | (((high >> 6) & 0x03) << 4)) - 32;
+
+                let s1 = f32::from(scales[scale_base + scale_pair] as i8);
+                let s2 = f32::from(scales[scale_base + scale_pair + 2] as i8);
+                let s3 = f32::from(scales[scale_base + scale_pair + 4] as i8);
+                let s4 = f32::from(scales[scale_base + scale_pair + 6] as i8);
+
+                values[out_base + lane] = d * s1 * q1 as f32;
+                values[out_base + lane + 32] = d * s2 * q2 as f32;
+                values[out_base + lane + 64] = d * s3 * q3 as f32;
+                values[out_base + lane + 96] = d * s4 * q4 as f32;
+            }
+        }
+        output.extend_from_slice(&values);
+    }
+
+    if output.len() != capacity || output.iter().any(|value| !value.is_finite()) {
+        return Err(GgufError::InvalidTensor);
+    }
+    Ok(output)
+}
+
+fn validate_quantized_payload(tensor: &GgufTensorInfo, bytes: &[u8]) -> Result<(), GgufError> {
+    let expected = ggml_tensor_byte_len(tensor)?;
+    if u64::try_from(bytes.len()).map_err(|_| GgufError::LimitExceeded)? != expected {
+        return Err(GgufError::InvalidTensor);
+    }
+    Ok(())
+}
+
+fn scale_min_k4(index: usize, packed: &[u8]) -> Result<(u8, u8), GgufError> {
+    if packed.len() != 12 || index >= 8 {
+        return Err(GgufError::InvalidTensor);
+    }
+
+    if index < 4 {
+        Ok((packed[index] & 0x3f, packed[index + 4] & 0x3f))
+    } else {
+        Ok((
+            (packed[index + 4] & 0x0f) | ((packed[index - 4] >> 6) << 4),
+            (packed[index + 4] >> 4) | ((packed[index] >> 6) << 4),
+        ))
+    }
 }
 
 fn element_count(tensor: &GgufTensorInfo) -> Result<u64, GgufError> {
