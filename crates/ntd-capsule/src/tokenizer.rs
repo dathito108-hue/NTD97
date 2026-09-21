@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     decode_descriptor_frame, encode_descriptor_frame, load_native_program, sha256, CapsuleBuilder,
@@ -13,11 +13,12 @@ pub const LEGACY_NATIVE_TOKENIZER_FORMAT: &str = "ntd97.tokenizer.vocab.v1";
 pub const NATIVE_TOKENIZER_MAGIC: [u8; 6] = *b"NTK97\0";
 pub const NATIVE_TOKENIZER_HEADER_LEN: usize = 32;
 pub const NATIVE_TOKENIZER_MAJOR: u16 = 0;
-pub const NATIVE_TOKENIZER_MINOR: u16 = 2;
+pub const NATIVE_TOKENIZER_MINOR: u16 = 3;
 pub const NO_SPECIAL_TOKEN: u32 = u32::MAX;
 
 const TOKENIZER_MODEL_VOCABULARY: u32 = 0;
 const TOKENIZER_MODEL_LLAMA_SPM: u32 = 1;
+const TOKENIZER_MODEL_GPT2_BPE: u32 = 2;
 const TOKENIZER_FLAG_ADD_SPACE_PREFIX: u32 = 1 << 0;
 const TOKENIZER_FLAG_ADD_BOS: u32 = 1 << 1;
 const TOKENIZER_FLAG_ADD_EOS: u32 = 1 << 2;
@@ -31,6 +32,11 @@ pub enum NativeTokenizerModel {
         score_bits: Vec<u32>,
         token_types: Vec<i32>,
         add_space_prefix: bool,
+        add_bos_token: bool,
+        add_eos_token: bool,
+    },
+    Gpt2Bpe {
+        merges: Vec<String>,
         add_bos_token: bool,
         add_eos_token: bool,
     },
@@ -69,6 +75,8 @@ pub enum NativeTokenizerError {
     InvalidTokenTypeCount { expected: usize, actual: usize },
     InvalidTokenType { token: u32, token_type: i32 },
     NonFiniteScore(u32),
+    InvalidBpeMerge(String),
+    DuplicateBpeMerge(String),
     NonCanonicalEncoding,
     Overflow,
 }
