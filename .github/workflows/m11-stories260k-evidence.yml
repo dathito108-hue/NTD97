@@ -1,0 +1,45 @@
+name: m11-stories260k-evidence
+
+on:
+  push:
+    branches:
+      - m11-stories260k-source-equivalence
+    paths:
+      - ".github/workflows/m11-stories260k-evidence.yml"
+      - "crates/ntd-assimilation/**"
+      - "crates/ntd-capsule/**"
+      - "crates/ntd-ir/**"
+      - "crates/ntd-runtime/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m11-stories260k-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download pinned stories260K GGUF
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output stories260K.gguf \
+            "https://huggingface.co/ggml-org/tiny-llamas/resolve/main/stories260K.gguf?download=true"
+          printf '%s  %s\n' \
+            '047bf46455a544931cff6fef14d7910154c56afbc23ab1c5e56a72e69912c04b' \
+            'stories260K.gguf' | sha256sum --check --strict
+
+      - name: Run NTD97 source-equivalence evidence
+        run: cargo run -p ntd-assimilation --bin stories260k-evidence -- stories260K.gguf
