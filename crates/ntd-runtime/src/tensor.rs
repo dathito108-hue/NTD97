@@ -523,7 +523,10 @@ fn transpose(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
         axes.push(axis);
     }
 
-    let output_shape = axes.iter().map(|axis| input.shape[*axis]).collect::<Vec<_>>();
+    let output_shape = axes
+        .iter()
+        .map(|axis| input.shape[*axis])
+        .collect::<Vec<_>>();
     let input_strides = row_major_strides(&input.shape)?;
     let output_strides = row_major_strides(&output_shape)?;
     let mut data = vec![0.0f32; input.data.len()];
