@@ -429,7 +429,7 @@ impl ActionFabric {
             ActionStatus::Suspended | ActionStatus::Retryable
         ) && action_snapshot.resume_token.is_some();
 
-        if action_snapshot.status == ActionStatus::Suspended && !descriptor.resumable {
+        if use_resume && !descriptor.resumable {
             return Err(ActionFabricError::NonResumableSuspension(
                 action_snapshot.capability,
             ));
@@ -600,6 +600,16 @@ impl ActionFabric {
                 reason,
                 resume_token,
             } => {
+                if resume_token.is_some() && !descriptor.resumable {
+                    let action = self.action_mut(plan_id, cursor)?;
+                    action.status = ActionStatus::Failed;
+                    action.last_error =
+                        Some("adapter returned resume state for non-resumable capability".into());
+                    self.finish_plan(plan_id, ActionPlanStatus::Failed)?;
+                    return Err(ActionFabricError::NonResumableSuspension(
+                        snapshot.capability,
+                    ));
+                }
                 let action = self.action_mut(plan_id, cursor)?;
                 action.status = ActionStatus::Retryable;
                 action.resume_token = resume_token;
@@ -805,7 +815,7 @@ pub(crate) fn validate_fabric_state(
             return Err(ActionFabricError::InvalidState);
         }
 
-        for action in &plan.actions {
+        for (index, action) in plan.actions.iter().enumerate() {
             if action.id.0 == 0 || !action_ids.insert(action.id.0) {
                 return Err(ActionFabricError::InvalidState);
             }
@@ -819,17 +829,60 @@ pub(crate) fn validate_fabric_state(
             if descriptor.verification_required && !action.verification_required {
                 return Err(ActionFabricError::InvalidState);
             }
+            if action.resume_token.is_some() && !descriptor.resumable {
+                return Err(ActionFabricError::InvalidState);
+            }
+            if action.rollback_token.is_some() && !descriptor.rollback_supported {
+                return Err(ActionFabricError::InvalidState);
+            }
+
+            if index < plan.cursor
+                && plan.status != ActionPlanStatus::RolledBack
+                && action.status != ActionStatus::Committed
+            {
+                return Err(ActionFabricError::InvalidState);
+            }
+            if index > plan.cursor && action.status != ActionStatus::Prepared {
+                return Err(ActionFabricError::InvalidState);
+            }
         }
 
-        if plan.status == ActionPlanStatus::Completed && plan.cursor != plan.actions.len() {
-            return Err(ActionFabricError::InvalidState);
+        if plan.status == ActionPlanStatus::Completed {
+            if plan.cursor != plan.actions.len()
+                || !plan
+                    .actions
+                    .iter()
+                    .all(|action| action.status == ActionStatus::Committed)
+            {
+                return Err(ActionFabricError::InvalidState);
+            }
         }
         if plan.cursor < plan.actions.len() {
             let current = &plan.actions[plan.cursor];
-            if plan.status == ActionPlanStatus::Suspended
-                && (current.status != ActionStatus::Suspended || current.resume_token.is_none())
-            {
-                return Err(ActionFabricError::InvalidState);
+            match plan.status {
+                ActionPlanStatus::Suspended
+                    if current.status != ActionStatus::Suspended
+                        || current.resume_token.is_none() =>
+                {
+                    return Err(ActionFabricError::InvalidState);
+                }
+                ActionPlanStatus::Ready
+                    if !matches!(
+                        current.status,
+                        ActionStatus::Prepared | ActionStatus::Retryable | ActionStatus::Running
+                    ) =>
+                {
+                    return Err(ActionFabricError::InvalidState);
+                }
+                ActionPlanStatus::Failed
+                    if !matches!(
+                        current.status,
+                        ActionStatus::Failed | ActionStatus::RolledBack
+                    ) =>
+                {
+                    return Err(ActionFabricError::InvalidState);
+                }
+                _ => {}
             }
         }
     }
