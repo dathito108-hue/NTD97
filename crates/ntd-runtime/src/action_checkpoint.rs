@@ -632,41 +632,74 @@ mod tests {
         registry
     }
 
+    struct SuspendAdapter;
+
+    impl crate::CapabilityAdapter for SuspendAdapter {
+        fn execute(
+            &mut self,
+            _action_id: ActionId,
+            _action: &TypedAction,
+        ) -> Result<crate::AdapterResult, String> {
+            Ok(crate::AdapterResult::Suspended {
+                resume_token: vec![7, 9],
+                note: "network paused".into(),
+            })
+        }
+    }
+
+    struct AcceptVerifier;
+
+    impl crate::ActionVerifier for AcceptVerifier {
+        fn verify(
+            &mut self,
+            _descriptor: &crate::CapabilityDescriptor,
+            _action: &TypedAction,
+            _output: &ActionOutput,
+        ) -> crate::ActionVerification {
+            crate::ActionVerification::Accept
+        }
+    }
+
     #[test]
     fn checkpoint_round_trips_action_state() {
-        let registry = registry();
-        let state = ActionFabricState {
-            next_plan_id: 2,
-            next_action_id: 2,
-            plans: BTreeMap::from([(
-                1,
-                ActionPlanState {
-                    id: ActionPlanId(1),
-                    task_id: 9,
-                    cursor: 0,
-                    status: ActionPlanStatus::Suspended,
-                    actions: vec![PlannedAction {
-                        id: ActionId(1),
-                        node_id: 4,
-                        capability: CapabilityId("web.search".into()),
-                        capability_version: 1,
-                        side_effect: SideEffectClass::ReadOnly,
-                        verification_required: true,
-                        action: TypedAction::WebSearch {
-                            query: "NTD97".into(),
-                            max_results: 3,
-                        },
-                        status: ActionStatus::Suspended,
-                        attempts: 1,
-                        output: None,
-                        resume_token: Some(vec![7, 9]),
-                        rollback_token: None,
-                        last_error: Some("network paused".into()),
-                    }],
-                },
-            )]),
-        };
+        use ntd_core::{ActionNode, TaskGraph};
 
+        let registry = registry();
+        let mut fabric = crate::ActionFabric::new(registry.clone());
+        fabric
+            .register_adapter(CapabilityId("web.search".into()), SuspendAdapter)
+            .expect("adapter");
+
+        let graph = TaskGraph {
+            actions: vec![ActionNode {
+                id: 4,
+                capability: CapabilityId("web.search".into()),
+                side_effect: SideEffectClass::ReadOnly,
+                verification_required: true,
+            }],
+        };
+        let plan = fabric
+            .prepare_plan(
+                9,
+                &graph,
+                BTreeMap::from([(
+                    4,
+                    TypedAction::WebSearch {
+                        query: "NTD97".into(),
+                        max_results: 3,
+                    },
+                )]),
+            )
+            .expect("plan");
+
+        let grant = crate::AuthorityGrant::new()
+            .with_scope(AuthorityScope::new("network.read").expect("scope"));
+        let report = fabric
+            .execute_next(plan, &grant, &mut AcceptVerifier)
+            .expect("suspend");
+        assert_eq!(report.plan_status, ActionPlanStatus::Suspended);
+
+        let state = fabric.state().clone();
         let first = encode_action_fabric_checkpoint(&registry, &state).expect("encode");
         let second = encode_action_fabric_checkpoint(&registry, &state).expect("encode");
         assert_eq!(first, second);
