@@ -671,7 +671,10 @@ mod tests {
             byte_len: 4,
         };
 
-        assert_eq!(validate_graph_binding(&graph, ValueId(0), &descriptor), Ok(()));
+        assert_eq!(
+            validate_graph_binding(&graph, ValueId(0), &descriptor),
+            Ok(())
+        );
     }
 
     #[test]
