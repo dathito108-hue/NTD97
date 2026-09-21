@@ -9,6 +9,7 @@ rust-version.workspace = true
 ntd-ir = { path = "../ntd-ir" }
 
 [dev-dependencies]
+ntd-core = { path = "../ntd-core" }
 ntd-runtime = { path = "../ntd-runtime" }
 
 [lints]

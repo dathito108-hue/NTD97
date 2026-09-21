@@ -1,17 +1,31 @@
 #![forbid(unsafe_code)]
 
+mod checkpoint;
+mod cognition;
 mod executor;
 mod generation;
+mod memory;
 mod mobile;
 mod tensor;
 mod tokenizer;
 
+pub use checkpoint::{
+    decode_cognitive_checkpoint, encode_cognitive_checkpoint, CheckpointError, SIK97_HEADER_LEN,
+    SIK97_MAGIC, SIK97_MAJOR, SIK97_MINOR,
+};
+pub use cognition::{
+    CognitiveContext, CognitiveCycleReport, CognitiveDirective, CognitiveError, CognitiveExecutor,
+    CognitiveIdentity, CognitiveObservation, CognitivePlanner, CognitiveRuntime, CognitiveState,
+    CognitiveTask, CognitiveVerifier, DeltaActivationHook, Goal, GoalStatus, LearnedDelta,
+    TaskStatus, VerificationDecision, WorldFact,
+};
 pub use executor::{ExecutionError, GraphExecutor};
 pub use generation::{
     sample_token, DistributionKind, GeneratedText, GenerationConfig, GenerationError,
     GenerationResult, GraphGenerator, KvCache, KvCacheError, KvLayerCache, PrefixCache,
     SamplingError, SamplingMode,
 };
+pub use memory::{MemoryError, MemoryHit, MemoryKind, MemoryQuery, MemoryRecord, SovereignMemory};
 pub use mobile::{
     npu_provider, page_windows, plan_tensor_placement, verify_provider_equivalence,
     vulkan_provider, AdaptiveExecutionProvider, AutotuneTable, ByteRegion, ComputePolicy,

@@ -93,20 +93,24 @@ Exit: the same NTD97 graph can select the fastest registered **verified** provid
 
 Goal: build the persistent intelligence loop on top of native inference.
 
-Planned scope:
+Delivered contract:
 
-- intent/task IR;
-- adaptive reasoning budget;
-- reflex vs deep iterative reasoning inside one runtime;
-- executor/verifier split;
-- persistent goals/world state/checkpoints;
-- episodic, semantic and procedural memory;
-- retrieval/write/forget semantics;
-- learned adapter/delta hooks;
-- cold-process reconstruction of the same cognitive identity.
+- persistent `CognitiveIdentity` and logical tick;
+- native goals, tasks, world facts and monotonic state IDs;
+- persisted `Intent` + `TaskGraph` task representation from `ntd-core`;
+- adaptive Reflex / Standard / Deep / Recovery iterative reasoning in one runtime;
+- explicit `CognitivePlanner` / `CognitiveExecutor` / `CognitiveVerifier` split;
+- verified internal directives for recall, memory write, world update, work and completion;
+- episodic, semantic and procedural `SovereignMemory`;
+- deterministic store / retrieve / forget memory semantics;
+- verification retry/failure/completion events recorded into episodic memory;
+- learned-delta state plus pre-activation hook;
+- deterministic SIK97 cognitive checkpoint format;
+- strict restored-state validation and incompatible-state rejection;
+- NCC97 State-capsule binding through `ContinuityState`;
+- cold-process reconstruction test that resumes the same task and identity after checkpoint restore.
 
 Exit: one local NTD97 identity can reason, remember, checkpoint and recover without switching to another model service.
-
 ## M5 — Major Block E: Tool, Internet + Device Action Fabric
 
 Goal: give cognition typed, governed real-world capabilities.

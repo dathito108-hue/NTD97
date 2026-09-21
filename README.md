@@ -69,22 +69,24 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Major Block C — Adaptive Mobile Compute Runtime**
+**Major Block D — Cognitive Runtime + Sovereign Memory**
 
-NTD97 now routes the same native graph through a resource-aware provider layer:
+NTD97 now preserves one cognitive identity across reasoning, memory and cold reconstruction:
 
 ```text
-NCC97 / NIR97 native model
-  -> GraphExecutor
-  -> AdaptiveExecutionProvider
-       -> verified NPU adapter when safe
-       -> verified Vulkan adapter when safe
-       -> tiled CPU provider
-       -> CPU reference fallback
-  -> identical NTD97 IR semantics
+native NTD97 inference/runtime
+  -> CognitiveRuntime
+       -> adaptive reasoning budget
+       -> planner / executor / verifier
+       -> goals + tasks + world state
+       -> episodic / semantic / procedural memory
+       -> learned delta activation
+  -> deterministic SIK97 checkpoint
+  -> NCC97 State capsule
+  -> restore same cognitive identity and continue task
 ```
 
-The router accounts for RAM, battery, thermal pressure, latency budget, provider working set, verified autotune measurements, quantization profile and tensor placement/paging policy. Accelerator implementations remain replaceable platform adapters; no vendor or source-model runtime is part of NTD97 identity.
+No cloud AI or alternate model runtime is required for cognition-state existence or restore. Tool/web/device execution remains the next major block.
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
 See:
@@ -97,6 +99,7 @@ See:
 - `docs/NATIVE_EXECUTION_FOUNDATION.md`
 - `docs/NATIVE_GENERATIVE_RUNTIME.md`
 - `docs/ADAPTIVE_MOBILE_COMPUTE_RUNTIME.md`
+- `docs/COGNITIVE_RUNTIME_SOVEREIGN_MEMORY.md`
 - `docs/COGNITIVE_CAPSULE.md`
 - `docs/SOVEREIGN_MODEL.md`
 - `docs/CONTINUITY_3D.md`

@@ -130,3 +130,9 @@ This is required for safe capability acquisition and reproducible restore.
 Readers must reject incompatible major versions.
 
 Unknown optional sections are skipped through length-prefixed descriptors. Unknown required features cause a clear compatibility error.
+
+## Current cognitive-state binding
+
+Major Block D binds mutable cognitive continuity to the deterministic `SIK97\0` checkpoint defined in `docs/COGNITIVE_RUNTIME_SOVEREIGN_MEMORY.md`.
+
+A State capsule may embed that checkpoint in `CONTINUITY_STATE` and bind the capsule to a known base root. The checkpoint currently carries the atomic cognitive state, including sovereign memory; later backup/dedup work may split memory into dedicated `MEMORY_STATE` chunks without changing live runtime identity.
