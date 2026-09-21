@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
+use std::{cell::Cell, collections::BTreeMap};
 
 use ntd_assimilation::{
-    build_native_package, lower_llama_model, lowered_llama_candidate, verify_native_package,
-    AssimilationIdentity, ForgeSandbox, GgufModel, GgufValueType, LicenseRecord,
+    build_native_package, lower_llama_model, lower_llama_model_from_source,
+    lowered_llama_candidate, verify_native_package, AssimilationIdentity, ForgeSandbox,
+    GgufByteSource, GgufError, GgufModel, GgufValueType, LicenseRecord, SliceGgufSource,
     NativeValidationSandbox, SourcePackage, GGUF_MAGIC, GGUF_VERSION,
 };
 use ntd_capsule::{
@@ -398,6 +399,45 @@ fn gpt2_fixture() -> Vec<u8> {
     align(&mut out);
     out.extend_from_slice(&data);
     out
+}
+
+struct CountingSource<'a> {
+    bytes: &'a [u8],
+    reads: Cell<usize>,
+    max_read: Cell<usize>,
+}
+
+impl GgufByteSource for CountingSource<'_> {
+    fn byte_len(&self) -> Result<u64, GgufError> {
+        u64::try_from(self.bytes.len()).map_err(|_| GgufError::LimitExceeded)
+    }
+
+    fn read_exact_at(&self, offset: u64, len: usize) -> Result<Vec<u8>, GgufError> {
+        self.reads.set(self.reads.get() + 1);
+        self.max_read.set(self.max_read.get().max(len));
+        SliceGgufSource::new(self.bytes).read_exact_at(offset, len)
+    }
+}
+
+#[test]
+fn source_backed_lowering_matches_in_memory_lowering_with_bounded_reads() {
+    let bytes = fixture();
+    let source = CountingSource {
+        bytes: &bytes,
+        reads: Cell::new(0),
+        max_read: Cell::new(0),
+    };
+
+    let source_model = GgufModel::parse_source(&source).expect("parse source");
+    let source_lowered =
+        lower_llama_model_from_source(&source, &source_model).expect("lower source");
+
+    let memory_model = GgufModel::parse(&bytes).expect("parse memory");
+    let memory_lowered = lower_llama_model(&bytes, &memory_model).expect("lower memory");
+
+    assert_eq!(source_lowered, memory_lowered);
+    assert!(source.reads.get() > source_model.tensors.len());
+    assert!(source.max_read.get() < bytes.len());
 }
 
 #[test]
