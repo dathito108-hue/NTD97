@@ -8,7 +8,8 @@ mod transcode;
 use std::collections::BTreeMap;
 
 pub use lower::{
-    lower_llama_model, lowered_llama_candidate, LlamaConfig, LlamaTensorBinding, LoweredLlamaModel,
+    lower_llama_model, lower_llama_model_from_source, lowered_llama_candidate, LlamaConfig,
+    LlamaTensorBinding, LoweredLlamaModel,
 };
 pub use reader::{parse_gguf, parse_gguf_source};
 pub use storage::{FileGgufSource, GgufByteSource, SliceGgufSource};
@@ -201,6 +202,10 @@ pub struct GgufModel {
 impl GgufModel {
     pub fn parse(bytes: &[u8]) -> Result<Self, GgufError> {
         parse_gguf(bytes)
+    }
+
+    pub fn parse_source(source: &dyn GgufByteSource) -> Result<Self, GgufError> {
+        parse_gguf_source(source)
     }
 
     pub fn architecture(&self) -> Result<&str, GgufError> {
