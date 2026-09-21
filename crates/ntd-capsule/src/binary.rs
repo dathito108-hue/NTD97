@@ -687,7 +687,7 @@ mod tests {
             CapsuleView::read(&bytes),
             Err(CapsuleError::UnsupportedContract(
                 NativeIntelligenceContract {
-                    capsule: CapsuleVersion { major: 1, minor: 0 },
+                    capsule: CapsuleVersion { major: 1, minor: NCC97_MINOR },
                     ir: IrVersion::CURRENT,
                 }
             ))
