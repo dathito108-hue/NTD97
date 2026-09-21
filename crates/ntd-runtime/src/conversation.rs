@@ -42,6 +42,7 @@ pub struct CompiledChatPrompt {
 pub enum ChatPromptError {
     EmptyUserMessage,
     EmptyTurn(usize),
+    InvalidHistoryOrder(usize),
     InvalidTokenBudget,
     ContextOverflow { required: usize, limit: usize },
     Tokenizer(TokenizerError),
@@ -68,9 +69,20 @@ impl NativeChatPromptCompiler {
             if turn.content.trim().is_empty() {
                 return Err(ChatPromptError::EmptyTurn(index));
             }
+            let expected = if index % 2 == 0 {
+                ConversationRole::User
+            } else {
+                ConversationRole::Assistant
+            };
+            if turn.role != expected {
+                return Err(ChatPromptError::InvalidHistoryOrder(index));
+            }
+        }
+        if history.len() % 2 != 0 {
+            return Err(ChatPromptError::InvalidHistoryOrder(history.len() - 1));
         }
 
-        for dropped in 0..=history.len() {
+        for dropped in (0..=history.len()).step_by(2) {
             let retained = &history[dropped..];
             let text = render_prompt(retained, user_message);
             let token_ids = tokenizer
@@ -156,7 +168,8 @@ mod tests {
         let history = vec![
             ConversationTurn::user("first message"),
             ConversationTurn::assistant("first answer"),
-            ConversationTurn::user("recent"),
+            ConversationTurn::user("recent question"),
+            ConversationTurn::assistant("recent answer"),
         ];
         let tokenizer = byte_tokenizer();
         let no_history_len = tokenizer
@@ -164,7 +177,10 @@ mod tests {
             .expect("encode")
             .len();
         let recent_len = tokenizer
-            .encode_text("User: recent\nUser: now\nAssistant:", true)
+            .encode_text(
+                "User: recent question\nAssistant: recent answer\nUser: now\nAssistant:",
+                true,
+            )
             .expect("encode")
             .len();
 
@@ -172,10 +188,27 @@ mod tests {
             .compile(&history, "now", &tokenizer, recent_len)
             .expect("compile");
 
-        assert_eq!(compiled.retained_history_turns, 1);
+        assert_eq!(compiled.retained_history_turns, 2);
         assert_eq!(compiled.dropped_history_turns, 2);
-        assert_eq!(compiled.text, "User: recent\nUser: now\nAssistant:");
+        assert_eq!(
+            compiled.text,
+            "User: recent question\nAssistant: recent answer\nUser: now\nAssistant:"
+        );
         assert!(compiled.token_ids.len() > no_history_len);
+    }
+
+    #[test]
+    fn rejects_non_alternating_history() {
+        let compiler = NativeChatPromptCompiler;
+        let history = vec![
+            ConversationTurn::user("question"),
+            ConversationTurn::user("second question"),
+        ];
+
+        assert_eq!(
+            compiler.compile(&history, "now", &byte_tokenizer(), 128),
+            Err(ChatPromptError::InvalidHistoryOrder(1))
+        );
     }
 
     #[test]
