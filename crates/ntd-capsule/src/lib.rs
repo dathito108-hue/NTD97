@@ -1,5 +1,14 @@
 #![forbid(unsafe_code)]
 
+mod binary;
+mod hash;
+
+pub use binary::{
+    CapsuleBuilder, CapsuleError, CapsuleKind, CapsuleView, ChunkSource, ChunkSpec,
+    ChunkStorageView, ChunkView, HEADER_LEN, INDEX_ENTRY_LEN, MANIFEST_LEN,
+};
+pub use hash::{sha256, Digest};
+
 use ntd_ir::IrVersion;
 
 pub const NCC97_MAGIC: [u8; 6] = *b"NCC97\0";
@@ -27,6 +36,32 @@ pub enum SectionKind {
     EmbodimentProfile = 16,
 }
 
+impl TryFrom<u16> for SectionKind {
+    type Error = CapsuleError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Graph),
+            2 => Ok(Self::Tensors),
+            3 => Ok(Self::Tokenizer),
+            4 => Ok(Self::Codecs),
+            5 => Ok(Self::Router),
+            6 => Ok(Self::Adapters),
+            7 => Ok(Self::Capabilities),
+            8 => Ok(Self::MemorySchema),
+            9 => Ok(Self::MemoryState),
+            10 => Ok(Self::DeviceProfiles),
+            11 => Ok(Self::Provenance),
+            12 => Ok(Self::Signatures),
+            13 => Ok(Self::AssimilationLog),
+            14 => Ok(Self::WorldStateSchema),
+            15 => Ok(Self::ContinuityState),
+            16 => Ok(Self::EmbodimentProfile),
+            other => Err(CapsuleError::InvalidSectionKind(other)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapsuleVersion {
     pub major: u16,
@@ -44,11 +79,6 @@ impl CapsuleVersion {
     }
 }
 
-/// Version contract recorded by an NCC97 manifest.
-///
-/// Phase 003A deliberately freezes the semantic contract only. The exact binary
-/// header layout, offsets, encoding and reader/writer implementation belong to
-/// Phase 003B.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeIntelligenceContract {
     pub capsule: CapsuleVersion,
@@ -83,5 +113,14 @@ mod tests {
             capsule: CapsuleVersion::CURRENT,
             ir: IrVersion { major: 1, minor: 0 },
         }));
+    }
+
+    #[test]
+    fn section_kind_is_strictly_decoded() {
+        assert_eq!(SectionKind::try_from(1), Ok(SectionKind::Graph));
+        assert_eq!(
+            SectionKind::try_from(999),
+            Err(CapsuleError::InvalidSectionKind(999))
+        );
     }
 }
