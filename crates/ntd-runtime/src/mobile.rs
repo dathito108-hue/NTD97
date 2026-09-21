@@ -322,6 +322,9 @@ impl ProviderProfile {
                 TensorOp::Gather,
                 TensorOp::RotaryPosition,
                 TensorOp::CausalAttention,
+                TensorOp::Silu,
+                TensorOp::Reshape,
+                TensorOp::Transpose,
             ],
         }
     }
