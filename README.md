@@ -1,12 +1,12 @@
 # NTD97 — Mobile General Intelligence Runtime
 
-NTD97 is a clean-room, mobile-first AGI research project.
+NTD97 is a clean-room, sovereign mobile AGI model and runtime designed to make the phone itself the primary home of the intelligence.
 
 Its target is a single portable intelligence runtime designed for current phones: deep reasoning when required, very low interaction overhead, fast task execution, broad tool use, internet access, device/PC interaction, capability acquisition, and portable intelligence backup.
 
 ## Canonical principles
 
-- **One runtime, one architecture.** External model formats are import sources, not permanent parallel backends.
+- **NTD97 is the model.** NTD97 is one independent mobile AGI identity, not an app that switches among external models.\n- **One runtime, one architecture.** External models, weights, knowledge and skills are import sources, not permanent parallel backends.\n- **Native assimilation.** Successfully imported intelligence is converted into NTD97 IR + `.ncc97` native state and becomes part of NTD97 immediately after validation and atomic commit. The source runtime is not required afterward.\n- **Sovereign-first.** Core reasoning, memory, planning, execution and recovery must work without third-party AI APIs, cloud control planes, hosted model services or mandatory accounts.
 - **Act before talking.** Executable requests should normally become: understand -> plan -> act -> verify -> concise result.
 - **Adaptive reasoning.** Simple work uses a low-latency reflex budget; difficult work receives progressively deeper compute inside the same cognitive runtime.
 - **Mobile-first execution.** Every plan is aware of RAM, CPU/GPU/NPU availability, battery, thermal pressure, connectivity, and Android/iOS lifecycle constraints.
@@ -14,12 +14,12 @@ Its target is a single portable intelligence runtime designed for current phones
 - **Capability growth.** Missing capabilities may be discovered, learned, built, tested in isolation, versioned, installed, and rolled back.
 - **Portable intelligence.** NTD97 defines a native Cognitive Capsule format: `.ncc97`.
 - **Local-first, network-capable.** Internet and remote execution extend the system but are not mandatory architectural foundations.
-- **Short communication, deep understanding.** User-facing responses should be minimal unless explanation is requested.
+- **Short communication, deep understanding.** User-facing responses should be minimal unless explanation is requested.\n- **Embodied 3D assistant.** A persistent interactive 3D character is a first-class interface, including an in-app scene and a user-authorized floating surface where the OS permits it.\n- **24/7 logical continuity.** NTD97 preserves goals, plans and checkpoints across UI exit, process death and reboot, resuming through platform-allowed background/foreground mechanisms.
 
 ## Canonical stack
 
 ```text
-Human / Sensors / App UI / Paired PC
+Human / Sensors / 3D Assistant / App UI / Paired PC
                |
         Interaction Fabric
                |
@@ -36,6 +36,10 @@ Human / Sensors / App UI / Paired PC
      Capability / Tool Graph
        /    |      |      \
      Web  Device  Files  PC Link
+               |
+      Sovereign Intelligence Kernel (SIK97)
+               |
+           NTD97 IR
                |
       Adaptive Mobile Runtime
                |
@@ -56,7 +60,7 @@ Human / Sensors / App UI / Paired PC
 - device execution profiles;
 - provenance, integrity hashes, signatures, and version metadata.
 
-Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, then normalize them into the NTD97 runtime representation. A full backup can be exported as a self-contained or deduplicated `.ncc97` capsule.
+Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, plus structured knowledge and skill packages, then assimilate supported semantics into NTD97 IR and native capsule state. A full backup can be exported as a self-contained or deduplicated `.ncc97` capsule.
 
 ## Repository status
 
@@ -67,5 +71,5 @@ This repository starts from zero. No AMPER source tree or architecture is inheri
 See:
 
 - `docs/ARCHITECTURE.md`
-- `docs/COGNITIVE_CAPSULE.md`
+- `docs/COGNITIVE_CAPSULE.md`\n- `docs/SOVEREIGN_MODEL.md`\n- `docs/CONTINUITY_3D.md`
 - `docs/ROADMAP.md`
