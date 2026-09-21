@@ -1,10 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::{
-    cell::RefCell,
-    collections::BTreeMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use ntd_core::{ActionNode, CapabilityId, Intent, SideEffectClass, TaskGraph};
 use ntd_mobile_shell::{
@@ -13,9 +9,9 @@ use ntd_mobile_shell::{
     WakeReason,
 };
 use ntd_runtime::{
-    ActionFabric, ActionOutput, ActionPlanStatus, ActionVerification, ActionVerifier, AdapterResult,
-    AuthorityGrant, AuthorityScope, CapabilityAdapter, CapabilityDescriptor, CapabilityDomain,
-    CapabilityRegistry, CognitiveIdentity, CognitiveRuntime, TypedAction,
+    ActionFabric, ActionOutput, ActionPlanStatus, ActionVerification, ActionVerifier,
+    AdapterResult, AuthorityGrant, AuthorityScope, CapabilityAdapter, CapabilityDescriptor,
+    CapabilityDomain, CapabilityRegistry, CognitiveIdentity, CognitiveRuntime, TypedAction,
 };
 
 struct WriteAdapter {
