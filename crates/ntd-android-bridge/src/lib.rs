@@ -27,7 +27,8 @@ use ntd_mobile_shell::{
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
 use ntd_runtime::{
-    decode_conversation_checkpoint, encode_conversation_checkpoint, CognitiveIdentity,
+    choose_reasoning_budget, decode_conversation_checkpoint, encode_conversation_checkpoint,
+    memory_recall_limit_for_budget, model_inference_signals, CognitiveIdentity,
     CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
     LlamaSpmTokenizer, NativeChatPromptCompiler, ResourceSnapshot, SamplingMode,
     SovereignConversationState, ThermalState,
@@ -79,6 +80,7 @@ struct NativeState {
     input_peak_milli: u16,
     chat_model: Option<Arc<NativeChatModel>>,
     chat_session: Option<NativeChatSession>,
+    chat_submit_in_progress: bool,
     conversation: SovereignConversationState,
     next_chat_request_id: u64,
 }
@@ -550,30 +552,109 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         return Err("max_new_tokens must be greater than zero".into());
     }
 
+    let (model, history, prior_failure) = {
+        let mut guard = lock_state();
+        if guard.chat_submit_in_progress
+            || guard
+                .chat_session
+                .as_ref()
+                .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+        {
+            return Err("another native chat request is still running".into());
+        }
+        let model = guard
+            .chat_model
+            .clone()
+            .ok_or_else(|| "no verified native chat model is loaded".to_owned())?;
+        guard.chat_submit_in_progress = true;
+        (
+            model,
+            guard.conversation.turns().to_vec(),
+            guard.conversation.prior_conversation_failure(),
+        )
+    };
+
+    let result = submit_chat_reserved(
+        &model,
+        &history,
+        prior_failure,
+        user_message,
+        max_new_tokens,
+    );
+
+    lock_state().chat_submit_in_progress = false;
+    result
+}
+
+fn submit_chat_reserved(
+    model: &Arc<NativeChatModel>,
+    history: &[ntd_runtime::ConversationTurn],
+    prior_failure: bool,
+    user_message: &str,
+    max_new_tokens: usize,
+) -> Result<u64, String> {
+    let prompt_limit = model.context_limit.saturating_sub(max_new_tokens).max(1);
+    let base = NativeChatPromptCompiler
+        .compile(
+            history,
+            user_message,
+            &model.tokenizer,
+            prompt_limit,
+        )
+        .map_err(|error| format!("compile preflight chat prompt: {error:?}"))?;
+
+    let generator = GraphGenerator::new(
+        model.activation.graph.clone(),
+        CpuReferenceProvider,
+        BTreeMap::new(),
+        model.activation.manifest.token_input,
+        usize::try_from(model.activation.manifest.distribution_output)
+            .map_err(|_| "distribution output does not fit usize".to_owned())?,
+        usize::try_from(model.activation.manifest.vocabulary_size)
+            .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
+    )
+    .map_err(|error| format!("build reasoning preflight generator: {error:?}"))?;
+    let distribution = generator
+        .next_distribution_with_resolver(&model.resolver, &base.token_ids, model.context_limit)
+        .map_err(|error| format!("native reasoning preflight: {error:?}"))?;
+    let inference = model_inference_signals(&distribution)
+        .map_err(|error| format!("analyze native reasoning logits: {error:?}"))?;
+    let signals =
+        inference.cognitive_signals(base.token_ids.len(), model.context_limit, prior_failure);
+    let budget = choose_reasoning_budget(signals);
+    let recall_limit = memory_recall_limit_for_budget(budget);
+
     let mut guard = lock_state();
     if guard
         .chat_session
         .as_ref()
         .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
     {
-        return Err("another native chat request is still running".into());
+        return Err("another native chat request started during preflight".into());
     }
-    let model = guard
+    let loaded_model = guard
         .chat_model
-        .clone()
-        .ok_or_else(|| "no verified native chat model is loaded".to_owned())?;
-    let prompt_limit = model.context_limit.saturating_sub(max_new_tokens).max(1);
+        .as_ref()
+        .ok_or_else(|| "native chat model was unloaded during preflight".to_owned())?;
+    if loaded_model.asset_id != model.asset_id || loaded_model.version != model.version {
+        return Err("native chat model changed during reasoning preflight".into());
+    }
+
+    let mut conversation = guard.conversation.clone();
+    let recalled = conversation
+        .recall_conversation_context(user_message, recall_limit)
+        .map_err(|error| format!("recall sovereign conversation memory: {error:?}"))?;
     let compiled = NativeChatPromptCompiler
-        .compile(
-            guard.conversation.turns(),
+        .compile_with_memory(
+            conversation.turns(),
+            &recalled,
             user_message,
             &model.tokenizer,
             prompt_limit,
         )
-        .map_err(|error| format!("compile chat prompt: {error:?}"))?;
+        .map_err(|error| format!("compile memory-augmented chat prompt: {error:?}"))?;
 
-    let task_id = guard
-        .conversation
+    let task_id = conversation
         .begin_turn(
             model.asset_id.clone(),
             model.version,
@@ -582,11 +663,21 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
             max_new_tokens,
         )
         .map_err(|error| format!("begin sovereign conversation turn: {error:?}"))?;
+    conversation
+        .record_reasoning_profile(
+            task_id,
+            budget,
+            signals,
+            compiled.retained_memory_items,
+        )
+        .map_err(|error| format!("record sovereign reasoning profile: {error:?}"))?;
+
     let request_id = guard.next_chat_request_id;
     guard.next_chat_request_id = guard
         .next_chat_request_id
         .checked_add(1)
         .ok_or_else(|| "chat request id overflow".to_owned())?;
+    guard.conversation = conversation;
     guard.chat_session = Some(NativeChatSession {
         request_id,
         task_id,
