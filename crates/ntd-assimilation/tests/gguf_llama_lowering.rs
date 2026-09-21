@@ -783,6 +783,51 @@ fn canonical_gpt2_lowers_packages_and_executes_native_tokenizer() {
 }
 
 #[test]
+fn llama_spm_omitted_policy_metadata_inherits_canonical_source_defaults() {
+    let bytes = fixture();
+    let mut model = GgufModel::parse(&bytes).expect("parse");
+    model.metadata.remove("tokenizer.ggml.add_space_prefix");
+    model.metadata.remove("tokenizer.ggml.add_bos_token");
+    model.metadata.remove("tokenizer.ggml.add_eos_token");
+
+    let lowered = lower_llama_model(&bytes, &model).expect("lower with source defaults");
+    let NativeTokenizerModel::LlamaSpm {
+        add_space_prefix,
+        add_bos_token,
+        add_eos_token,
+        ..
+    } = lowered.tokenizer.model
+    else {
+        panic!("expected native LLaMA SPM tokenizer");
+    };
+
+    assert!(add_space_prefix);
+    assert!(add_bos_token);
+    assert!(!add_eos_token);
+}
+
+#[test]
+fn llama_spm_explicit_policy_metadata_overrides_source_defaults() {
+    let bytes = fixture();
+    let model = GgufModel::parse(&bytes).expect("parse");
+    let lowered = lower_llama_model(&bytes, &model).expect("lower");
+
+    let NativeTokenizerModel::LlamaSpm {
+        add_space_prefix,
+        add_bos_token,
+        add_eos_token,
+        ..
+    } = lowered.tokenizer.model
+    else {
+        panic!("expected native LLaMA SPM tokenizer");
+    };
+
+    assert!(!add_space_prefix);
+    assert!(!add_bos_token);
+    assert!(!add_eos_token);
+}
+
+#[test]
 fn lowering_rejects_incomplete_llama_spm_metadata() {
     let bytes = fixture();
     let mut model = GgufModel::parse(&bytes).expect("parse");
