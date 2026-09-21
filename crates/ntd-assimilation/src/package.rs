@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use ntd_capsule::{
     decode_graph_section, encode_native_generative_manifest, encode_native_tokenizer,
-    encode_tensor_descriptors, load_native_generative_program, sha256, CapsuleBuilder,
-    CapsuleKind, CapsuleView, ChunkStorageView, Digest, MemoryContentStore,
-    NativeGenerativeManifest, SectionKind,
+    encode_tensor_descriptors, load_native_generative_program, sha256, CapsuleBuilder, CapsuleKind,
+    CapsuleView, ChunkStorageView, Digest, MemoryContentStore, NativeGenerativeManifest,
+    SectionKind,
 };
 use ntd_core::{CapabilityId, SideEffectClass};
 use ntd_runtime::{AuthorityScope, CapabilityDescriptor, CapabilityDomain};
@@ -470,9 +470,7 @@ pub fn verify_native_package_with_shards(
         .map_err(|_| AssimilationError::InvalidSignature)?;
 
     let (asset_id, version, kind) = log.ok_or(AssimilationError::InvalidPackage)?;
-    if asset_id != package.asset_id
-        || version != package.version
-        || kind != AssetKind::Intelligence
+    if asset_id != package.asset_id || version != package.version || kind != AssetKind::Intelligence
     {
         return Err(AssimilationError::InvalidPackage);
     }
@@ -557,9 +555,7 @@ fn native_capsule_id(
     Ok(capsule_id)
 }
 
-fn thin_section_signing_payload(
-    chunks: &[ThinPackageChunk],
-) -> Result<Vec<u8>, AssimilationError> {
+fn thin_section_signing_payload(chunks: &[ThinPackageChunk]) -> Result<Vec<u8>, AssimilationError> {
     let count = u32::try_from(chunks.len()).map_err(|_| AssimilationError::Overflow)?;
     let mut out = b"NTD97-NATIVE-ASSET-SIGN-v2".to_vec();
     push_u32(&mut out, count);
