@@ -24,6 +24,11 @@ const PINNED_MODEL_SHA256: Digest = [
     0x54, 0xc5, 0x6a, 0xfb, 0xc2, 0x3a, 0xb1, 0xc5, 0xe5, 0x6a, 0x72, 0xe6, 0x99, 0x12, 0xc0, 0x4b,
 ];
 const SOURCE_GOLDEN_STEPS: usize = 200;
+const PINNED_ANDROID_VERIFY_KEY: [u8; 32] = [
+    0xe1, 0xb7, 0x1a, 0xbf, 0xd3, 0x23, 0x28, 0x04, 0x26, 0x1e, 0x42, 0x3f, 0x36, 0x55, 0x6f,
+    0x6b, 0x41, 0x85, 0xbe, 0xd4, 0x1f, 0xdf, 0xd0, 0x0d, 0x76, 0x9c, 0xe1, 0x5a, 0x39, 0x4f,
+    0x43, 0xce,
+];
 const TOKENIZER_PROMPTS: [&str; 7] = [
     "",
     "hello",
@@ -46,11 +51,15 @@ fn run() -> Result<(), String> {
     let program = args
         .next()
         .unwrap_or_else(|| "stories260k-evidence".to_owned());
-    let usage =
-        || format!("usage: {program} <stories260K.gguf> <source-output> <source-token-ids>");
+    let usage = || {
+        format!(
+            "usage: {program} <stories260K.gguf> <source-output> <source-token-ids> [native-export-dir]"
+        )
+    };
     let model_path = args.next().ok_or_else(usage)?;
     let source_output_path = args.next().ok_or_else(usage)?;
     let source_token_ids_path = args.next().ok_or_else(usage)?;
+    let export_root = args.next().map(PathBuf::from);
     if args.next().is_some() {
         return Err(usage());
     }
@@ -96,8 +105,18 @@ fn run() -> Result<(), String> {
 
     validate_plan(&plan)?;
 
-    let shard_root = evidence_shard_root();
-    if shard_root.exists() {
+    let shard_root = export_root
+        .as_ref()
+        .map(|root| root.join("shards"))
+        .unwrap_or_else(evidence_shard_root);
+    if let Some(root) = export_root.as_ref() {
+        if root.exists() {
+            fs::remove_dir_all(root)
+                .map_err(|error| format!("clear native export {}: {error}", root.display()))?;
+        }
+        fs::create_dir_all(root)
+            .map_err(|error| format!("create native export {}: {error}", root.display()))?;
+    } else if shard_root.exists() {
         fs::remove_dir_all(&shard_root)
             .map_err(|error| format!("clear shard root {}: {error}", shard_root.display()))?;
     }
@@ -135,6 +154,9 @@ fn run() -> Result<(), String> {
             passed_regressions: vec!["nir97-roundtrip".into()],
         };
         let identity = AssimilationIdentity::from_seed([0x97; 32]);
+        if identity.verify_key() != PINNED_ANDROID_VERIFY_KEY {
+            return Err("pinned Android verification key drift".into());
+        }
         let package = build_streamed_native_package(
             StreamedPackageSpec::new(
                 "model.ntd97.stories260k",
@@ -151,6 +173,18 @@ fn run() -> Result<(), String> {
         .map_err(|error| format!("build signed Thin package: {error:?}"))?;
         verify_native_package_with_shards(&package, &identity.verify_key(), &shard_store)
             .map_err(|error| format!("verify signed Thin package: {error:?}"))?;
+        if let Some(root) = export_root.as_ref() {
+            let capsule_path = root.join("stories260K.ncc97");
+            fs::write(&capsule_path, &package.native_capsule).map_err(|error| {
+                format!("write native capsule {}: {error}", capsule_path.display())
+            })?;
+            println!("native_export_capsule={}", capsule_path.display());
+            println!("native_export_shards={}", shard_root.display());
+            println!(
+                "native_export_verify_key={}",
+                digest_hex(&PINNED_ANDROID_VERIFY_KEY)
+            );
+        }
 
         let mut asset_store = NativeAssetStore::new(identity.verify_key());
         asset_store
@@ -234,7 +268,9 @@ fn run() -> Result<(), String> {
         Ok(())
     })();
 
-    let _ = fs::remove_dir_all(&shard_root);
+    if export_root.is_none() {
+        let _ = fs::remove_dir_all(&shard_root);
+    }
     result
 }
 
