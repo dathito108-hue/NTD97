@@ -1,6 +1,6 @@
 # M11 Real Native Intelligence
 
-Status: in progress.
+Status: complete.
 
 M11 converts the existing native execution substrate into a path capable of accepting real external model intelligence and ending in source-runtime-independent NTD97 assets.
 
@@ -110,21 +110,40 @@ tensor resolution. The normalized source and NTD97 outputs are both 322 bytes wi
 SHA-256 `594a911ebb2ecfeb608919bf157887e82d0090507fa187d45b2b7e23e5e8f583`.
 The source runtime exists only inside the validation job and is not a production dependency.
 
-## Remaining activation blockers
+## Acceptance result
 
-M11 deliberately remains in progress because:
+M11 is complete for the supported canonical LLaMA path represented by the pinned
+`stories260K.gguf` artifact.
 
-- LLaMA-style SentencePiece metadata lowers into NCC97 tokenizer v0.2 and executes natively with score-ordered BPE merges, U+2581 space normalization, byte fallback, explicit policy overrides and canonical source defaults; the pinned real `stories260K` tokenizer now matches the source tokenizer ID-for-ID over the fixed differential corpus;
-- canonical GPT-2 (`tokenizer.ggml.pre="gpt-2"`) lowers into NCC97 tokenizer v0.3 and executes natively with Unicode-category pre-tokenization, GPT-2 byte-to-Unicode mapping, ranked BPE merges and source BOS/EOS policy; representative real GPT-2 differential evidence and non-canonical BPE pre-tokenizers remain separate support work;
-- representative real LLaMA source-vs-NIR97 execution is now proven for pinned `stories260K.gguf` over its full declared 128-token context, including signed Thin NCC97 activation and lazy shard execution;
-- file-backed intake emits each converted tensor immediately as a content-addressed NTP97 shard; Thin NCC97 packages now sign external tensor references, verify each shard by length/hash before activation, persist through the canonical native asset store, and execute through a lazy file-backed `ValueId` resolver that releases graph values after their last use. Retained model-weight RAM therefore no longer grows with total model size, while peak import/activation memory remains bounded by the largest tensor transcode/encode/resolve operation;
-- Android has not yet loaded and generated with the converted real native package.
+Recorded evidence now covers:
 
-The generic conversion plan remains conservative for arbitrary source artifacts even when structural parsing/lowering/package verification succeeds. The first pinned real-model target and its recorded equivalence evidence are documented in `docs/M11_STORIES260K_REFERENCE.md`.
+- seven fixed source-vs-NTD97 tokenizer differential cases with ID-for-ID equality;
+- full 128-step source-vs-NIR97 greedy generation equivalence for the GGUF-declared context;
+- normalized source/native text equality at 322 bytes with SHA-256 `594a911ebb2ecfeb608919bf157887e82d0090507fa187d45b2b7e23e5e8f583`;
+- streamed conversion into 52 NTP97 shards;
+- Ed25519-signed Thin NCC97 package verification;
+- canonical native asset-store commit and lazy file-backed activation;
+- Android debug evidence packaging with no GGUF/source checkpoint/source runtime in the device execution path;
+- Android x86_64 emulator verification of the signed package and all external shards;
+- 16-token greedy Android generation matching the host-native reference exactly:
+  `403,407,261,378,432,383,286,261,376,298,315,421,395,317,426,338`;
+- Android generated text: 57 bytes, SHA-256 `1e454937e49b36d9d8cba4a122bd493f1348a90626a41d6061789374fcc021c8`;
+- existing Android lifecycle/reboot validation remaining green after the real-model probe.
+
+The Android evidence package capsule SHA-256 is
+`8938b069b9891c2bea96f206419bad9990a9a1738a423e4116fe80472d2bda71`.
+
+Canonical GPT-2 execution remains implemented, but representative real GPT-2 differential
+evidence is separate support expansion rather than an M11 exit blocker. Non-canonical
+BPE pre-tokenizers and unsupported architectures remain fail-closed.
+
+The generic conversion plan remains conservative for arbitrary source artifacts even
+when structural parsing succeeds; M11 completion does not generalize the pinned
+`stories260K` equivalence result to unrelated models.
 
 ## Completion gate
 
-M11 is not complete until a representative real model follows the complete path:
+M11 completion requires a representative real model to follow the complete path:
 
 ```text
 real GGUF
@@ -136,4 +155,4 @@ real GGUF
   -> Android load + generation
 ```
 
-Parsing a model, listing its tensors, or producing a capsule that does not preserve its executable semantics is insufficient.
+The pinned `stories260K` path now satisfies this gate end-to-end. Parsing a model, listing its tensors, or producing a capsule that does not preserve its executable semantics remains insufficient for any future model-family support claim.
