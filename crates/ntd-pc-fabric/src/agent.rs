@@ -45,6 +45,7 @@ pub struct DesktopAgent {
     session: SecureSession,
     handlers: BTreeMap<String, Box<dyn DesktopCapabilityHandler>>,
     outgoing_artifacts: BTreeMap<u64, ArtifactSender>,
+    completed_requests: BTreeMap<u64, RemoteResult>,
     next_transfer_id: u64,
 }
 
@@ -54,6 +55,7 @@ impl DesktopAgent {
             session,
             handlers: BTreeMap::new(),
             outgoing_artifacts: BTreeMap::new(),
+            completed_requests: BTreeMap::new(),
             next_transfer_id: 1,
         }
     }
@@ -110,6 +112,13 @@ impl DesktopAgent {
     fn execute_request(&mut self, request: &RemoteRequest) -> Result<RemoteResult, PcFabricError> {
         request.validate()?;
 
+        if let Some(previous) = self.completed_requests.get(&request.request_id) {
+            if previous.request_digest != request.request_digest {
+                return Err(PcFabricError::InvalidMessage);
+            }
+            return Ok(previous.clone());
+        }
+
         let execution = {
             let Some(handler) = self.handlers.get_mut(&request.capability) else {
                 return RemoteResult::rejected(request, "remote capability is not installed");
@@ -125,15 +134,21 @@ impl DesktopAgent {
             handler.execute(&request.action)
         };
 
-        match execution {
+        let result = match execution {
             Ok(output) => {
                 let descriptors = self.store_artifacts(output.artifacts)?;
-                RemoteResult::completed(request, output.output, descriptors)
+                RemoteResult::completed(request, output.output, descriptors)?
             }
-            Err(PcFabricError::PolicyDenied(reason)) => RemoteResult::rejected(request, reason),
-            Err(PcFabricError::Io(reason)) => RemoteResult::retryable(request, reason),
-            Err(error) => RemoteResult::rejected(request, format!("{error:?}")),
-        }
+            Err(PcFabricError::PolicyDenied(reason)) => {
+                RemoteResult::rejected(request, reason)?
+            }
+            Err(PcFabricError::Io(reason)) => return RemoteResult::retryable(request, reason),
+            Err(error) => RemoteResult::rejected(request, format!("{error:?}"))?,
+        };
+
+        self.completed_requests
+            .insert(request.request_id, result.clone());
+        Ok(result)
     }
 
     fn store_artifacts(
