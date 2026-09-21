@@ -92,7 +92,6 @@ fn push_string_array(out: &mut Vec<u8>, key: &str, values: &[String]) {
     }
 }
 
-
 fn align(out: &mut Vec<u8>) {
     while out.len() % ALIGNMENT != 0 {
         out.push(0);
@@ -368,11 +367,7 @@ fn gpt2_fixture() -> Vec<u8> {
     push_u32_kv(&mut out, "general.alignment", ALIGNMENT as u32);
     push_string_kv(&mut out, "tokenizer.ggml.model", "gpt2");
     push_string_array(&mut out, "tokenizer.ggml.tokens", &tokens);
-    push_string_array(
-        &mut out,
-        "tokenizer.ggml.merges",
-        &["a b".to_owned()],
-    );
+    push_string_array(&mut out, "tokenizer.ggml.merges", &["a b".to_owned()]);
     push_string_kv(&mut out, "tokenizer.ggml.pre", "gpt-2");
     push_bool_kv(&mut out, "tokenizer.ggml.add_bos_token", false);
     push_bool_kv(&mut out, "tokenizer.ggml.add_eos_token", false);
@@ -387,11 +382,7 @@ fn gpt2_fixture() -> Vec<u8> {
     push_u32_kv(&mut out, "llama.feed_forward_length", 2);
     push_u32_kv(&mut out, "llama.attention.head_count", 1);
     push_u32_kv(&mut out, "llama.attention.head_count_kv", 1);
-    push_f32_kv(
-        &mut out,
-        "llama.attention.layer_norm_rms_epsilon",
-        1.0e-5,
-    );
+    push_f32_kv(&mut out, "llama.attention.layer_norm_rms_epsilon", 1.0e-5);
     push_u32_kv(&mut out, "llama.rope.dimension_count", 2);
 
     for tensor in &tensors {
@@ -536,12 +527,7 @@ fn canonical_gpt2_lowers_packages_and_executes_native_tokenizer() {
     .expect("runtime tokenizer");
 
     assert_eq!(runtime.encode("ab!", false).expect("encode"), vec![256, 33]);
-    assert_eq!(
-        runtime
-            .decode(&[256, 33], false)
-            .expect("decode"),
-        "ab!"
-    );
+    assert_eq!(runtime.decode(&[256, 33], false).expect("decode"), "ab!");
 }
 
 #[test]
