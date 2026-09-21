@@ -69,24 +69,23 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Major Block D — Cognitive Runtime + Sovereign Memory**
+**Major Block E — Tool, Internet + Device Action Fabric**
 
-NTD97 now preserves one cognitive identity across reasoning, memory and cold reconstruction:
+NTD97 now turns the same persistent cognitive task into governed typed actions:
 
 ```text
-native NTD97 inference/runtime
-  -> CognitiveRuntime
-       -> adaptive reasoning budget
-       -> planner / executor / verifier
-       -> goals + tasks + world state
-       -> episodic / semantic / procedural memory
-       -> learned delta activation
-  -> deterministic SIK97 checkpoint
-  -> NCC97 State capsule
-  -> restore same cognitive identity and continue task
+CognitiveTask / TaskGraph
+  -> CapabilityRegistry
+  -> typed Web / Browser / File / Device / App action
+  -> authority gate
+  -> replaceable platform/tool adapter
+  -> verification
+  -> commit / retry / rollback
+  -> deterministic TAF97 action journal
+  -> NCC97 State continuity
 ```
 
-No cloud AI or alternate model runtime is required for cognition-state existence or restore. Tool/web/device execution remains the next major block.
+Interrupted actions preserve stable ActionIds and capability versions, but adapters and permissions are reattached/re-authorized after restore. No HTTP/browser/Android SDK or hosted AI service is part of the sovereign runtime.
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
 See:
@@ -100,6 +99,7 @@ See:
 - `docs/NATIVE_GENERATIVE_RUNTIME.md`
 - `docs/ADAPTIVE_MOBILE_COMPUTE_RUNTIME.md`
 - `docs/COGNITIVE_RUNTIME_SOVEREIGN_MEMORY.md`
+- `docs/TOOL_INTERNET_DEVICE_ACTION_FABRIC.md`
 - `docs/COGNITIVE_CAPSULE.md`
 - `docs/SOVEREIGN_MODEL.md`
 - `docs/CONTINUITY_3D.md`
