@@ -165,7 +165,8 @@ fn conversion_plan_keeps_real_tokenizer_semantics_as_activation_blocker() {
     let model = GgufModel::parse(&fixture()).expect("parse");
     let plan = GgufConversionPlan::from_model(&model).expect("plan");
     assert!(!plan.activation_ready());
-    assert!(plan.blockers.iter().any(|item| {
-        item.contains("source-equivalent tokenization")
-    }));
+    assert!(plan
+        .blockers
+        .iter()
+        .any(|item| { item.contains("source-equivalent tokenization") }));
 }
