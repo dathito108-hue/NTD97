@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 
 use ntd_assimilation::{
@@ -295,7 +295,3 @@ fn digest_hex(digest: &Digest) -> String {
     out
 }
 
-#[allow(dead_code)]
-fn _assert_path_is_local(path: &Path) -> bool {
-    path.is_file()
-}
