@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use crate::{CapsuleBuilder, ChunkStorageView, ChunkView, SectionKind};
 use ntd_ir::{
     ControlOp, DType, Graph, IrVersion, MemoryOp, Node, NodeId, OpKind, StateOp, TensorOp, ToolOp,
     ValidationError, ValueDecl, ValueId, ValueType,
@@ -24,6 +25,32 @@ pub enum IrCodecError {
     UnsupportedVersion(IrVersion),
     StructuralValidation(ValidationError),
     Overflow,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GraphSectionError {
+    WrongSection(SectionKind),
+    ExternalGraph,
+    Codec(IrCodecError),
+}
+
+pub fn push_graph_section(
+    builder: &mut CapsuleBuilder,
+    graph: &Graph,
+) -> Result<(), IrCodecError> {
+    builder.push_embedded(SectionKind::Graph, encode_graph(graph)?);
+    Ok(())
+}
+
+pub fn decode_graph_section(chunk: &ChunkView<'_>) -> Result<Graph, GraphSectionError> {
+    if chunk.kind != SectionKind::Graph {
+        return Err(GraphSectionError::WrongSection(chunk.kind));
+    }
+
+    match chunk.storage {
+        ChunkStorageView::Embedded(bytes) => decode_graph(bytes).map_err(GraphSectionError::Codec),
+        ChunkStorageView::External => Err(GraphSectionError::ExternalGraph),
+    }
 }
 
 pub fn encode_graph(graph: &Graph) -> Result<Vec<u8>, IrCodecError> {
