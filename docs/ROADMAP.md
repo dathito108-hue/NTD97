@@ -293,6 +293,7 @@ Required contract:
 
 - clean-room GGUF v3 intake in Rust with no llama.cpp/third-party model runtime dependency;
 - safe file-backed GGUF byte source with bounded metadata/table parsing and per-tensor range reads;
+- content-addressed NTP97 tensor shard staging with Thin NCC97 external references, releasing converted tensor payloads after each shard is persisted;
 - bounded parsing of typed metadata, arrays, tensor tables, alignment and tokenizer metadata;
 - fail-closed rejection of malformed, unsupported-version, duplicate or structurally invalid inputs;
 - explicit conversion plan separating directly materializable tensors from tensors requiring native transcode;
@@ -327,7 +328,7 @@ Still required before M11 completion:
 
 - representative real LLaMA/GPT-2 tokenizer source-vs-NTD97 differential validation, plus additional BPE pre-tokenizers such as Qwen2/LLaMA3 only when their exact semantics are implemented;
 - representative real-model source-vs-NIR97 semantic-equivalence execution;
-- streaming native tensor shard emission/storage so converted large models do not accumulate all output payloads in memory;
+- signed Thin NCC97 activation with lazy/file-backed native tensor resolution;
 - Android loading/generation using the resulting real native model.
 
 Exit: at least one real supported external model can be imported once, converted to signed NTD97-native NCC97 assets, then loaded and used for local text generation without the source model runtime or a hosted AI backend.

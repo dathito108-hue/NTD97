@@ -2,16 +2,19 @@
 
 mod lower;
 mod reader;
+mod shards;
 mod storage;
 mod transcode;
 
 use std::collections::BTreeMap;
 
 pub use lower::{
-    lower_llama_model, lower_llama_model_from_source, lowered_llama_candidate, LlamaConfig,
-    LlamaTensorBinding, LoweredLlamaModel,
+    lower_llama_model, lower_llama_model_from_source, lower_llama_model_to_shards,
+    lowered_llama_candidate, streamed_llama_thin_capsule, LlamaConfig, LlamaTensorBinding,
+    LoweredLlamaModel, StreamedLoweredLlamaModel,
 };
 pub use reader::{parse_gguf, parse_gguf_source};
+pub use shards::{FileTensorShardStore, TensorShardRef, TensorShardSink};
 pub use storage::{FileGgufSource, GgufByteSource, SliceGgufSource};
 pub use transcode::{
     ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, gguf_tensor_bytes_from_source,
