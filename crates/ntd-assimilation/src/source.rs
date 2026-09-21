@@ -254,9 +254,7 @@ impl NativeCandidate {
                         ));
                     }
 
-                    if section.kind != SectionKind::Tensors
-                        && !kinds.insert(section.kind as u16)
-                    {
+                    if section.kind != SectionKind::Tensors && !kinds.insert(section.kind as u16) {
                         return Err(AssimilationError::InvalidCandidate(
                             "duplicate singleton native section".into(),
                         ));
