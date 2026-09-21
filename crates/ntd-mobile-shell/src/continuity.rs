@@ -9,7 +9,7 @@ use ntd_runtime::{
 
 pub const MCS97_MAGIC: [u8; 6] = *b"MCS97\0";
 pub const MCS97_MAJOR: u16 = 0;
-pub const MCS97_MINOR: u16 = 1;
+pub const MCS97_MINOR: u16 = 2;
 pub const MCS97_HEADER_LEN: usize = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

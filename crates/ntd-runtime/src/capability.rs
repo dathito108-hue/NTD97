@@ -13,6 +13,7 @@ pub enum CapabilityDomain {
     Device = 4,
     App = 5,
     Custom = 6,
+    Pc = 7,
 }
 
 impl TryFrom<u8> for CapabilityDomain {
@@ -26,6 +27,7 @@ impl TryFrom<u8> for CapabilityDomain {
             4 => Ok(Self::Device),
             5 => Ok(Self::App),
             6 => Ok(Self::Custom),
+            7 => Ok(Self::Pc),
             other => Err(CapabilityError::InvalidDomain(other)),
         }
     }
@@ -198,6 +200,25 @@ pub enum TypedAction {
         action: String,
         payload: Vec<u8>,
     },
+    PcObserve {
+        peer: String,
+        surface: String,
+    },
+    PcExecute {
+        peer: String,
+        program: String,
+        args: Vec<String>,
+        working_dir: Option<String>,
+    },
+    PcArtifactRead {
+        peer: String,
+        path: String,
+    },
+    PcArtifactWrite {
+        peer: String,
+        path: String,
+        bytes: Vec<u8>,
+    },
     Custom {
         type_name: String,
         payload: Vec<u8>,
@@ -212,6 +233,10 @@ impl TypedAction {
             Self::FileRead { .. } | Self::FileWrite { .. } => CapabilityDomain::File,
             Self::DeviceObserve { .. } | Self::DeviceInteract { .. } => CapabilityDomain::Device,
             Self::AppAction { .. } => CapabilityDomain::App,
+            Self::PcObserve { .. }
+            | Self::PcExecute { .. }
+            | Self::PcArtifactRead { .. }
+            | Self::PcArtifactWrite { .. } => CapabilityDomain::Pc,
             Self::Custom { .. } => CapabilityDomain::Custom,
         }
     }
@@ -244,6 +269,26 @@ impl TypedAction {
             Self::AppAction { app, action, .. } => {
                 nonempty(app)?;
                 nonempty(action)?;
+            }
+            Self::PcObserve { peer, surface } => {
+                nonempty(peer)?;
+                nonempty(surface)?;
+            }
+            Self::PcExecute {
+                peer,
+                program,
+                working_dir,
+                ..
+            } => {
+                nonempty(peer)?;
+                nonempty(program)?;
+                if let Some(working_dir) = working_dir {
+                    nonempty(working_dir)?;
+                }
+            }
+            Self::PcArtifactRead { peer, path } | Self::PcArtifactWrite { peer, path, .. } => {
+                nonempty(peer)?;
+                nonempty(path)?;
             }
             Self::Custom { type_name, .. } => nonempty(type_name)?,
         }

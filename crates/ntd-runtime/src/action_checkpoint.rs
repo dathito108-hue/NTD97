@@ -12,7 +12,7 @@ use crate::{
 
 pub const TAF97_MAGIC: [u8; 6] = *b"TAF97\0";
 pub const TAF97_MAJOR: u16 = 0;
-pub const TAF97_MINOR: u16 = 1;
+pub const TAF97_MINOR: u16 = 2;
 pub const TAF97_HEADER_LEN: usize = 24;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,6 +290,34 @@ fn encode_typed_action(
             push_string(out, type_name)?;
             push_bytes(out, payload)?;
         }
+        TypedAction::PcObserve { peer, surface } => {
+            push_u8(out, 11);
+            push_string(out, peer)?;
+            push_string(out, surface)?;
+        }
+        TypedAction::PcExecute {
+            peer,
+            program,
+            args,
+            working_dir,
+        } => {
+            push_u8(out, 12);
+            push_string(out, peer)?;
+            push_string(out, program)?;
+            push_strings(out, args)?;
+            push_optional_string(out, working_dir.as_deref())?;
+        }
+        TypedAction::PcArtifactRead { peer, path } => {
+            push_u8(out, 13);
+            push_string(out, peer)?;
+            push_string(out, path)?;
+        }
+        TypedAction::PcArtifactWrite { peer, path, bytes } => {
+            push_u8(out, 14);
+            push_string(out, peer)?;
+            push_string(out, path)?;
+            push_bytes(out, bytes)?;
+        }
     }
     Ok(())
 }
@@ -334,6 +362,25 @@ fn decode_typed_action(cursor: &mut Cursor<'_>) -> Result<TypedAction, ActionChe
         10 => Ok(TypedAction::Custom {
             type_name: cursor.string()?,
             payload: cursor.bytes()?.to_vec(),
+        }),
+        11 => Ok(TypedAction::PcObserve {
+            peer: cursor.string()?,
+            surface: cursor.string()?,
+        }),
+        12 => Ok(TypedAction::PcExecute {
+            peer: cursor.string()?,
+            program: cursor.string()?,
+            args: cursor.strings()?,
+            working_dir: cursor.optional_string()?,
+        }),
+        13 => Ok(TypedAction::PcArtifactRead {
+            peer: cursor.string()?,
+            path: cursor.string()?,
+        }),
+        14 => Ok(TypedAction::PcArtifactWrite {
+            peer: cursor.string()?,
+            path: cursor.string()?,
+            bytes: cursor.bytes()?.to_vec(),
         }),
         other => Err(ActionCheckpointError::InvalidActionTag(other)),
     }
@@ -630,6 +677,62 @@ mod tests {
         descriptor.required_scopes = vec![AuthorityScope::new("network.read").expect("scope")];
         registry.register(descriptor).expect("register");
         registry
+    }
+
+    #[test]
+    fn paired_pc_action_round_trips_in_taf97_minor_two() {
+        let mut registry = CapabilityRegistry::new();
+        registry
+            .register(
+                CapabilityDescriptor::new(
+                    CapabilityId("pc.process.execute".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ExternalWrite,
+                )
+                .expect("descriptor"),
+            )
+            .expect("register");
+
+        let state = ActionFabricState {
+            next_plan_id: 2,
+            next_action_id: 2,
+            plans: BTreeMap::from([(
+                1,
+                ActionPlanState {
+                    id: ActionPlanId(1),
+                    task_id: 11,
+                    cursor: 0,
+                    status: ActionPlanStatus::Ready,
+                    actions: vec![PlannedAction {
+                        id: ActionId(1),
+                        node_id: 1,
+                        capability: CapabilityId("pc.process.execute".into()),
+                        capability_version: 1,
+                        side_effect: SideEffectClass::ExternalWrite,
+                        verification_required: true,
+                        action: TypedAction::PcExecute {
+                            peer: "workstation".into(),
+                            program: "cargo".into(),
+                            args: vec!["test".into(), "--workspace".into()],
+                            working_dir: Some("/workspace".into()),
+                        },
+                        status: ActionStatus::Prepared,
+                        attempts: 0,
+                        output: None,
+                        resume_token: None,
+                        rollback_token: None,
+                        last_error: None,
+                    }],
+                },
+            )]),
+        };
+
+        let encoded = encode_action_fabric_checkpoint(&registry, &state).expect("encode");
+        assert_eq!(
+            decode_action_fabric_checkpoint(&registry, &encoded).expect("decode"),
+            state
+        );
     }
 
     #[test]
