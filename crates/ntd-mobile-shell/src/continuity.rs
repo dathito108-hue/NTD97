@@ -178,7 +178,7 @@ pub fn build_mobile_continuity_bundle(
 
     validate_links(cognitive, actions, pending_approval.as_ref())?;
 
-    Ok(MobileContinuityBundle {
+    let bundle = MobileContinuityBundle {
         identity: cognitive.state().identity,
         state,
         wake_reason,
@@ -187,19 +187,16 @@ pub fn build_mobile_continuity_bundle(
         action_checkpoint,
         pending_approval,
         retry,
-    })
+    };
+    validate_bundle(&bundle)?;
+    Ok(bundle)
 }
 
 pub fn restore_mobile_continuity_bundle(
     registry: CapabilityRegistry,
     bundle: MobileContinuityBundle,
 ) -> Result<RestoredMobileSession, MobileContinuityError> {
-    if bundle.checkpoint_sequence == 0 {
-        return Err(MobileContinuityError::NonCanonicalEncoding);
-    }
-    if let Some(retry) = &bundle.retry {
-        retry.validate()?;
-    }
+    validate_bundle(&bundle)?;
 
     let cognitive_state = decode_cognitive_checkpoint(&bundle.cognitive_checkpoint)
         .map_err(|error| MobileContinuityError::CognitiveCheckpoint(format!("{error:?}")))?;
