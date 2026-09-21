@@ -510,14 +510,14 @@ impl ActionFabric {
         };
 
         for (index, action) in snapshots.iter().enumerate().rev() {
-            if action.status != ActionStatus::Committed {
+            if action.side_effect == SideEffectClass::ReadOnly
+                || action.status == ActionStatus::Prepared
+                || action.status == ActionStatus::RolledBack
+            {
                 continue;
             }
 
             let descriptor = self.registry.descriptor(&action.capability)?.clone();
-            if action.side_effect == SideEffectClass::ReadOnly {
-                continue;
-            }
             if !descriptor.rollback_supported {
                 return Err(ActionFabricError::RollbackUnavailable(action.id));
             }
@@ -554,7 +554,7 @@ impl ActionFabric {
             action_status: None,
             plan_status: plan.status,
             cursor: plan.cursor,
-            summary: "committed reversible actions rolled back".into(),
+            summary: "all known side effects rolled back".into(),
         })
     }
 
@@ -641,7 +641,10 @@ impl ActionFabric {
                         action.status = ActionStatus::Committed;
                         action.output = Some(output.clone());
                         action.resume_token = None;
-                        action.rollback_token = rollback_token;
+                        action.rollback_token = descriptor
+                            .rollback_supported
+                            .then_some(rollback_token)
+                            .flatten();
                         action.last_error = None;
                         let action_id = action.id;
 
@@ -660,7 +663,10 @@ impl ActionFabric {
                         action.status = ActionStatus::Retryable;
                         action.output = Some(output);
                         action.resume_token = None;
-                        action.rollback_token = rollback_token;
+                        action.rollback_token = descriptor
+                            .rollback_supported
+                            .then_some(rollback_token)
+                            .flatten();
                         action.last_error = Some(reason.clone());
                         let action_id = action.id;
                         self.set_plan_status(plan_id, ActionPlanStatus::Ready)?;
