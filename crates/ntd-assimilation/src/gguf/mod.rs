@@ -174,6 +174,11 @@ pub struct GgufTokenizer {
     pub token_types: Option<Vec<i32>>,
     pub merges: Vec<String>,
     pub pre_tokenizer: Option<String>,
+    pub add_space_prefix: Option<bool>,
+    pub remove_extra_whitespaces: Option<bool>,
+    pub normalizer_lowercase: Option<bool>,
+    pub normalizer_strip_accents: Option<bool>,
+    pub has_precompiled_charsmap: bool,
     pub add_bos_token: Option<bool>,
     pub add_eos_token: Option<bool>,
     pub bos_token: Option<u32>,
@@ -307,6 +312,17 @@ impl GgufModel {
             token_types,
             merges,
             pre_tokenizer,
+            add_space_prefix: optional_bool("tokenizer.ggml.add_space_prefix")?,
+            remove_extra_whitespaces: optional_bool(
+                "tokenizer.ggml.remove_extra_whitespaces",
+            )?,
+            normalizer_lowercase: optional_bool("tokenizer.ggml.normalizer.lowercase")?,
+            normalizer_strip_accents: optional_bool(
+                "tokenizer.ggml.normalizer.strip_accents",
+            )?,
+            has_precompiled_charsmap: self
+                .metadata
+                .contains_key("tokenizer.ggml.precompiled_charsmap"),
             add_bos_token: optional_bool("tokenizer.ggml.add_bos_token")?,
             add_eos_token: optional_bool("tokenizer.ggml.add_eos_token")?,
             bos_token: optional_u32("tokenizer.ggml.bos_token_id")?,
@@ -328,6 +344,44 @@ impl GgufModel {
         }
         Ok(tokenizer)
     }
+}
+
+fn llama_spm_blocker(tokenizer: &GgufTokenizer) -> Option<String> {
+    if tokenizer.scores.is_none() || tokenizer.token_types.is_none() {
+        return Some(
+            "llama tokenizer metadata is missing scores/token types required for native SentencePiece BPE semantics"
+                .into(),
+        );
+    }
+    if tokenizer
+        .pre_tokenizer
+        .as_deref()
+        .is_some_and(|pre| pre != "default")
+    {
+        return Some(format!(
+            "llama tokenizer pre-tokenizer '{}' is not supported by native SPM execution",
+            tokenizer.pre_tokenizer.as_deref().unwrap_or_default()
+        ));
+    }
+    if tokenizer.add_space_prefix.is_none()
+        || tokenizer.add_bos_token.is_none()
+        || tokenizer.add_eos_token.is_none()
+    {
+        return Some(
+            "llama tokenizer is missing explicit add-space-prefix/BOS/EOS policy metadata".into(),
+        );
+    }
+    if tokenizer.remove_extra_whitespaces == Some(true)
+        || tokenizer.normalizer_lowercase == Some(true)
+        || tokenizer.normalizer_strip_accents == Some(true)
+        || tokenizer.has_precompiled_charsmap
+    {
+        return Some(
+            "llama tokenizer requires normalization semantics not yet represented by the native SPM contract"
+                .into(),
+        );
+    }
+    None
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -414,31 +468,27 @@ impl GgufConversionPlan {
                 "architecture '{architecture}' has no canonical NTD97 lowering yet"
             ));
         }
-        if !matches!(tokenizer.model.as_str(), "llama" | "gpt2") {
-            blockers.push(format!(
-                "tokenizer '{}' has no canonical NTD97 tokenizer lowering yet",
-                tokenizer.model
-            ));
-        } else {
-            match tokenizer.model.as_str() {
-                "llama" if tokenizer.scores.is_none() || tokenizer.token_types.is_none() => {
-                    blockers.push(
-                        "llama tokenizer metadata is missing scores/token types required for source-equivalent SentencePiece semantics"
-                            .into(),
-                    );
+        match tokenizer.model.as_str() {
+            "llama" => {
+                if let Some(blocker) = llama_spm_blocker(&tokenizer) {
+                    blockers.push(blocker);
                 }
-                "gpt2" if tokenizer.merges.is_empty() => {
+            }
+            "gpt2" => {
+                if tokenizer.merges.is_empty() {
                     blockers.push(
                         "gpt2 tokenizer metadata is missing merge ranks required for source-equivalent BPE semantics"
                             .into(),
                     );
                 }
-                _ => {}
+                blockers.push(
+                    "native GPT-2 pre-tokenizer/BPE execution is not implemented yet".into(),
+                );
             }
-            blockers.push(format!(
-                "tokenizer '{}' source metadata is preserved, but production source-equivalent tokenization is not yet verified",
+            _ => blockers.push(format!(
+                "tokenizer '{}' has no canonical NTD97 tokenizer lowering yet",
                 tokenizer.model
-            ));
+            )),
         }
         if unsupported_tensor_count > 0 {
             blockers.push(format!(
