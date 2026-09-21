@@ -67,7 +67,13 @@ jobs:
           wc -c source-output.txt
           sha256sum source-output.txt
 
+          cp .github/scripts/stories260k-tokenizer-probe.c tokenizer-probe.c
+          cc -O3 -o tokenizer-probe tokenizer-probe.c -lm
+          ./tokenizer-probe tok512.bin > source-token-ids.txt
+          test "$(wc -l < source-token-ids.txt)" -eq 7
+          sha256sum source-token-ids.txt
+
       - name: Run NTD97 source-equivalence evidence
         run: >-
           cargo run -p ntd-assimilation --bin stories260k-evidence --
-          stories260K.gguf source-output.txt
+          stories260K.gguf source-output.txt source-token-ids.txt
