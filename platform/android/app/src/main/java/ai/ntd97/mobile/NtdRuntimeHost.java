@@ -36,6 +36,8 @@ public interface NtdRuntimeHost {
 
     byte[] checkpoint();
 
+    boolean resolveApproval(boolean approved);
+
     AvatarState avatarState();
 
     final class AvatarState {
