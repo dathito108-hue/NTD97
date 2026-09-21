@@ -898,7 +898,6 @@ mod tests {
             .any(|record| record.content.contains("generation cancelled")));
     }
 
-
     use super::*;
     use ntd_core::TaskGraph;
 
