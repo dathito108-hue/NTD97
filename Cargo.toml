@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/ntd-core",
+    "crates/ntd-ir",
     "crates/ntd-capsule",
     "crates/ntd-runtime",
 ]
