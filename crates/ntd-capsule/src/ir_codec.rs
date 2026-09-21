@@ -7,8 +7,8 @@ use ntd_ir::{
 
 pub const IR_GRAPH_MAGIC: [u8; 6] = *b"NIR97\0";
 pub const IR_GRAPH_HEADER_LEN: usize = 24;
-const VALUE_DECL_LEN: usize = 8;
-const NODE_HEADER_LEN: usize = 20;
+pub const VALUE_DECL_LEN: usize = 8;
+pub const NODE_HEADER_LEN: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrCodecError {
@@ -66,7 +66,7 @@ pub fn encode_graph(graph: &Graph) -> Result<Vec<u8>, IrCodecError> {
 pub fn decode_graph(bytes: &[u8]) -> Result<Graph, IrCodecError> {
     let mut cursor = Cursor::new(bytes);
 
-    if cursor.take(6)? != IR_GRAPH_MAGIC {
+    if cursor.take(6)? != IR_GRAPH_MAGIC.as_slice() {
         return Err(IrCodecError::InvalidMagic);
     }
 
@@ -196,7 +196,7 @@ fn decode_value_decl(cursor: &mut Cursor<'_>) -> Result<ValueDecl, IrCodecError>
 }
 
 fn encode_node(out: &mut Vec<u8>, node: &Node) -> Result<(), IrCodecError> {
-    let (family, opcode, attrs) = encode_op(&node.op)?;
+    let (family, opcode, attrs) = encode_op(&node.op);
     let input_count = u32::try_from(node.inputs.len()).map_err(|_| IrCodecError::Overflow)?;
     let output_count = u32::try_from(node.outputs.len()).map_err(|_| IrCodecError::Overflow)?;
     let attr_len = u32::try_from(attrs.len()).map_err(|_| IrCodecError::Overflow)?;
@@ -261,7 +261,7 @@ fn decode_node(cursor: &mut Cursor<'_>) -> Result<Node, IrCodecError> {
     })
 }
 
-fn encode_op(op: &OpKind) -> Result<(u8, u8, Vec<u8>), IrCodecError> {
+fn encode_op(op: &OpKind) -> (u8, u8, Vec<u8>) {
     let encoded = match op {
         OpKind::Tensor(op) => (1, tensor_op_tag(*op), Vec::new()),
         OpKind::State(op) => (2, state_op_tag(*op), Vec::new()),
@@ -274,7 +274,7 @@ fn encode_op(op: &OpKind) -> Result<(u8, u8, Vec<u8>), IrCodecError> {
         OpKind::Tool(ToolOp::Observe) => (5, 2, Vec::new()),
         OpKind::Tool(ToolOp::Verify) => (5, 3, Vec::new()),
     };
-    Ok(encoded)
+    encoded
 }
 
 fn decode_op(family: u8, opcode: u8, attrs: &[u8]) -> Result<OpKind, IrCodecError> {
