@@ -64,6 +64,10 @@ pub enum TokenizerError {
     InvalidTokenType { token: u32, token_type: i32 },
     NonFiniteScore(u32),
     MissingByteToken(u8),
+    InvalidBpeMerge(String),
+    DuplicateBpeMerge(String),
+    MissingTokenPiece(Vec<u8>),
+    InvalidGpt2ByteChar(char),
     UnmatchedInput(usize),
     InvalidTokenId(u32),
     InvalidUtf8,
@@ -578,7 +582,7 @@ impl Ord for SpmBigram {
     }
 }
 
-fn validate_vocabulary(tokens: &[Vec<u8>]) -> Result<(), TokenizerError> {
+pub(crate) fn validate_vocabulary(tokens: &[Vec<u8>]) -> Result<(), TokenizerError> {
     if tokens.is_empty() {
         return Err(TokenizerError::EmptyVocabulary);
     }
@@ -596,7 +600,7 @@ fn validate_vocabulary(tokens: &[Vec<u8>]) -> Result<(), TokenizerError> {
     Ok(())
 }
 
-fn validate_specials(
+pub(crate) fn validate_specials(
     tokens: &[Vec<u8>],
     bos_token: Option<u32>,
     eos_token: Option<u32>,
