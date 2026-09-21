@@ -82,11 +82,7 @@ impl NativeAssetStore {
         let mut receipts = Vec::new();
 
         for package in packages {
-            verify_native_package_with_shards(
-                &package,
-                &self.trusted_verify_key,
-                shard_store,
-            )?;
+            verify_native_package_with_shards(&package, &self.trusted_verify_key, shard_store)?;
             let versions = staged_versions.entry(package.asset_id.clone()).or_default();
             if versions.contains_key(&package.version)
                 || versions
@@ -155,11 +151,7 @@ impl NativeAssetStore {
         shard_store: &FileTensorShardStore,
     ) -> Result<CommitReceipt, AssimilationError> {
         let package = self.version(asset_id, version)?.clone();
-        verify_native_package_with_shards(
-            &package,
-            &self.trusted_verify_key,
-            shard_store,
-        )?;
+        verify_native_package_with_shards(&package, &self.trusted_verify_key, shard_store)?;
         self.active.insert(asset_id.to_owned(), version);
         Ok(CommitReceipt {
             asset_id: asset_id.to_owned(),
