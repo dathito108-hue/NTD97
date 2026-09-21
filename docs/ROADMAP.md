@@ -221,17 +221,37 @@ Acceptance result: Rust `fmt -> clippy -D warnings -> workspace tests` PASS and 
 
 Exit: complete.
 
-## M9 — Major Block I: Portable Sovereign Intelligence
+## M9 — Major Block I: Portable Sovereign Intelligence — complete
 
-- encrypted user-owned memory/state;
-- thin/full/state capsule backup;
-- content-addressed deduplication;
-- restore across devices;
-- capability/model/memory migration;
-- offline boot + restore;
-- sovereign recovery tests.
+Goal: make native NTD97 model intelligence, capabilities, memory and state portable across installations/devices without depending on the original app instance or network service.
 
-Exit: model intelligence, learned state and memory can be backed up and restored independently of the app installation.
+Delivered contract:
+
+- inward-dependent `ntd-portability` crate;
+- canonical portable asset classes for Model / Capability / Memory / State;
+- strict NCC97 capsule-kind validation per asset class;
+- user-owned 256-bit backup key with redacted debug output and zeroization on drop;
+- XChaCha20-Poly1305 encryption for content objects and backup manifests;
+- SHA-256 content addressing;
+- deterministic per-content object nonce derivation bound to digest and logical length;
+- encrypted sovereign object store with integrity verification on insert/import/read;
+- Full portable backup containing all referenced encrypted objects;
+- Thin portable backup containing only encrypted manifest references to content-addressed objects;
+- State portable backup containing only Memory / State assets;
+- deterministic PSB97/PSM97 backup and encrypted-manifest framing;
+- canonical asset ordering and duplicate rejection;
+- all-or-none staged restore into a destination sovereign object store;
+- cross-device restore using the same user-owned key;
+- model / capability / memory / state migration in one full backup;
+- offline restore path with no network dependency;
+- wrong-key rejection;
+- corrupted-object rejection without partial destination mutation;
+- missing Thin-backup object fail-closed behavior;
+- content-addressed deduplication across repeated backups.
+
+Acceptance result: Rust `fmt -> clippy -D warnings -> workspace tests` PASS and Android build/lifecycle regression PASS. Full backup restores model, capability, memory and identity/state assets into a fresh destination store; Thin and State semantics, cryptographic failure paths and sovereign recovery all pass deterministic tests.
+
+Exit: complete.
 
 ## M10 — Major Block J: Performance Convergence + General Mobile Agent Validation
 
