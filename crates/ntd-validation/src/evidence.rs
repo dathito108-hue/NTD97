@@ -45,6 +45,7 @@ impl PhysicalEvidenceRecord {
             && !self.evidence.profile.trim().is_empty()
             && !self.evidence.device_fingerprint.trim().is_empty()
             && self.evidence.p95_latency_nanos > 0
+            && self.evidence.energy_per_task_microjoules > 0
             && self.evidence.reliability_permille <= 1000
             && self.evidence.recovery_permille <= 1000
             && !self.build_revision.trim().is_empty()
@@ -197,7 +198,9 @@ impl EvidenceMatrix {
                 entry.class == EvidenceClass::PhysicalDevice
                     && entry.profile == *required
                     && !entry.device_fingerprint.trim().is_empty()
+                    && entry.p95_latency_nanos > 0
                     && entry.p95_latency_nanos <= targets.max_p95_latency_nanos
+                    && entry.energy_per_task_microjoules > 0
                     && entry.energy_per_task_microjoules <= targets.max_energy_per_task_microjoules
                     && entry.reliability_permille >= targets.min_reliability_permille
                     && entry.recovery_permille >= targets.min_recovery_permille
