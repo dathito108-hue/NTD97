@@ -135,8 +135,8 @@ where
         }
 
         for token in prompt_tokens {
-            let id = usize::try_from(*token)
-                .map_err(|_| GenerationError::TokenIdOutOfRange(*token))?;
+            let id =
+                usize::try_from(*token).map_err(|_| GenerationError::TokenIdOutOfRange(*token))?;
             if id >= self.vocab_size {
                 return Err(GenerationError::TokenIdOutOfRange(*token));
             }
@@ -161,17 +161,14 @@ where
                 .executor
                 .execute(&self.graph, inputs)
                 .map_err(GenerationError::Execution)?;
-            let output = outputs
-                .get(self.distribution_output)
-                .ok_or(GenerationError::MissingDistributionOutput(
-                    self.distribution_output,
-                ))?;
+            let output = outputs.get(self.distribution_output).ok_or(
+                GenerationError::MissingDistributionOutput(self.distribution_output),
+            )?;
             let distribution = last_distribution(output, self.vocab_size)?;
             let next = sample_token(distribution, config.distribution, config.sampling, step)
                 .map_err(GenerationError::Sampling)?;
 
-            let next_u32 =
-                u32::try_from(next).map_err(|_| GenerationError::InvalidVocabulary)?;
+            let next_u32 = u32::try_from(next).map_err(|_| GenerationError::InvalidVocabulary)?;
             generated_tokens.push(next_u32);
             all_tokens.push(next_u32);
 
@@ -308,10 +305,7 @@ fn logits_to_weights(values: &[f32], temperature: f32) -> Vec<f32> {
         .collect()
 }
 
-fn probabilities_to_weights(
-    values: &[f32],
-    temperature: f32,
-) -> Result<Vec<f32>, SamplingError> {
+fn probabilities_to_weights(values: &[f32], temperature: f32) -> Result<Vec<f32>, SamplingError> {
     if values.iter().any(|value| *value < 0.0) {
         return Err(SamplingError::NegativeProbability);
     }
@@ -372,12 +366,7 @@ impl KvCache {
         self.layers.get(&layer)
     }
 
-    pub fn append(
-        &mut self,
-        layer: u32,
-        key: Tensor,
-        value: Tensor,
-    ) -> Result<(), KvCacheError> {
+    pub fn append(&mut self, layer: u32, key: Tensor, value: Tensor) -> Result<(), KvCacheError> {
         validate_kv_pair(&key, &value)?;
 
         if let Some(existing) = self.layers.get_mut(&layer) {
@@ -429,7 +418,9 @@ fn validate_kv_pair(key: &Tensor, value: &Tensor) -> Result<(), KvCacheError> {
 }
 
 fn concat_sequence(left: &Tensor, right: &Tensor) -> Result<Tensor, KvCacheError> {
-    if left.shape().is_empty() || right.shape().is_empty() || left.shape()[1..] != right.shape()[1..]
+    if left.shape().is_empty()
+        || right.shape().is_empty()
+        || left.shape()[1..] != right.shape()[1..]
     {
         return Err(KvCacheError::ShapeMismatch);
     }
@@ -484,10 +475,7 @@ mod tests {
     fn transition_graph() -> Graph {
         Graph {
             version: IrVersion::CURRENT,
-            inputs: vec![
-                tensor_decl(0, DType::I32, 1),
-                tensor_decl(1, DType::F32, 2),
-            ],
+            inputs: vec![tensor_decl(0, DType::I32, 1), tensor_decl(1, DType::F32, 2)],
             outputs: vec![ValueId(3)],
             nodes: vec![
                 Node {
