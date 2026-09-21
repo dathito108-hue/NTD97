@@ -1,6 +1,6 @@
 # NTD97 IR v0 Contract
 
-Status: IR version 0.2 contract.
+Status: IR version 0.3 contract.
 
 NTD97 IR is the native semantic boundary between assimilated intelligence and the sovereign execution runtime.
 
@@ -10,7 +10,7 @@ Current contract:
 
 ```text
 major = 0
-minor = 2
+minor = 3
 ```
 
 Compatibility rule:
@@ -19,7 +19,7 @@ Compatibility rule:
 - a reader may accept an equal or older minor version;
 - an unknown major version is rejected before execution.
 
-IR 0.2 is an additive extension of 0.1. It adds the native `CausalAttention` tensor semantic; existing 0.1 graphs remain readable.
+IR 0.3 is an additive extension of 0.2. It adds transformer-lowering semantics for `Silu`, `Reshape` and `Transpose`, extends RMSNorm with an optional learned scale input, and permits grouped-query causal attention. Existing 0.1/0.2 graphs remain readable.
 
 ## 2. Graph model
 
@@ -54,15 +54,22 @@ Current tensor operation identities:
 - Softmax;
 - Gather;
 - RotaryPosition;
-- CausalAttention.
+- CausalAttention;
+- Silu;
+- Reshape;
+- Transpose.
 
 These are semantic operation identities, not optimized kernels.
 
-Reference generative semantics in IR 0.2:
+Reference generative semantics in IR 0.3:
 
 - `Gather(table, indices)` selects rows from a rank-2 table using a rank-1 integer-token sequence and produces `[sequence, width]`.
 - `RotaryPosition(values, positions)` applies canonical rotary pair rotation to rank-3 `[sequence, heads, width]` values with an explicit rank-1 position sequence.
-- `CausalAttention(query, key, value)` consumes equal rank-3 `[sequence, heads, width]` tensors, applies scaled dot-product attention with a causal prefix mask, and returns the same shape.
+- `CausalAttention(query, key, value)` consumes rank-3 tensors with equal sequence/head-width; K/V share their head count and Q heads may be an integer multiple of KV heads for grouped-query attention. It applies scaled dot-product attention with a causal prefix mask and returns the Q shape.
+- `RmsNorm(values[, weight])` preserves the original one-input semantic and optionally applies a learned rank-1 scale over the final dimension.
+- `Silu(values)` applies the SiLU activation elementwise.
+- `Reshape(values, shape)` changes tensor shape without changing element order; the explicit shape tensor must preserve element count.
+- `Transpose(values, permutation)` applies an explicit rank permutation and rejects duplicate/out-of-range axes.
 
 Hardware providers may optimize these operations, but their observable result must preserve the same NTD97 semantics.
 
@@ -108,4 +115,4 @@ IR describes what NTD97 executes, not how a source ecosystem encoded it. GGUF, S
 
 The runtime rejects incompatible IR before execution. CPU/GPU/NPU providers implement the same semantic graph contract.
 
-NIR97 serialization remains deterministic and subordinate to IR semantics. IR 0.2 assigns the additive tensor opcode for `CausalAttention` while preserving every 0.1 opcode.
+NIR97 serialization remains deterministic and subordinate to IR semantics. IR 0.3 preserves every prior tensor opcode and assigns additive opcodes 10–12 to `Silu`, `Reshape` and `Transpose`.

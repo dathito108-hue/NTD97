@@ -124,6 +124,9 @@ impl ExecutionProvider for CpuReferenceProvider {
             TensorOp::Gather => gather(inputs)?,
             TensorOp::RotaryPosition => rotary_position(inputs)?,
             TensorOp::CausalAttention => causal_attention(inputs)?,
+            TensorOp::Silu => silu(inputs)?,
+            TensorOp::Reshape => reshape(inputs)?,
+            TensorOp::Transpose => transpose(inputs)?,
         };
         Ok(vec![output])
     }
@@ -268,18 +271,36 @@ fn matmul(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
 }
 
 fn rms_norm(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
-    require_arity(inputs, 1)?;
+    if inputs.is_empty() || inputs.len() > 2 {
+        return Err(TensorError::Arity {
+            expected: 1,
+            actual: inputs.len(),
+        });
+    }
     let input = inputs[0];
     let width = *input.shape.last().ok_or(TensorError::InvalidShape)?;
     if width == 0 {
         return Err(TensorError::InvalidShape);
     }
 
+    let weight = if inputs.len() == 2 {
+        let weight = inputs[1];
+        if weight.shape != vec![width] {
+            return Err(TensorError::ShapeMismatch);
+        }
+        Some(weight)
+    } else {
+        None
+    };
+
     let mut data = Vec::with_capacity(input.data.len());
     for row in input.data.chunks_exact(width) {
         let mean_square = row.iter().map(|value| value * value).sum::<f32>() / width as f32;
         let inv_rms = 1.0 / (mean_square + 1.0e-5).sqrt();
-        data.extend(row.iter().map(|value| value * inv_rms));
+        for (index, value) in row.iter().enumerate() {
+            let scale = weight.map(|tensor| tensor.data[index]).unwrap_or(1.0);
+            data.push(value * inv_rms * scale);
+        }
     }
     Tensor::new(input.shape.clone(), data)
 }
@@ -388,27 +409,36 @@ fn causal_attention(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
     let key = inputs[1];
     let value = inputs[2];
 
-    if query.shape.len() != 3 || query.shape != key.shape || query.shape != value.shape {
+    if query.shape.len() != 3
+        || key.shape.len() != 3
+        || value.shape.len() != 3
+        || key.shape != value.shape
+        || query.shape[0] != key.shape[0]
+        || query.shape[2] != key.shape[2]
+    {
         return Err(TensorError::ShapeMismatch);
     }
 
     let sequence = query.shape[0];
-    let heads = query.shape[1];
+    let query_heads = query.shape[1];
+    let kv_heads = key.shape[1];
     let width = query.shape[2];
-    if width == 0 {
-        return Err(TensorError::InvalidShape);
+    if width == 0 || kv_heads == 0 || query_heads == 0 || query_heads % kv_heads != 0 {
+        return Err(TensorError::ShapeMismatch);
     }
 
+    let heads_per_kv = query_heads / kv_heads;
     let scale = (width as f32).sqrt();
     let mut output = vec![0.0f32; query.data.len()];
 
     for query_position in 0..sequence {
-        for head in 0..heads {
-            let query_base = (query_position * heads + head) * width;
+        for query_head in 0..query_heads {
+            let kv_head = query_head / heads_per_kv;
+            let query_base = (query_position * query_heads + query_head) * width;
             let mut scores = Vec::with_capacity(query_position + 1);
 
             for key_position in 0..=query_position {
-                let key_base = (key_position * heads + head) * width;
+                let key_base = (key_position * kv_heads + kv_head) * width;
                 let mut dot = 0.0f32;
                 for offset in 0..width {
                     dot += query.data[query_base + offset] * key.data[key_base + offset];
@@ -427,7 +457,7 @@ fn causal_attention(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
             }
 
             for (key_position, weight) in weights.iter().enumerate() {
-                let value_base = (key_position * heads + head) * width;
+                let value_base = (key_position * kv_heads + kv_head) * width;
                 for offset in 0..width {
                     output[query_base + offset] += value.data[value_base + offset] * *weight;
                 }
@@ -436,6 +466,103 @@ fn causal_attention(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
     }
 
     Tensor::new(query.shape.clone(), output)
+}
+
+fn silu(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
+    require_arity(inputs, 1)?;
+    let input = inputs[0];
+    let data = input
+        .data
+        .iter()
+        .map(|value| *value / (1.0 + (-*value).exp()))
+        .collect();
+    Tensor::new(input.shape.clone(), data)
+}
+
+fn reshape(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
+    require_arity(inputs, 2)?;
+    let input = inputs[0];
+    let shape_spec = inputs[1];
+    if shape_spec.rank() != 1 || shape_spec.data.is_empty() {
+        return Err(TensorError::ShapeMismatch);
+    }
+
+    let mut shape = Vec::with_capacity(shape_spec.data.len());
+    for raw in &shape_spec.data {
+        if !raw.is_finite() || *raw <= 0.0 || raw.fract() != 0.0 {
+            return Err(TensorError::InvalidShape);
+        }
+        shape.push(*raw as usize);
+    }
+    if element_count_usize(&shape)? != input.data.len() {
+        return Err(TensorError::ShapeMismatch);
+    }
+    Tensor::new(shape, input.data.clone())
+}
+
+fn transpose(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
+    require_arity(inputs, 2)?;
+    let input = inputs[0];
+    let permutation = inputs[1];
+    let rank = input.rank();
+    if rank == 0 || permutation.rank() != 1 || permutation.data.len() != rank {
+        return Err(TensorError::ShapeMismatch);
+    }
+
+    let mut axes = Vec::with_capacity(rank);
+    let mut seen = vec![false; rank];
+    for raw in &permutation.data {
+        if !raw.is_finite() || *raw < 0.0 || raw.fract() != 0.0 {
+            return Err(TensorError::InvalidIndex);
+        }
+        let axis = *raw as usize;
+        if axis >= rank || seen[axis] {
+            return Err(TensorError::InvalidIndex);
+        }
+        seen[axis] = true;
+        axes.push(axis);
+    }
+
+    let output_shape = axes
+        .iter()
+        .map(|axis| input.shape[*axis])
+        .collect::<Vec<_>>();
+    let input_strides = row_major_strides(&input.shape)?;
+    let output_strides = row_major_strides(&output_shape)?;
+    let mut data = vec![0.0f32; input.data.len()];
+
+    for (output_index, slot) in data.iter_mut().enumerate() {
+        let mut remainder = output_index;
+        let mut input_index = 0usize;
+        for output_axis in 0..rank {
+            let stride = output_strides[output_axis];
+            let coordinate = remainder / stride;
+            remainder %= stride;
+            let input_axis = axes[output_axis];
+            input_index = input_index
+                .checked_add(
+                    coordinate
+                        .checked_mul(input_strides[input_axis])
+                        .ok_or(TensorError::InvalidShape)?,
+                )
+                .ok_or(TensorError::InvalidShape)?;
+        }
+        *slot = input.data[input_index];
+    }
+
+    Tensor::new(output_shape, data)
+}
+
+fn row_major_strides(shape: &[usize]) -> Result<Vec<usize>, TensorError> {
+    let mut strides = vec![1usize; shape.len()];
+    let mut running = 1usize;
+    for index in (0..shape.len()).rev() {
+        strides[index] = running;
+        running = running
+            .checked_mul(shape[index])
+            .ok_or(TensorError::InvalidShape)?;
+    }
+    Ok(strides)
 }
 
 fn require_arity(inputs: &[&Tensor], expected: usize) -> Result<(), TensorError> {
