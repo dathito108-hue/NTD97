@@ -485,7 +485,10 @@ mod tests {
         };
 
         let encoded = encode_native_tokenizer(&tokenizer).expect("encode");
-        assert_eq!(decode_native_tokenizer(&encoded).expect("decode"), tokenizer);
+        assert_eq!(
+            decode_native_tokenizer(&encoded).expect("decode"),
+            tokenizer
+        );
     }
 
     #[test]
