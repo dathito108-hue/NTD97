@@ -130,8 +130,10 @@ The runtime must reject incompatible IR before any operation executes.
 
 Future hardware providers implement IR semantics through native CPU/GPU/NPU kernels while preserving the same observable graph behavior.
 
-## 8. Next phase boundary
+## 8. Binary serialization binding
 
-Phase 003B will define the NCC97 binary capsule representation that carries this IR contract, including deterministic encoding, offsets, chunk table and integrity information.
+Phase 003C binds this semantic IR to the deterministic `NIR97\0` Graph-section encoding documented in `NCC97_IR_SERIALIZATION_V0.md`.
 
-Phase 003B must not change IR semantics merely to simplify serialization.
+Serialization is subordinate to IR semantics: the wire format preserves the graph contract and decoded graphs must pass the same structural validator before use.
+
+Tensor execution kernels and source-model importers remain outside the IR contract.
