@@ -308,6 +308,7 @@ fn decode_op(family: u8, opcode: u8, attrs: &[u8]) -> Result<OpKind, IrCodecErro
                 6 => TensorOp::Softmax,
                 7 => TensorOp::Gather,
                 8 => TensorOp::RotaryPosition,
+                9 => TensorOp::CausalAttention,
                 other => {
                     return Err(IrCodecError::InvalidOpCode {
                         family,
@@ -428,6 +429,7 @@ fn tensor_op_tag(op: TensorOp) -> u8 {
         TensorOp::Softmax => 6,
         TensorOp::Gather => 7,
         TensorOp::RotaryPosition => 8,
+        TensorOp::CausalAttention => 9,
     }
 }
 
@@ -601,6 +603,7 @@ mod tests {
             OpKind::Tensor(TensorOp::Softmax),
             OpKind::Tensor(TensorOp::Gather),
             OpKind::Tensor(TensorOp::RotaryPosition),
+            OpKind::Tensor(TensorOp::CausalAttention),
             OpKind::State(StateOp::Read),
             OpKind::State(StateOp::Write),
             OpKind::State(StateOp::Checkpoint),
