@@ -6,8 +6,8 @@ use ntd_core::{Intent, ReasoningBudget, TaskGraph};
 
 use crate::{
     decode_cognitive_checkpoint, encode_cognitive_checkpoint, CheckpointError,
-    CognitiveCycleReport, CognitiveError, CognitiveIdentity, CognitiveRuntime, CognitiveSignals,
-    ConversationRole, ConversationTurn, MemoryError, MemoryKind, TaskStatus,
+    AssistantActionPlan, CognitiveCycleReport, CognitiveError, CognitiveIdentity, CognitiveRuntime,
+    CognitiveSignals, ConversationRole, ConversationTurn, MemoryError, MemoryKind, TaskStatus,
 };
 
 pub const NCS97_MAGIC: [u8; 6] = *b"NCS97\0";
@@ -298,6 +298,33 @@ impl SovereignConversationState {
         )?;
         self.cognition = cognition;
         Ok(())
+    }
+
+    pub fn install_action_plan(
+        &mut self,
+        task_id: u64,
+        plan: &AssistantActionPlan,
+    ) -> Result<(), ConversationStateError> {
+        if plan.canonical_text.len() > MAX_TEXT_BYTES {
+            return Err(ConversationStateError::LimitExceeded);
+        }
+        let mut candidate = self.clone();
+        candidate.install_action_task_graph(task_id, plan.graph.clone())?;
+        candidate.cognition.state_mut().set_world_fact(
+            format!("conversation.task.{task_id}.action_protocol"),
+            plan.canonical_text.clone(),
+        )?;
+        *self = candidate;
+        Ok(())
+    }
+
+    pub fn action_plan_protocol_for_task(&self, task_id: u64) -> Option<&str> {
+        let key = format!("conversation.task.{task_id}.action_protocol");
+        self.cognition
+            .state()
+            .world
+            .get(&key)
+            .map(|fact| fact.value.as_str())
     }
 
     pub fn action_count_for_task(&self, task_id: u64) -> Option<usize> {
@@ -905,19 +932,24 @@ mod tests {
         let task = state
             .begin_turn("model.test", 1, "observe device", vec![1, 2], 8)
             .expect("begin");
-        state
-            .install_action_task_graph(
-                task,
-                TaskGraph {
-                    actions: vec![ActionNode {
-                        id: 1,
-                        capability: CapabilityId("device.observe".into()),
-                        side_effect: SideEffectClass::ReadOnly,
-                        verification_required: true,
-                    }],
+        let plan = AssistantActionPlan {
+            graph: TaskGraph {
+                actions: vec![ActionNode {
+                    id: 1,
+                    capability: CapabilityId("device.observe".into()),
+                    side_effect: SideEffectClass::ReadOnly,
+                    verification_required: true,
+                }],
+            },
+            payloads: std::collections::BTreeMap::from([(
+                1,
+                crate::TypedAction::DeviceObserve {
+                    surface: "battery".into(),
                 },
-            )
-            .expect("install graph");
+            )]),
+            canonical_text: "NTD97_ACTIONS_V1\n1|device.observe|battery\nEND".into(),
+        };
+        state.install_action_plan(task, &plan).expect("install plan");
 
         let encoded = encode_conversation_checkpoint(&state).expect("encode");
         let restored = decode_conversation_checkpoint(&encoded).expect("decode");
@@ -930,6 +962,10 @@ mod tests {
 
         assert_eq!(restored_task.graph.actions.len(), 1);
         assert_eq!(restored.action_count_for_task(task), Some(1));
+        assert_eq!(
+            restored.action_plan_protocol_for_task(task),
+            Some("NTD97_ACTIONS_V1\n1|device.observe|battery\nEND")
+        );
     }
 
     #[test]
