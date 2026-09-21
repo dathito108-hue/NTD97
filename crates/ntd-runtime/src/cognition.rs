@@ -711,6 +711,25 @@ fn validate_state(state: &CognitiveState) -> Result<(), CognitiveError> {
         return Err(CognitiveError::Overflow);
     }
 
+    if state
+        .goals
+        .keys()
+        .next_back()
+        .is_some_and(|id| state.next_goal_id <= *id)
+        || state
+            .tasks
+            .keys()
+            .next_back()
+            .is_some_and(|id| state.next_task_id <= *id)
+        || state
+            .deltas
+            .keys()
+            .next_back()
+            .is_some_and(|id| state.next_delta_id <= *id)
+    {
+        return Err(CognitiveError::Overflow);
+    }
+
     for (id, goal) in &state.goals {
         if *id != goal.id || goal.objective.trim().is_empty() {
             return Err(CognitiveError::Overflow);
@@ -718,7 +737,11 @@ fn validate_state(state: &CognitiveState) -> Result<(), CognitiveError> {
     }
 
     for (id, task) in &state.tasks {
-        if *id != task.id || task.intent.objective.trim().is_empty() || task.intent.max_steps == 0 {
+        if *id != task.id
+            || task.intent.objective.trim().is_empty()
+            || task.intent.max_steps == 0
+            || task.steps_taken > task.intent.max_steps
+        {
             return Err(CognitiveError::Overflow);
         }
         if let Some(goal_id) = task.goal_id {
@@ -729,7 +752,7 @@ fn validate_state(state: &CognitiveState) -> Result<(), CognitiveError> {
     }
 
     for (key, fact) in &state.world {
-        if key != &fact.key || key.trim().is_empty() {
+        if key != &fact.key || key.trim().is_empty() || fact.revision == 0 {
             return Err(CognitiveError::Overflow);
         }
     }
