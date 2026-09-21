@@ -10,9 +10,8 @@ use ntd_assimilation::{
     lowered_llama_candidate, streamed_llama_thin_capsule, verify_native_package,
     verify_native_package_with_shards, AssimilationIdentity, FileBackedTensorResolver,
     FileTensorShardStore, ForgeSandbox, GgufByteSource, GgufConversionPlan, GgufError, GgufModel,
-    GgufValueType,
-    LicenseRecord, NativeAssetStore, NativeValidationSandbox, SliceGgufSource, SourcePackage,
-    StreamedPackageSpec, GGUF_MAGIC, GGUF_VERSION,
+    GgufValueType, LicenseRecord, NativeAssetStore, NativeValidationSandbox, SliceGgufSource,
+    SourcePackage, StreamedPackageSpec, GGUF_MAGIC, GGUF_VERSION,
 };
 use ntd_capsule::{
     load_native_generative_program, CapsuleKind, CapsuleView, MemoryContentStore,
