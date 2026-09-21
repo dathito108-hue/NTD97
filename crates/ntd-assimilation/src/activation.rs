@@ -4,14 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ntd_capsule::{
     decode_graph, decode_native_generative_manifest, decode_native_tensor, decode_native_tokenizer,
-    decode_tensor_descriptors, CapsuleKind, CapsuleView, ChunkStorageView, NativeGenerativeManifest,
-    NativeTokenizerDescriptor, QuantizationMetadata, SectionKind, TensorDescriptor,
-    TENSOR_DESCRIPTOR_MAGIC,
+    decode_tensor_descriptors, CapsuleKind, CapsuleView, ChunkStorageView,
+    NativeGenerativeManifest, NativeTokenizerDescriptor, QuantizationMetadata, SectionKind,
+    TensorDescriptor, TENSOR_DESCRIPTOR_MAGIC,
 };
 use ntd_ir::{DType, Graph, ValueId, ValueType};
-use ntd_runtime::{
-    QuantizationParams, Tensor, TensorLoader, TensorResolveError, TensorResolver,
-};
+use ntd_runtime::{QuantizationParams, Tensor, TensorLoader, TensorResolveError, TensorResolver};
 
 use crate::{FileTensorShardStore, GgufError, TensorShardRef};
 
@@ -179,11 +177,9 @@ pub fn activate_thin_generative_capsule(
                 if descriptor_table.is_some() {
                     return Err(ThinActivationError::MultipleDescriptorTables);
                 }
-                descriptor_table = Some(
-                    decode_tensor_descriptors(bytes).map_err(|error| {
-                        ThinActivationError::Capsule(format!("tensor descriptors: {error:?}"))
-                    })?,
-                );
+                descriptor_table = Some(decode_tensor_descriptors(bytes).map_err(|error| {
+                    ThinActivationError::Capsule(format!("tensor descriptors: {error:?}"))
+                })?);
             }
             ChunkStorageView::Embedded(_) => {
                 return Err(ThinActivationError::UnexpectedEmbeddedTensorChunk);
@@ -282,8 +278,9 @@ fn validate_manifest(
         return Err(ThinActivationError::InvalidTokenInput(manifest.token_input));
     }
 
-    let distribution_output = usize::try_from(manifest.distribution_output)
-        .map_err(|_| ThinActivationError::InvalidDistributionOutput(manifest.distribution_output))?;
+    let distribution_output = usize::try_from(manifest.distribution_output).map_err(|_| {
+        ThinActivationError::InvalidDistributionOutput(manifest.distribution_output)
+    })?;
     if distribution_output >= graph.outputs.len() {
         return Err(ThinActivationError::InvalidDistributionOutput(
             manifest.distribution_output,
@@ -406,10 +403,8 @@ mod tests {
         );
         let capsule = builder.write().expect("capsule");
 
-        let root = std::env::temp_dir().join(format!(
-            "ntd97-activation-test-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("ntd97-activation-test-{}", std::process::id()));
         let store = FileTensorShardStore::open(&root).expect("store");
         assert_eq!(
             activate_thin_generative_capsule(&capsule, &store),
