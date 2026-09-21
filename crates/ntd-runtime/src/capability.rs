@@ -32,7 +32,7 @@ impl TryFrom<u8> for CapabilityDomain {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AuthorityScope(pub String);
+pub struct AuthorityScope(String);
 
 impl AuthorityScope {
     pub fn new(value: impl Into<String>) -> Result<Self, CapabilityError> {
@@ -42,6 +42,10 @@ impl AuthorityScope {
             return Err(CapabilityError::EmptyScope);
         }
         Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
