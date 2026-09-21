@@ -329,8 +329,7 @@ impl LlamaSpmTokenizer {
         skip_special: bool,
     ) -> Result<String, TokenizerError> {
         let mut bytes = Vec::new();
-        let mut previous = previous_token;
-        let mut strip_dummy_prefix = self.add_space_prefix && previous == self.bos_token;
+        let mut strip_dummy_prefix = self.add_space_prefix && previous_token == self.bos_token;
 
         for id in token_ids {
             let index = usize::try_from(*id).map_err(|_| TokenizerError::InvalidTokenId(*id))?;
@@ -347,8 +346,7 @@ impl LlamaSpmTokenizer {
                     || token_type == TOKEN_TYPE_CONTROL
                     || token_type == TOKEN_TYPE_UNUSED)
             {
-                previous = Some(*id);
-                strip_dummy_prefix = self.add_space_prefix && previous == self.bos_token;
+                strip_dummy_prefix = self.add_space_prefix && self.bos_token == Some(*id);
                 continue;
             }
 
@@ -367,7 +365,6 @@ impl LlamaSpmTokenizer {
                 bytes.remove(before);
             }
             strip_dummy_prefix = false;
-            previous = Some(*id);
         }
 
         String::from_utf8(bytes).map_err(|_| TokenizerError::InvalidUtf8)
