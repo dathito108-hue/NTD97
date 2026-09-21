@@ -2,12 +2,16 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use ntd_capsule::{
-    decode_graph_section, load_native_generative_program, sha256, CapsuleBuilder, CapsuleKind,
-    CapsuleView, ChunkStorageView, Digest, MemoryContentStore, SectionKind,
+    decode_graph_section, encode_native_generative_manifest, encode_native_tokenizer,
+    encode_tensor_descriptors, load_native_generative_program, sha256, CapsuleBuilder,
+    CapsuleKind, CapsuleView, ChunkStorageView, Digest, MemoryContentStore,
+    NativeGenerativeManifest, SectionKind,
 };
 use ntd_core::{CapabilityId, SideEffectClass};
 use ntd_runtime::{AuthorityScope, CapabilityDescriptor, CapabilityDomain};
 
+use crate::activation::activate_thin_generative_capsule;
+use crate::gguf::{FileTensorShardStore, StreamedLoweredLlamaModel};
 use crate::{AssetKind, AssimilationError, NativeCandidate, ProvenanceRecord, SandboxReport};
 
 const SIGNATURE_MAGIC: [u8; 6] = *b"NAS97\0";
