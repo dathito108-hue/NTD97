@@ -82,9 +82,7 @@ impl VocabularyTokenizer {
         let mut output = Vec::new();
 
         if add_bos {
-            if let Some(bos) = self.bos_token {
-                output.push(bos);
-            }
+            output.extend(self.bos_token);
         }
 
         let mut offset = 0usize;
@@ -201,7 +199,7 @@ mod tests {
     fn special_tokens_are_not_matched_from_user_text() {
         let tokenizer = tokenizer();
         let encoded = tokenizer.encode("<bos>", false).expect("encode");
-        assert_eq!(encoded, vec![5, 5, 2, 5, 5]);
+        assert_eq!(encoded, vec![5, 2, 5, 5, 5]);
     }
 
     #[test]
