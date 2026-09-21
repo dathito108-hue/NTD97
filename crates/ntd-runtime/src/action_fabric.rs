@@ -284,7 +284,7 @@ impl ActionFabric {
         graph: &TaskGraph,
         mut payloads: BTreeMap<u32, TypedAction>,
     ) -> Result<ActionPlanId, ActionFabricError> {
-        if graph.actions.is_empty() {
+        if task_id == 0 || graph.actions.is_empty() {
             return Err(ActionFabricError::InvalidState);
         }
 
@@ -817,7 +817,11 @@ pub(crate) fn validate_fabric_state(
     let mut action_ids = BTreeSet::new();
     let mut max_action_id = 0u64;
     for (key, plan) in &state.plans {
-        if *key != plan.id.0 || plan.id.0 == 0 || plan.cursor > plan.actions.len() {
+        if *key != plan.id.0
+            || plan.id.0 == 0
+            || plan.task_id == 0
+            || plan.cursor > plan.actions.len()
+        {
             return Err(ActionFabricError::InvalidState);
         }
 
