@@ -48,6 +48,7 @@ fn main() {
     println!("tensor_count={}", plan.tensor_count);
     println!("direct_tensor_count={}", plan.direct_tensor_count);
     println!("transcode_tensor_count={}", plan.transcode_tensor_count);
+    println!("unsupported_tensor_count={}", plan.unsupported_tensor_count);
     println!("alignment={}", plan.alignment);
     println!("activation_ready={}", plan.activation_ready());
     for blocker in &plan.blockers {
