@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ntd_capsule::{
-    encode_native_tensor, encode_native_tokenizer, encode_tensor_descriptors, NativeTensor,
-    NativeTokenizerDescriptor, NativeTokenizerModel, QuantizationMetadata, SectionKind,
-    TensorDescriptor,
+    encode_native_tensor, encode_native_tokenizer, encode_tensor_descriptors, CapsuleBuilder,
+    CapsuleKind, NativeTensor, NativeTokenizerDescriptor, NativeTokenizerModel,
+    QuantizationMetadata, SectionKind, TensorDescriptor,
 };
 use ntd_ir::{
     DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
@@ -444,6 +444,45 @@ fn lower_llama_model_internal(
         vocabulary_size,
         bindings: builder.bindings,
     })
+}
+
+pub fn streamed_llama_thin_capsule(
+    capsule_id: [u8; 16],
+    model: &StreamedLoweredLlamaModel,
+) -> Result<Vec<u8>, GgufError> {
+    if model.tensor_shards.is_empty() {
+        return Err(GgufError::NativeLowering(
+            "streamed model has no external tensor shards".into(),
+        ));
+    }
+
+    let descriptors = model
+        .tensor_shards
+        .iter()
+        .map(|shard| shard.descriptor.clone())
+        .collect::<Vec<_>>();
+    let mut builder = CapsuleBuilder::new(CapsuleKind::Thin, capsule_id);
+    builder.push_embedded(
+        SectionKind::Graph,
+        ntd_capsule::encode_graph(&model.graph)
+            .map_err(|error| GgufError::NativeLowering(format!("graph: {error:?}")))?,
+    );
+    builder.push_embedded(
+        SectionKind::Tensors,
+        encode_tensor_descriptors(&descriptors)
+            .map_err(|error| GgufError::NativeLowering(format!("descriptors: {error:?}")))?,
+    );
+    for shard in &model.tensor_shards {
+        builder.push_external(SectionKind::Tensors, shard.logical_len, shard.hash);
+    }
+    builder.push_embedded(
+        SectionKind::Tokenizer,
+        encode_native_tokenizer(&model.tokenizer)
+            .map_err(|error| GgufError::NativeLowering(format!("tokenizer: {error:?}")))?,
+    );
+    builder
+        .write()
+        .map_err(|error| GgufError::NativeLowering(format!("thin capsule: {error:?}")))
 }
 
 pub fn lowered_llama_candidate(
