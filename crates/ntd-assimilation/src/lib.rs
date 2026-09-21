@@ -3,6 +3,7 @@
 mod forge;
 mod gguf;
 mod importer;
+mod llama;
 mod package;
 mod sandbox;
 mod source;
@@ -15,6 +16,9 @@ pub use gguf::{
     GGUF_DEFAULT_ALIGNMENT, GGUF_MAGIC, GGUF_VERSION,
 };
 pub use importer::{ImporterRegistry, SourceImporter};
+pub use llama::{
+    lower_llama_f32_f16, LlamaConfig, LlamaLoweringError, LlamaNativeDraft, LlamaWeightBinding,
+};
 pub use package::{
     build_native_package, load_native_capability, verify_native_package, AssimilationIdentity,
     NativePackage,
