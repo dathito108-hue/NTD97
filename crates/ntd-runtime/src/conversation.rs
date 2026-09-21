@@ -152,7 +152,7 @@ fn render_prompt(history: &[ConversationTurn], memory: &[String], user_message: 
             text.push_str(item);
             text.push('\n');
         }
-        text.push_str("\n");
+        text.push('\n');
     }
     for turn in history {
         match turn.role {
