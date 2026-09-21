@@ -1,13 +1,21 @@
 #![forbid(unsafe_code)]
 
 mod executor;
+mod generation;
 mod tensor;
+mod tokenizer;
 
 pub use executor::{ExecutionError, GraphExecutor};
+pub use generation::{
+    sample_token, DistributionKind, GeneratedText, GenerationConfig, GenerationError,
+    GenerationResult, GraphGenerator, KvCache, KvCacheError, KvLayerCache, PrefixCache,
+    SamplingError, SamplingMode,
+};
 pub use tensor::{
     CpuReferenceProvider, ExecutionProvider, QuantizationParams, Tensor, TensorError,
     TensorLoadError, TensorLoader,
 };
+pub use tokenizer::{TokenizerError, VocabularyTokenizer};
 
 use ntd_core::ReasoningBudget;
 use ntd_ir::IrVersion;
