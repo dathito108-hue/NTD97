@@ -69,23 +69,22 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Major Block B — Native Generative Intelligence Runtime**
+**Major Block C — Adaptive Mobile Compute Runtime**
 
-NTD97 now has the first source-independent native text-generation path:
+NTD97 now routes the same native graph through a resource-aware provider layer:
 
 ```text
-NCC97 integrity verify
-  -> NIR97 / IR 0.2
-  -> native tokenizer + native tensors
-  -> bounded token context
-  -> GraphGenerator
-  -> CPU reference Gather / Rotary / CausalAttention / tensor ops
-  -> native sampling
-  -> autoregressive next token
-  -> deterministic text output
+NCC97 / NIR97 native model
+  -> GraphExecutor
+  -> AdaptiveExecutionProvider
+       -> verified NPU adapter when safe
+       -> verified Vulkan adapter when safe
+       -> tiled CPU provider
+       -> CPU reference fallback
+  -> identical NTD97 IR semantics
 ```
 
-A Full `.ncc97` golden package can now load and generate text twice with identical results without GGUF/ONNX/TFLite/SafeTensors runtime code or a hosted AI service.
+The router accounts for RAM, battery, thermal pressure, latency budget, provider working set, verified autotune measurements, quantization profile and tensor placement/paging policy. Accelerator implementations remain replaceable platform adapters; no vendor or source-model runtime is part of NTD97 identity.
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
 See:
@@ -97,6 +96,7 @@ See:
 - `docs/NCC97_IR_SERIALIZATION_V0.md`
 - `docs/NATIVE_EXECUTION_FOUNDATION.md`
 - `docs/NATIVE_GENERATIVE_RUNTIME.md`
+- `docs/ADAPTIVE_MOBILE_COMPUTE_RUNTIME.md`
 - `docs/COGNITIVE_CAPSULE.md`
 - `docs/SOVEREIGN_MODEL.md`
 - `docs/CONTINUITY_3D.md`
