@@ -85,7 +85,7 @@ NTD97 native assets
 
 The canonical portability path encrypts both object payloads and backup manifests with a user-owned key, deduplicates by content digest, supports self-contained Full backups, reference-only Thin backups, and State backups containing only memory/state. Restore is staged and fail-closed: wrong keys, missing dedup objects, corrupted ciphertext, invalid NCC97 capsules, or integrity mismatches do not partially mutate the destination store.
 
-M9 acceptance passed the canonical Rust gate and the Android APK/lifecycle regression gate. **Major Block J — Performance Convergence + General Mobile Agent Validation** is in progress: its CI validation foundation is merged, while final completion remains gated on representative physical-device evidence.
+M9 acceptance passed the canonical Rust gate and the Android APK/lifecycle regression gate. **Major Block J — Performance Convergence + General Mobile Agent Validation** remains gated on representative physical-device evidence. **Major Block K — Real Native Intelligence** is now the active intelligence-development block: GGUF v3 intake, transformer-native IR semantics, model lowering, native tensor conversion and source-runtime-independent real-model generation.
 
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
@@ -106,6 +106,7 @@ See:
 - `docs/CAPABILITY_FORGE_NATIVE_ASSIMILATION.md`
 - `docs/PORTABLE_SOVEREIGN_INTELLIGENCE.md`
 - `docs/M10_PHYSICAL_DEVICE_VALIDATION.md`
+- `docs/REAL_NATIVE_INTELLIGENCE.md`
 - `docs/COGNITIVE_CAPSULE.md`
 - `docs/SOVEREIGN_MODEL.md`
 - `docs/CONTINUITY_3D.md`
