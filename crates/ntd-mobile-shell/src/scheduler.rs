@@ -148,6 +148,7 @@ mod tests {
             checkpoint_sequence: 1,
             cognitive_checkpoint: vec![1],
             action_checkpoint: vec![1],
+            capabilities: Vec::new(),
             pending_approval: None,
             retry: None,
         }
