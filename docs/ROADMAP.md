@@ -54,7 +54,7 @@ Delivered contract:
 - NTD97 IR 0.2 additive `CausalAttention` semantic;
 - CPU reference Gather, RotaryPosition and CausalAttention;
 - canonical `ntd97.tokenizer.v2` payload with backward decoding of `ntd97.tokenizer.vocab.v1`;
-- deterministic native vocabulary tokenizer plus LLaMA-style SentencePiece score-ordered BPE with byte fallback;
+- deterministic native vocabulary tokenizer, LLaMA-style SentencePiece score-ordered BPE with byte fallback, and canonical GPT-2 Unicode pre-tokenization + byte-level ranked BPE;
 - source-independent `GraphGenerator` autoregressive decode loop;
 - greedy and seeded stochastic sampling with temperature/top-k;
 - logits/probability distribution contracts;
@@ -324,7 +324,7 @@ Current implementation:
 
 Still required before M11 completion:
 
-- representative real LLaMA tokenizer source-vs-NTD97 differential validation and native GPT-2 pre-tokenizer/BPE execution;
+- representative real LLaMA/GPT-2 tokenizer source-vs-NTD97 differential validation, plus additional BPE pre-tokenizers such as Qwen2/LLaMA3 only when their exact semantics are implemented;
 - representative real-model source-vs-NIR97 semantic-equivalence execution;
 - common mobile GGUF K-quant transcodes such as Q4_K/Q5_K/Q6_K;
 - streaming/mapped large-file import path;
