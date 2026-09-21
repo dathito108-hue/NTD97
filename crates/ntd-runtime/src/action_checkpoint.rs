@@ -93,7 +93,8 @@ pub fn decode_action_fabric_checkpoint(
         return Err(ActionCheckpointError::InvalidHeader);
     }
 
-    let payload_len = usize::try_from(header.u64()?).map_err(|_| ActionCheckpointError::Overflow)?;
+    let payload_len =
+        usize::try_from(header.u64()?).map_err(|_| ActionCheckpointError::Overflow)?;
     let expected = TAF97_HEADER_LEN
         .checked_add(payload_len)
         .ok_or(ActionCheckpointError::Overflow)?;
@@ -153,8 +154,7 @@ fn decode_plan(cursor: &mut Cursor<'_>) -> Result<ActionPlanState, ActionCheckpo
     let plan_cursor =
         usize::try_from(cursor.u64()?).map_err(|_| ActionCheckpointError::Overflow)?;
     let status_raw = cursor.u8()?;
-    let status =
-        ActionPlanStatus::try_from(status_raw).map_err(ActionCheckpointError::Fabric)?;
+    let status = ActionPlanStatus::try_from(status_raw).map_err(ActionCheckpointError::Fabric)?;
     let action_count =
         usize::try_from(cursor.u32()?).map_err(|_| ActionCheckpointError::Overflow)?;
     let mut actions = Vec::with_capacity(action_count);
@@ -614,9 +614,7 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        AuthorityScope, CapabilityDescriptor, CapabilityDomain, CapabilityRegistry,
-    };
+    use crate::{AuthorityScope, CapabilityDescriptor, CapabilityDomain, CapabilityRegistry};
     use ntd_core::SideEffectClass;
 
     fn registry() -> CapabilityRegistry {
@@ -628,8 +626,7 @@ mod tests {
             SideEffectClass::ReadOnly,
         )
         .expect("descriptor");
-        descriptor.required_scopes =
-            vec![AuthorityScope::new("network.read").expect("scope")];
+        descriptor.required_scopes = vec![AuthorityScope::new("network.read").expect("scope")];
         registry.register(descriptor).expect("register");
         registry
     }
