@@ -69,24 +69,22 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Major Block F — Android Continuity + Interactive 3D Assistant — complete**
+**Major Block G — Paired PC Fabric — complete**
 
-NTD97 now has a validated Android shell around the same sovereign cognition/action identity:
+NTD97 can now use an authenticated computer as a governed capability node without transferring its identity to that computer:
 
 ```text
-SIK97 cognition + TAF97 actions + capability snapshot
-  -> deterministic MCS97 mobile continuity
-  -> OS-aware wake policy
-  -> Android AtomicFile / JobScheduler / reboot / foreground paths
-  -> concrete local JNI NtdRuntimeHost
-  -> approval + local PCM voice
-  -> avatar state
-  -> in-app / floating OpenGL ES 3D surface
+Phone-owned NTD97 cognition / ActionFabric
+  -> typed Pc capability + stable ActionId
+  -> pinned mutual authentication
+  -> encrypted PCF97 session
+  -> governed desktop observe / execute / artifact handlers
+  -> verified result + SHA-256 artifact return
 ```
 
-The canonical Android build produces a debug APK with local native libraries for `arm64-v8a`, `armeabi-v7a` and `x86_64`. API 35 emulator validation passes native-host attachment, avatar JNI, PCM bridge, notification channels, foreground-service request, overlay service, persisted work, reboot and post-reboot cold start. No hosted AI backend or cloud fallback is present in this path.
+The paired-PC path uses pinned Ed25519 identities, X25519 session establishment, HKDF-derived directional keys, ChaCha20-Poly1305 frames, replay protection, request/result digest binding, policy-gated desktop actions and idempotent remote execution. TAF97/MCS97 persist the additive PC action contract without making the PC part of NTD97 cognition, memory or identity.
 
-Current roadmap focus moves to **Major Block G — Paired PC Fabric**. Broader Android device/version soak and representative-device performance validation remains scheduled for M10.
+M7 acceptance passed the canonical Rust gate and the existing Android APK/lifecycle regression gate. Current roadmap focus moves to **Major Block H — Capability Forge + Native Assimilation**.
 
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
@@ -103,6 +101,7 @@ See:
 - `docs/COGNITIVE_RUNTIME_SOVEREIGN_MEMORY.md`
 - `docs/TOOL_INTERNET_DEVICE_ACTION_FABRIC.md`
 - `docs/ANDROID_CONTINUITY_3D_ASSISTANT.md`
+- `docs/PAIRED_PC_FABRIC.md`
 - `docs/COGNITIVE_CAPSULE.md`
 - `docs/SOVEREIGN_MODEL.md`
 - `docs/CONTINUITY_3D.md`
