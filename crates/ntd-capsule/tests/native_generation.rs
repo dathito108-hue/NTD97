@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use ntd_capsule::{
     load_native_generative_program, push_graph_section, push_native_tensor_shard,
     push_native_tokenizer_section, push_tensor_descriptor_section, CapsuleBuilder, CapsuleKind,
-    CapsuleView, MemoryContentStore, NativeTensor, NativeTokenizerDescriptor,
-    QuantizationMetadata, TensorDescriptor,
+    CapsuleView, MemoryContentStore, NativeTensor, NativeTokenizerDescriptor, QuantizationMetadata,
+    TensorDescriptor,
 };
 use ntd_ir::{
     DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
@@ -50,10 +50,7 @@ fn runtime_quantization(metadata: QuantizationMetadata) -> QuantizationParams {
 fn full_ncc97_package_generates_text_without_external_model_runtime() {
     let graph = Graph {
         version: IrVersion::CURRENT,
-        inputs: vec![
-            tensor_decl(0, DType::I32, 1),
-            tensor_decl(1, DType::F32, 2),
-        ],
+        inputs: vec![tensor_decl(0, DType::I32, 1), tensor_decl(1, DType::F32, 2)],
         outputs: vec![ValueId(3)],
         nodes: vec![
             Node {
