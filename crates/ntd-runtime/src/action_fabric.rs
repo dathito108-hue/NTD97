@@ -358,7 +358,7 @@ impl ActionFabric {
     where
         V: ActionVerifier,
     {
-        let (cursor, plan_status, action_snapshot) = {
+        let (cursor, action_snapshot) = {
             let plan = self
                 .state
                 .plans
@@ -374,7 +374,7 @@ impl ActionFabric {
             }
 
             let action = plan.actions.get(plan.cursor).cloned();
-            (plan.cursor, plan.status, action)
+            (plan.cursor, action)
         };
 
         let Some(action_snapshot) = action_snapshot else {
@@ -435,11 +435,27 @@ impl ActionFabric {
             )
         } else {
             adapter.execute(action_snapshot.id, &action_snapshot.action)
-        }
-        .map_err(|reason| ActionFabricError::AdapterFailure {
-            capability: action_snapshot.capability.clone(),
-            reason,
-        })?;
+        };
+
+        let adapter_result = match adapter_result {
+            Ok(result) => result,
+            Err(reason) => {
+                let action = self.action_mut(plan_id, cursor)?;
+                action.status = ActionStatus::Retryable;
+                action.last_error = Some(reason.clone());
+                action.resume_token = None;
+                let action_id = action.id;
+                self.set_plan_status(plan_id, ActionPlanStatus::Ready)?;
+                return Ok(ActionStepReport {
+                    plan_id,
+                    action_id: Some(action_id),
+                    action_status: Some(ActionStatus::Retryable),
+                    plan_status: ActionPlanStatus::Ready,
+                    cursor,
+                    summary: reason,
+                });
+            }
+        };
 
         self.apply_adapter_result(
             plan_id,
@@ -532,11 +548,12 @@ impl ActionFabric {
                 action.status = ActionStatus::Suspended;
                 action.resume_token = Some(resume_token);
                 action.last_error = Some(note.clone());
+                let action_id = action.id;
                 self.set_plan_status(plan_id, ActionPlanStatus::Suspended)?;
                 Ok(ActionStepReport {
                     plan_id,
-                    action_id: Some(action.id),
-                    action_status: Some(action.status),
+                    action_id: Some(action_id),
+                    action_status: Some(ActionStatus::Suspended),
                     plan_status: ActionPlanStatus::Suspended,
                     cursor,
                     summary: note,
@@ -550,11 +567,12 @@ impl ActionFabric {
                 action.status = ActionStatus::Retryable;
                 action.resume_token = resume_token;
                 action.last_error = Some(reason.clone());
+                let action_id = action.id;
                 self.set_plan_status(plan_id, ActionPlanStatus::Ready)?;
                 Ok(ActionStepReport {
                     plan_id,
-                    action_id: Some(action.id),
-                    action_status: Some(action.status),
+                    action_id: Some(action_id),
+                    action_status: Some(ActionStatus::Retryable),
                     plan_status: ActionPlanStatus::Ready,
                     cursor,
                     summary: reason,
@@ -597,10 +615,11 @@ impl ActionFabric {
                         action.resume_token = None;
                         action.rollback_token = rollback_token;
                         action.last_error = Some(reason.clone());
+                        let action_id = action.id;
                         self.set_plan_status(plan_id, ActionPlanStatus::Ready)?;
                         Ok(ActionStepReport {
                             plan_id,
-                            action_id: Some(action.id),
+                            action_id: Some(action_id),
                             action_status: Some(ActionStatus::Retryable),
                             plan_status: ActionPlanStatus::Ready,
                             cursor,
@@ -618,16 +637,18 @@ impl ActionFabric {
                         let action = self.action_mut(plan_id, cursor)?;
                         action.output = Some(output);
                         action.last_error = Some(reason.clone());
-                        action.status = if rolled_back {
+                        let action_status = if rolled_back {
                             ActionStatus::RolledBack
                         } else {
                             ActionStatus::Failed
                         };
+                        action.status = action_status;
+                        let action_id = action.id;
                         self.finish_plan(plan_id, ActionPlanStatus::Failed)?;
                         Ok(ActionStepReport {
                             plan_id,
-                            action_id: Some(action.id),
-                            action_status: Some(action.status),
+                            action_id: Some(action_id),
+                            action_status: Some(action_status),
                             plan_status: ActionPlanStatus::Failed,
                             cursor,
                             summary: reason,
