@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 ntd-core = { path = "../ntd-core" }
+ntd-ir = { path = "../ntd-ir" }
 
 [lints]
 workspace = true
