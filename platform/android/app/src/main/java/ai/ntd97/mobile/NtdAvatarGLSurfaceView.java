@@ -97,6 +97,7 @@ public final class NtdAvatarGLSurfaceView extends GLSurfaceView {
 
         @Override
         public void onSurfaceCreated(
+                javax.microedition.khronos.opengles.GL10 gl,
                 javax.microedition.khronos.egl.EGLConfig config) {
             GLES20.glClearColor(0.03f, 0.03f, 0.05f, 0.0f);
             GLES20.glEnable(GLES20.GL_DEPTH_TEST);
