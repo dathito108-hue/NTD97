@@ -89,7 +89,7 @@ impl CapsuleBuilder {
             && self
                 .chunks
                 .iter()
-                .any(|chunk| matches!(chunk.source, ChunkSource::External { .. }))
+                .any(|chunk| matches!(&chunk.source, ChunkSource::External { .. }))
         {
             return Err(CapsuleError::ExternalChunkInFullCapsule);
         }
@@ -471,10 +471,9 @@ fn decode_manifest(bytes: &[u8]) -> Result<ManifestFields, CapsuleError> {
 
     let base_root = if flags & MANIFEST_FLAG_HAS_BASE != 0 {
         Some(root)
+    } else if root.iter().any(|byte| *byte != 0) {
+        return Err(CapsuleError::InvalidManifest);
     } else {
-        if root.iter().any(|byte| *byte != 0) {
-            return Err(CapsuleError::InvalidManifest);
-        }
         None
     };
 
@@ -677,6 +676,21 @@ mod tests {
         assert_eq!(
             CapsuleView::read(&bytes),
             Err(CapsuleError::ChunkIntegrityMismatch(SectionKind::Graph))
+        );
+    }
+
+    #[test]
+    fn rejects_incompatible_capsule_contract() {
+        let builder = CapsuleBuilder::new(CapsuleKind::Full, id());
+        let mut bytes = builder.write().expect("write");
+        bytes[8] = 1;
+
+        assert_eq!(
+            CapsuleView::read(&bytes),
+            Err(CapsuleError::UnsupportedContract(NativeIntelligenceContract {
+                capsule: CapsuleVersion { major: 1, minor: 0 },
+                ir: IrVersion::CURRENT,
+            }))
         );
     }
 
