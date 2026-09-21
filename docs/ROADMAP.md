@@ -194,19 +194,32 @@ Acceptance result: Rust `fmt -> clippy -D warnings -> workspace tests` PASS and 
 
 Exit: complete.
 
-## M8 — Major Block H: Capability Forge + Native Assimilation
+## M8 — Major Block H: Capability Forge + Native Assimilation — complete
 
-- capability discovery;
-- provenance/license capture;
-- isolated build/test sandbox;
-- generated adapters/skills;
-- source intelligence import;
-- semantic normalization into NTD97 IR/NCC97;
-- assimilation validation + atomic commit;
-- signature/version/rollback;
-- regression suites.
+Goal: allow supported external capabilities and intelligence sources to be discovered, validated and converted into signed NTD97-native assets without retaining the source runtime.
 
-Exit: new supported intelligence and capabilities become NTD97-native assets and no source runtime is required after successful assimilation.
+Delivered contract:
+
+- media-type importer registry with deterministic capability/intelligence discovery;
+- source digest, URI, attribution and license provenance capture;
+- explicit allowlisted-license and source-size policy gates;
+- source importer boundary that must terminate in a validated `NativeCandidate`;
+- generated native adapter/skill assets using the existing CapabilityDescriptor contract;
+- source intelligence normalization into NTD97 IR graphs;
+- native-only isolated regression sandbox with no network or external writes;
+- graph semantic round-trip and adapter-integrity regression probes;
+- NCC97 packaging using canonical Graph / Capabilities / Adapters / Provenance / Signatures / AssimilationLog sections;
+- Ed25519-signed native packages with trusted-signer verification;
+- monotonic asset versioning;
+- all-or-none batch commit semantics;
+- explicit rollback to a previously verified native version;
+- source bytes and source runtime excluded from committed native assets;
+- end-to-end tests for capability assimilation, intelligence assimilation, provenance/license denial, signature tampering, version conflict and rollback;
+- Rust 1.80-compatible pinned signing dependency graph.
+
+Acceptance result: Rust `fmt -> clippy -D warnings -> workspace tests` PASS and Android build/lifecycle regression PASS. Supported imported intelligence and capabilities become signed NTD97-native NCC97 assets; successful runtime use no longer depends on the source runtime.
+
+Exit: complete.
 
 ## M9 — Major Block I: Portable Sovereign Intelligence
 
