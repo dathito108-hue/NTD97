@@ -5,7 +5,10 @@ use std::{
     collections::BTreeMap,
     fs,
     ptr::null_mut,
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
 };
 
 use jni::{
@@ -15,7 +18,7 @@ use jni::{
 };
 use ntd_assimilation::{
     activate_thin_generative_capsule, verify_native_package_with_shards, AssetKind,
-    FileBackedTensorResolver, FileTensorShardStore, NativePackage,
+    FileBackedTensorResolver, FileTensorShardStore, NativePackage, ThinGenerativeActivation,
 };
 use ntd_capsule::{sha256, NativeTokenizerModel};
 use ntd_mobile_shell::{
@@ -24,8 +27,9 @@ use ntd_mobile_shell::{
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
 use ntd_runtime::{
-    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
-    LlamaSpmTokenizer, ResourceSnapshot, SamplingMode, ThermalState,
+    ConversationTurn, CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator,
+    LlamaSpmConfig, LlamaSpmTokenizer, NativeChatPromptCompiler, ResourceSnapshot, SamplingMode,
+    ThermalState,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
@@ -33,11 +37,51 @@ use ntd_validation::{
 };
 
 const BRIDGE_PROTOCOL_VERSION: u8 = 1;
+const CHAT_EVENT_PROTOCOL_VERSION: u8 = 1;
+const CHAT_EVENT_TOKEN: u8 = 1;
+const CHAT_EVENT_COMPLETE: u8 = 2;
+const CHAT_EVENT_CANCELLED: u8 = 3;
+const CHAT_EVENT_ERROR: u8 = 4;
+const CHAT_STATUS_MISSING: i32 = 0;
+const CHAT_STATUS_RUNNING: i32 = 1;
+const CHAT_STATUS_COMPLETE: i32 = 2;
+const CHAT_STATUS_CANCELLED: i32 = 3;
+const CHAT_STATUS_FAILED: i32 = 4;
+
+struct NativeChatModel {
+    activation: ThinGenerativeActivation,
+    resolver: FileBackedTensorResolver,
+    tokenizer: LlamaSpmTokenizer,
+    context_limit: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeChatSessionStatus {
+    Running,
+    Complete,
+    Cancelled,
+    Failed,
+}
+
+struct NativeChatSession {
+    request_id: u64,
+    user_message: String,
+    all_tokens: Vec<u32>,
+    generated_tokens: Vec<u32>,
+    generated_text: String,
+    max_new_tokens: usize,
+    cancel: Arc<AtomicBool>,
+    status: NativeChatSessionStatus,
+}
 
 struct NativeState {
     bundle: Option<MobileContinuityBundle>,
     resources: ResourceSnapshot,
     input_peak_milli: u16,
+    chat_model: Option<Arc<NativeChatModel>>,
+    chat_session: Option<NativeChatSession>,
+    chat_history: Vec<ConversationTurn>,
+    next_chat_request_id: u64,
 }
 
 impl Default for NativeState {
@@ -52,6 +96,10 @@ impl Default for NativeState {
                 latency_budget_ms: 100,
             },
             input_peak_milli: 0,
+            chat_model: None,
+            chat_session: None,
+            chat_history: Vec::new(),
+            next_chat_request_id: 1,
         }
     }
 }
