@@ -81,12 +81,7 @@ fn state_capsule_restores_sovereign_cognitive_identity() {
         "checkpointed"
     );
     assert_eq!(
-        restored
-            .state()
-            .memory
-            .get(memory_id)
-            .expect("memory")
-            .kind,
+        restored.state().memory.get(memory_id).expect("memory").kind,
         MemoryKind::Procedural
     );
 }
