@@ -59,8 +59,7 @@ pub fn parse_native_action_plan(text: &str) -> Result<AssistantPlanDecision, Ass
     let mut graph = TaskGraph::default();
     let mut payloads = BTreeMap::new();
     let mut canonical = String::from(NATIVE_ACTION_PROTOCOL_V1);
-    canonical.push('
-');
+    canonical.push('\n');
     let mut expected_id = 1u32;
     let mut ended = false;
 
@@ -77,8 +76,7 @@ pub fn parse_native_action_plan(text: &str) -> Result<AssistantPlanDecision, Ass
             .checked_add(1)
             .ok_or(AssistantPlanError::InvalidNodeId)?;
         canonical.push_str(&canonical_line);
-        canonical.push('
-');
+        canonical.push('\n');
         payloads.insert(node.id, payload);
         graph.actions.push(node);
     }
@@ -119,9 +117,8 @@ fn parse_action_line(
     if payload.trim().is_empty()
         || payload != payload.trim()
         || payload.contains('|')
-        || payload.contains('')
-        || payload.contains('
-')
+        || payload.contains('\r')
+        || payload.contains('\n')
     {
         return Err(AssistantPlanError::InvalidPayload);
     }
@@ -145,7 +142,7 @@ fn parse_action_line(
         },
         "pc.observe" => {
             let (peer, surface) = payload
-                .split_once('	')
+                .split_once('\t')
                 .ok_or(AssistantPlanError::InvalidPayload)?;
             if peer.trim().is_empty()
                 || surface.trim().is_empty()
@@ -271,14 +268,12 @@ pub fn build_verified_answer_prompt(
         if !item.value.is_empty() {
             out.push_str("value: ");
             out.push_str(&item.value);
-            out.push('
-');
+            out.push('\n');
         }
         for evidence_line in &item.evidence {
             out.push_str("evidence: ");
             out.push_str(evidence_line);
-            out.push('
-');
+            out.push('\n');
         }
     }
     out.push_str("
