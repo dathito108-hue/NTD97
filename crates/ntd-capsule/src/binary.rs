@@ -115,6 +115,7 @@ impl CapsuleBuilder {
 
         let mut entries = Vec::with_capacity(self.chunks.len());
         let mut cursor = payload_offset;
+        let mut file_len = payload_offset;
 
         for chunk in &self.chunks {
             match &chunk.source {
@@ -128,12 +129,11 @@ impl CapsuleBuilder {
                         offset: u64::try_from(cursor).map_err(|_| CapsuleError::Overflow)?,
                         hash: sha256(bytes),
                     });
-                    cursor = align_up(
-                        cursor
-                            .checked_add(bytes.len())
-                            .ok_or(CapsuleError::Overflow)?,
-                        ALIGNMENT,
-                    )?;
+                    let end = cursor
+                        .checked_add(bytes.len())
+                        .ok_or(CapsuleError::Overflow)?;
+                    file_len = file_len.max(end);
+                    cursor = align_up(end, ALIGNMENT)?;
                 }
                 ChunkSource::External { logical_len, hash } => {
                     entries.push(IndexEntry {
@@ -150,7 +150,7 @@ impl CapsuleBuilder {
         let index = encode_index(&entries);
         let root_hash = metadata_root(&manifest, &index);
 
-        let mut out = vec![0u8; cursor.max(payload_offset)];
+        let mut out = vec![0u8; file_len];
         encode_header(
             &mut out[..HEADER_LEN],
             HeaderFields {
