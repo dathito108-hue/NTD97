@@ -605,6 +605,111 @@ mod tests {
     }
 
     #[test]
+    fn q4_k_dequantization_matches_scale_min_packing() {
+        let mut bytes = vec![0u8; 144];
+        bytes[0..2].copy_from_slice(&0x3c00u16.to_le_bytes());
+        bytes[2..4].copy_from_slice(&0u16.to_le_bytes());
+        bytes[4..16].copy_from_slice(&[1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1]);
+        bytes[16..144].fill(0x21);
+
+        let tensor = GgufTensorInfo {
+            name: "q4_k.weight".into(),
+            dimensions: vec![256],
+            ggml_type: GGML_TYPE_Q4_K,
+            data_offset: 0,
+        };
+        let model = model_for(&bytes, tensor.clone());
+
+        assert_eq!(ggml_tensor_byte_len(&tensor), Ok(144));
+        let native = transcode_tensor(&bytes, &model, &tensor, false).expect("transcode");
+        let values = decode_f32(&native.payload);
+        assert_eq!(values.len(), 256);
+        for group in 0..4 {
+            assert_eq!(&values[group * 64..group * 64 + 32], &[1.0; 32]);
+            assert_eq!(&values[group * 64 + 32..group * 64 + 64], &[2.0; 32]);
+        }
+    }
+
+    #[test]
+    fn q5_k_dequantization_reconstructs_low_and_high_planes() {
+        let mut bytes = vec![0u8; 176];
+        bytes[0..2].copy_from_slice(&0x3c00u16.to_le_bytes());
+        bytes[2..4].copy_from_slice(&0u16.to_le_bytes());
+        bytes[4..16].copy_from_slice(&[1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1]);
+        bytes[48..176].fill(0x21);
+
+        let tensor = GgufTensorInfo {
+            name: "q5_k.weight".into(),
+            dimensions: vec![256],
+            ggml_type: GGML_TYPE_Q5_K,
+            data_offset: 0,
+        };
+        let model = model_for(&bytes, tensor.clone());
+
+        assert_eq!(ggml_tensor_byte_len(&tensor), Ok(176));
+        let native = transcode_tensor(&bytes, &model, &tensor, false).expect("transcode");
+        let values = decode_f32(&native.payload);
+        assert_eq!(values.len(), 256);
+        for group in 0..4 {
+            assert_eq!(&values[group * 64..group * 64 + 32], &[1.0; 32]);
+            assert_eq!(&values[group * 64 + 32..group * 64 + 64], &[2.0; 32]);
+        }
+
+        bytes[16..48].fill(0xff);
+        let model = model_for(&bytes, tensor.clone());
+        let native = transcode_tensor(&bytes, &model, &tensor, false).expect("high plane");
+        let values = decode_f32(&native.payload);
+        for group in 0..4 {
+            assert_eq!(&values[group * 64..group * 64 + 32], &[17.0; 32]);
+            assert_eq!(&values[group * 64 + 32..group * 64 + 64], &[18.0; 32]);
+        }
+    }
+
+    #[test]
+    fn q6_k_dequantization_reconstructs_signed_six_bit_values() {
+        let mut bytes = vec![0u8; 210];
+        bytes[0..128].fill(0x11);
+        bytes[128..192].fill(0xaa);
+        bytes[192..208].fill(1);
+        bytes[208..210].copy_from_slice(&0x3c00u16.to_le_bytes());
+
+        let tensor = GgufTensorInfo {
+            name: "q6_k.weight".into(),
+            dimensions: vec![256],
+            ggml_type: GGML_TYPE_Q6_K,
+            data_offset: 0,
+        };
+        let model = model_for(&bytes, tensor.clone());
+
+        assert_eq!(ggml_tensor_byte_len(&tensor), Ok(210));
+        let native = transcode_tensor(&bytes, &model, &tensor, false).expect("transcode");
+        assert_eq!(decode_f32(&native.payload), vec![1.0; 256]);
+    }
+
+    #[test]
+    fn k_quant_rows_require_complete_256_element_blocks() {
+        for (ggml_type, block_bytes) in [
+            (GGML_TYPE_Q4_K, 144usize),
+            (GGML_TYPE_Q5_K, 176usize),
+            (GGML_TYPE_Q6_K, 210usize),
+        ] {
+            let bytes = vec![0u8; block_bytes];
+            let tensor = GgufTensorInfo {
+                name: "invalid-k.weight".into(),
+                dimensions: vec![128],
+                ggml_type,
+                data_offset: 0,
+            };
+            assert_eq!(ggml_tensor_byte_len(&tensor), Err(GgufError::InvalidTensor));
+            let model = model_for(&bytes, tensor.clone());
+            assert_eq!(
+                transcode_tensor(&bytes, &model, &tensor, false),
+                Err(GgufError::InvalidTensor)
+            );
+        }
+    }
+
+    #[test]
     fn tensor_slice_fails_closed_when_payload_is_truncated() {
         let bytes = f32_payload(&[1.0, 2.0, 3.0]);
         let tensor = GgufTensorInfo {
