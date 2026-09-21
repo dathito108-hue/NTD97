@@ -1,6 +1,6 @@
 # NTD97 Canonical Architecture
 
-Status: Phase 002 sovereign-model, embodiment and continuity contract.
+Status: Phase 003A architecture-frozen sovereign contract.
 
 ## 1. Goal
 
@@ -323,7 +323,9 @@ Execution providers are selected dynamically by NTD97 itself:
 1. device accelerator provider if compatible;
 2. Vulkan/Metal compute provider;
 3. optimized CPU provider;
-4. optional paired-PC provider when explicitly allowed.\n\nA remote/cloud provider is never required for the sovereign baseline.
+4. optional paired-PC provider when explicitly allowed.
+
+A remote/cloud provider is never required for the sovereign baseline.
 
 The runtime owns tensor layout, scheduling, KV/state management, paging, quantization metadata, and device profiles.
 
@@ -392,3 +394,12 @@ These are architecture-level constraints:
 - mobile resource pressure can reduce compute but cannot silently corrupt state;
 - internet/PC connectivity is optional, never assumed;
 - execution and verification are separate concepts.
+
+
+## 9. Phase 003A architecture freeze
+
+The dependency and responsibility boundaries are now frozen in `docs/ARCHITECTURE_FREEZE.md`.
+
+NTD97 IR v0 is specified in `docs/IR_V0.md`.
+
+Future binary format, importers, execution kernels, Android shells and 3D components must conform to those boundaries rather than redefining the sovereign execution path.

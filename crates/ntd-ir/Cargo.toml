@@ -1,12 +1,9 @@
 [package]
-name = "ntd-capsule"
+name = "ntd-ir"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-
-[dependencies]
-ntd-ir = { path = "../ntd-ir" }
 
 [lints]
 workspace = true

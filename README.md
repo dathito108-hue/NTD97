@@ -64,12 +64,14 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Phase 001 — Clean Mobile AGI Foundation**
+**Phase 003A — Architecture Freeze + NTD97 IR v0**
 
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
 See:
 
 - `docs/ARCHITECTURE.md`
+- `docs/ARCHITECTURE_FREEZE.md`
+- `docs/IR_V0.md`
 - `docs/COGNITIVE_CAPSULE.md`\n- `docs/SOVEREIGN_MODEL.md`\n- `docs/CONTINUITY_3D.md`
 - `docs/ROADMAP.md`

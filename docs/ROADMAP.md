@@ -13,14 +13,28 @@ The roadmap is milestone-based. Architecture changes should be made only when an
 
 ## M1 — NCC97 Native Intelligence + Assimilation Format
 
-- binary header and manifest;
-- chunk index;
-- mmap/streaming reader;
-- integrity verification;
-- thin/full/state export;
-- first GGUF + SafeTensors import experiments;\n- NTD97 IR v0 contract;\n- atomic assimilation transaction;\n- verify that imported intelligence no longer needs its source runtime for native execution.
+### Phase 003A — Architecture Freeze + NTD97 IR v0
 
-Exit: a capsule can be created, validated, opened and round-tripped; one supported external intelligence source can be assimilated into native NTD97 state and reopened without its source runtime.
+- freeze identity and dependency boundaries;
+- establish independent `ntd-ir` crate;
+- define IR 0.1 version contract;
+- define initial tensor/state/memory/control/tool operation families;
+- structural graph validation;
+- bind NCC97 compatibility to IR version;
+- runtime IR compatibility gate.
+
+Exit: architecture/IR contracts compile, match canonical documentation and pass CI.
+
+### Phase 003B — NCC97 Binary Capsule
+
+- deterministic binary header and manifest encoding;
+- chunk index and section descriptors;
+- content hashes and integrity verification;
+- reader/writer round-trip;
+- mmap/streaming-friendly access contract;
+- thin/full/state capsule primitives.
+
+Exit: a native capsule can be deterministically written, reopened, validated and round-tripped without implementing any external-model importer yet.
 
 ## M2 — Adaptive Mobile Runtime
 
@@ -40,7 +54,9 @@ Exit: deterministic test graph executes through the same provider contract used 
 - task graph compiler;
 - executor/verifier split;
 - short-response policy;
-- persistent checkpoints;\n- persistent world/goal state;\n- cold-process reconstruction of the same cognitive identity.
+- persistent checkpoints;
+- persistent world/goal state;
+- cold-process reconstruction of the same cognitive identity.
 
 Exit: one runtime can switch from low-latency reflex behavior to deeper iterative planning without changing backend identity.
 
@@ -61,7 +77,14 @@ Exit: tasks can discover and use tools from one capability graph.
 - permitted AccessibilityService automation;
 - foreground/background task continuity;
 - notifications and user approvals;
-- media/voice interfaces;\n- interactive 3D avatar scene;\n- adaptive 3D renderer with expression/gaze/lip-sync/gesture state;\n- user-authorized floating assistant surface where the OS permits it;\n- persistent active-task service policy;\n- scheduled/retry wake path;\n- reboot/process-death restoration;\n- state reconstruction and checkpoint verification.
+- media/voice interfaces;
+- interactive 3D avatar scene;
+- adaptive 3D renderer with expression/gaze/lip-sync/gesture state;
+- user-authorized floating assistant surface where the OS permits it;
+- persistent active-task service policy;
+- scheduled/retry wake path;
+- reboot/process-death restoration;
+- state reconstruction and checkpoint verification.
 
 Exit: NTD97 can perform verified multi-app tasks, present an interactive 3D assistant, survive UI exit/process death/reboot at the logical task level, and resume eligible work under Android execution rules.
 
@@ -92,7 +115,9 @@ Exit: a missing capability can be acquired or developed without mutating the cor
 - adapter/delta learning hooks;
 - thin/full/state capsule backup;
 - restore across devices;
-- encrypted user-owned state;\n- content-addressed NTD97-owned memory format;\n- full sovereign offline restore test.
+- encrypted user-owned state;
+- content-addressed NTD97-owned memory format;
+- full sovereign offline restore test.
 
 Exit: intelligence state can be backed up and restored independently of the app install.
 
@@ -115,6 +140,9 @@ Exit: device profiles automatically select the fastest verified configuration th
 - failure recovery;
 - offline degradation;
 - security boundaries;
-- reproducible benchmarks;\n- 24/7 continuity soak tests;\n- offline boot + restore + local task suite;\n- no-third-party-AI-dependency audit.
+- reproducible benchmarks;
+- 24/7 continuity soak tests;
+- offline boot + restore + local task suite;
+- no-third-party-AI-dependency audit.
 
 Exit: measurable capability, latency, reliability and recovery targets are met on a representative device matrix.
