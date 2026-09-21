@@ -395,6 +395,25 @@ impl CognitiveRuntime {
         &mut self.state
     }
 
+    pub fn start_external_task(&mut self, task_id: u64) -> Result<(), CognitiveError> {
+        self.state.tick = self
+            .state
+            .tick
+            .checked_add(1)
+            .ok_or(CognitiveError::Overflow)?;
+        let task = self
+            .state
+            .tasks
+            .get_mut(&task_id)
+            .ok_or(CognitiveError::MissingTask(task_id))?;
+        if matches!(task.status, TaskStatus::Completed | TaskStatus::Failed) {
+            return Ok(());
+        }
+        task.status = TaskStatus::Running;
+        task.updated_tick = self.state.tick;
+        Ok(())
+    }
+
     pub fn complete_external_task(
         &mut self,
         task_id: u64,
@@ -843,6 +862,11 @@ mod tests {
                 None,
             )
             .expect("completed task");
+        runtime.start_external_task(completed).expect("start");
+        assert_eq!(
+            runtime.state().tasks.get(&completed).expect("task").status,
+            TaskStatus::Running
+        );
         runtime
             .complete_external_task(completed, "answer committed")
             .expect("complete");
