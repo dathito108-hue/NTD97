@@ -73,11 +73,7 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
     let vocabulary_size = tokenizer.tokens.len();
     let vocab_u64 = u64::try_from(vocabulary_size).map_err(|_| GgufError::LimitExceeded)?;
 
-    let tensor_map = model
-        .tensors
-        .iter()
-        .map(|tensor| (tensor.name.as_str(), tensor))
-        .collect::<BTreeMap<_, _>>();
+    let source_tensors = SourceTensorTable::new(file, model);
 
     let mut consumed = BTreeSet::new();
     let mut builder = GraphBuilder::new();
@@ -98,11 +94,8 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
     ])?;
     let flatten_shape = builder.add_constant_f32_vector(&[0.0, config.embedding_length as f32])?;
 
-    let token_embedding = add_source_tensor(
+    let token_embedding = source_tensors.add(
         &mut builder,
-        file,
-        model,
-        &tensor_map,
         &mut consumed,
         "token_embd.weight",
         &[u64::from(config.embedding_length), vocab_u64],
@@ -121,21 +114,15 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
         .ok_or(GgufError::Overflow)?;
 
     for layer in 0..config.block_count {
-        let attn_norm = add_source_tensor(
+        let attn_norm = source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             &format!("blk.{layer}.attn_norm.weight"),
             &[u64::from(config.embedding_length)],
             false,
         )?;
-        let q_weight = add_source_tensor(
+        let q_weight = source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             &format!("blk.{layer}.attn_q.weight"),
             &[
@@ -144,31 +131,22 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
             ],
             true,
         )?;
-        let k_weight = add_source_tensor(
+        let k_weight = source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             &format!("blk.{layer}.attn_k.weight"),
             &[u64::from(config.embedding_length), u64::from(kv_width)],
             true,
         )?;
-        let v_weight = add_source_tensor(
+        let v_weight = source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             &format!("blk.{layer}.attn_v.weight"),
             &[u64::from(config.embedding_length), u64::from(kv_width)],
             true,
         )?;
-        let attn_output = add_source_tensor(
+        let attn_output = source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             &format!("blk.{layer}.attn_output.weight"),
             &[
@@ -177,21 +155,15 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
             ],
             true,
         )?;
-        let ffn_norm = add_source_tensor(
+        let ffn_norm = source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             &format!("blk.{layer}.ffn_norm.weight"),
             &[u64::from(config.embedding_length)],
             false,
         )?;
-        let ffn_gate = add_source_tensor(
+        let ffn_gate = source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             &format!("blk.{layer}.ffn_gate.weight"),
             &[
@@ -200,11 +172,8 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
             ],
             true,
         )?;
-        let ffn_up = add_source_tensor(
+        let ffn_up = source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             &format!("blk.{layer}.ffn_up.weight"),
             &[
@@ -213,11 +182,8 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
             ],
             true,
         )?;
-        let ffn_down = add_source_tensor(
+        let ffn_down = source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             &format!("blk.{layer}.ffn_down.weight"),
             &[
@@ -272,11 +238,8 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
         hidden = builder.add_node(TensorOp::Add, vec![residual, down], DType::F32, 2)?;
     }
 
-    let output_norm = add_source_tensor(
+    let output_norm = source_tensors.add(
         &mut builder,
-        file,
-        model,
-        &tensor_map,
         &mut consumed,
         "output_norm.weight",
         &[u64::from(config.embedding_length)],
@@ -291,21 +254,15 @@ pub fn lower_llama_model(file: &[u8], model: &GgufModel) -> Result<LoweredLlamaM
 
     let output_source = tensor_map.get("output.weight").copied();
     let output = match output_source {
-        Some(_) => add_source_tensor(
+        Some(_) => source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             "output.weight",
             &[u64::from(config.embedding_length), vocab_u64],
             true,
         )?,
-        None => add_source_tensor(
+        None => source_tensors.add(
             &mut builder,
-            file,
-            model,
-            &tensor_map,
             &mut consumed,
             "token_embd.weight",
             &[u64::from(config.embedding_length), vocab_u64],
@@ -497,30 +454,50 @@ fn numeric_f32(value: &GgufValue) -> Option<f32> {
     }
 }
 
-fn add_source_tensor(
-    builder: &mut GraphBuilder,
-    file: &[u8],
-    model: &GgufModel,
-    tensors: &BTreeMap<&str, &GgufTensorInfo>,
-    consumed: &mut BTreeSet<String>,
-    name: &str,
-    expected_source_dimensions: &[u64],
-    transpose_2d: bool,
-) -> Result<ValueId, GgufError> {
-    let tensor = tensors
-        .get(name)
-        .copied()
-        .ok_or_else(|| GgufError::MissingTensor(name.to_owned()))?;
-    if tensor.dimensions.as_slice() != expected_source_dimensions {
-        return Err(GgufError::UnsupportedModelFeature(format!(
-            "tensor '{name}' shape {:?} != expected {:?}",
-            tensor.dimensions, expected_source_dimensions
-        )));
+struct SourceTensorTable<'a> {
+    file: &'a [u8],
+    model: &'a GgufModel,
+    tensors: BTreeMap<&'a str, &'a GgufTensorInfo>,
+}
+
+impl<'a> SourceTensorTable<'a> {
+    fn new(file: &'a [u8], model: &'a GgufModel) -> Self {
+        let tensors = model
+            .tensors
+            .iter()
+            .map(|tensor| (tensor.name.as_str(), tensor))
+            .collect::<BTreeMap<_, _>>();
+        Self {
+            file,
+            model,
+            tensors,
+        }
     }
 
-    let transcoded = transcode_tensor(file, model, tensor, transpose_2d)?;
-    consumed.insert(name.to_owned());
-    builder.add_native_tensor(name, transcoded.dtype, transcoded.shape, transcoded.payload)
+    fn add(
+        &self,
+        builder: &mut GraphBuilder,
+        consumed: &mut BTreeSet<String>,
+        name: &str,
+        expected_source_dimensions: &[u64],
+        transpose_2d: bool,
+    ) -> Result<ValueId, GgufError> {
+        let tensor = self
+            .tensors
+            .get(name)
+            .copied()
+            .ok_or_else(|| GgufError::MissingTensor(name.to_owned()))?;
+        if tensor.dimensions.as_slice() != expected_source_dimensions {
+            return Err(GgufError::UnsupportedModelFeature(format!(
+                "tensor '{name}' shape {:?} != expected {:?}",
+                tensor.dimensions, expected_source_dimensions
+            )));
+        }
+
+        let transcoded = transcode_tensor(self.file, self.model, tensor, transpose_2d)?;
+        consumed.insert(name.to_owned());
+        builder.add_native_tensor(name, transcoded.dtype, transcoded.shape, transcoded.payload)
+    }
 }
 
 fn reject_unconsumed_model_tensors(
