@@ -339,6 +339,41 @@ fn validate_tokenizer(tokenizer: &NativeTokenizerDescriptor) -> Result<(), Nativ
             return Err(NativeTokenizerError::InvalidSpecialToken(special));
         }
     }
+
+    if let NativeTokenizerModel::LlamaSpm {
+        score_bits,
+        token_types,
+        ..
+    } = &tokenizer.model
+    {
+        if score_bits.len() != tokenizer.tokens.len() {
+            return Err(NativeTokenizerError::InvalidScoreCount {
+                expected: tokenizer.tokens.len(),
+                actual: score_bits.len(),
+            });
+        }
+        if token_types.len() != tokenizer.tokens.len() {
+            return Err(NativeTokenizerError::InvalidTokenTypeCount {
+                expected: tokenizer.tokens.len(),
+                actual: token_types.len(),
+            });
+        }
+
+        for (index, score) in score_bits.iter().enumerate() {
+            let id = u32::try_from(index).map_err(|_| NativeTokenizerError::Overflow)?;
+            if !f32::from_bits(*score).is_finite() {
+                return Err(NativeTokenizerError::NonFiniteScore(id));
+            }
+            let token_type = token_types[index];
+            if !(1..=6).contains(&token_type) {
+                return Err(NativeTokenizerError::InvalidTokenType {
+                    token: id,
+                    token_type,
+                });
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -351,6 +386,10 @@ fn push_u16(out: &mut Vec<u8>, value: u16) {
 }
 
 fn push_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_i32(out: &mut Vec<u8>, value: i32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
@@ -387,6 +426,11 @@ impl<'a> Cursor<'a> {
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    fn i32(&mut self) -> Result<i32, NativeTokenizerError> {
+        let bytes = self.take(4)?;
+        Ok(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
     fn is_finished(&self) -> bool {
         self.offset == self.bytes.len()
     }
@@ -407,6 +451,7 @@ mod tests {
             bos_token: Some(2),
             eos_token: Some(3),
             unknown_token: None,
+            model: NativeTokenizerModel::Vocabulary,
         }
     }
 
@@ -417,6 +462,30 @@ mod tests {
         let second = encode_native_tokenizer(&tokenizer).expect("encode second");
         assert_eq!(first, second);
         assert_eq!(decode_native_tokenizer(&first).expect("decode"), tokenizer);
+    }
+
+    #[test]
+    fn llama_spm_descriptor_round_trips_source_semantics() {
+        let tokenizer = NativeTokenizerDescriptor {
+            tokens: vec![b"<unk>".to_vec(), b"a".to_vec(), b"<0x21>".to_vec()],
+            bos_token: None,
+            eos_token: None,
+            unknown_token: Some(0),
+            model: NativeTokenizerModel::LlamaSpm {
+                score_bits: vec![
+                    (-1000.0f32).to_bits(),
+                    0.5f32.to_bits(),
+                    (-1000.0f32).to_bits(),
+                ],
+                token_types: vec![2, 1, 6],
+                add_space_prefix: true,
+                add_bos_token: false,
+                add_eos_token: true,
+            },
+        };
+
+        let encoded = encode_native_tokenizer(&tokenizer).expect("encode");
+        assert_eq!(decode_native_tokenizer(&encoded).expect("decode"), tokenizer);
     }
 
     #[test]
