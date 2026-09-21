@@ -55,6 +55,47 @@ pub struct NativePackage {
     pub capability: Option<CapabilityDescriptor>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ThinPackageChunk {
+    Embedded(SectionKind, Vec<u8>),
+    External {
+        kind: SectionKind,
+        logical_len: u64,
+        hash: Digest,
+    },
+}
+
+impl ThinPackageChunk {
+    fn kind(&self) -> SectionKind {
+        match self {
+            Self::Embedded(kind, _) | Self::External { kind, .. } => *kind,
+        }
+    }
+
+    fn logical_len(&self) -> Result<u64, AssimilationError> {
+        match self {
+            Self::Embedded(_, bytes) => {
+                u64::try_from(bytes.len()).map_err(|_| AssimilationError::Overflow)
+            }
+            Self::External { logical_len, .. } => Ok(*logical_len),
+        }
+    }
+
+    fn hash(&self) -> Digest {
+        match self {
+            Self::Embedded(_, bytes) => sha256(bytes),
+            Self::External { hash, .. } => *hash,
+        }
+    }
+
+    fn storage_tag(&self) -> u8 {
+        match self {
+            Self::Embedded(_, _) => 0,
+            Self::External { .. } => 1,
+        }
+    }
+}
+
 pub fn build_native_package(
     candidate: &NativeCandidate,
     provenance: &ProvenanceRecord,
@@ -145,6 +186,122 @@ pub fn build_native_package(
         capability,
     };
     verify_native_package(&package, &identity.verify_key())?;
+    Ok(package)
+}
+
+pub fn build_streamed_native_package(
+    asset_id: impl Into<String>,
+    version: u32,
+    model: &StreamedLoweredLlamaModel,
+    provenance: &ProvenanceRecord,
+    importer_id: &str,
+    report: &SandboxReport,
+    shard_store: &FileTensorShardStore,
+    identity: &AssimilationIdentity,
+) -> Result<NativePackage, AssimilationError> {
+    let asset_id = asset_id.into().trim().to_owned();
+    if asset_id.is_empty() || version == 0 || importer_id.trim().is_empty() {
+        return Err(AssimilationError::InvalidPackage);
+    }
+    provenance.validate()?;
+    model
+        .graph
+        .validate()
+        .map_err(|error| AssimilationError::InvalidCandidate(format!("{error:?}")))?;
+    if model.tensor_shards.is_empty() || model.vocabulary_size == 0 {
+        return Err(AssimilationError::InvalidPackage);
+    }
+    validate_streamed_report(report)?;
+
+    let descriptors = model
+        .tensor_shards
+        .iter()
+        .map(|shard| shard.descriptor.clone())
+        .collect::<Vec<_>>();
+    let descriptor_bytes = encode_tensor_descriptors(&descriptors)
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let tokenizer_bytes = encode_native_tokenizer(&model.tokenizer)
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let manifest_bytes = encode_native_generative_manifest(NativeGenerativeManifest {
+        token_input: model.token_input,
+        distribution_output: u32::try_from(model.distribution_output)
+            .map_err(|_| AssimilationError::Overflow)?,
+        vocabulary_size: u32::try_from(model.vocabulary_size)
+            .map_err(|_| AssimilationError::Overflow)?,
+    })
+    .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let graph_bytes = ntd_capsule::encode_graph(&model.graph)
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let provenance_bytes = encode_provenance(provenance)?;
+    let log_bytes = encode_assimilation_log(
+        &asset_id,
+        version,
+        AssetKind::Intelligence,
+        importer_id,
+        &report.passed_regressions,
+    )?;
+
+    let mut chunks = Vec::with_capacity(model.tensor_shards.len().saturating_add(7));
+    chunks.push(ThinPackageChunk::Embedded(SectionKind::Graph, graph_bytes));
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::Tensors,
+        descriptor_bytes,
+    ));
+    for shard in &model.tensor_shards {
+        chunks.push(ThinPackageChunk::External {
+            kind: SectionKind::Tensors,
+            logical_len: shard.logical_len,
+            hash: shard.hash,
+        });
+    }
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::Tokenizer,
+        tokenizer_bytes,
+    ));
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::GenerativeManifest,
+        manifest_bytes,
+    ));
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::Provenance,
+        provenance_bytes,
+    ));
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::AssimilationLog,
+        log_bytes,
+    ));
+
+    let signable = thin_section_signing_payload(&chunks)?;
+    let signature = identity.sign(&signable);
+    chunks.push(ThinPackageChunk::Embedded(
+        SectionKind::Signatures,
+        encode_signature(identity.verify_key(), signature),
+    ));
+
+    let capsule_id = native_capsule_id(&asset_id, version, &provenance.source_digest)?;
+    let mut builder = CapsuleBuilder::new(CapsuleKind::Thin, capsule_id);
+    for chunk in chunks {
+        match chunk {
+            ThinPackageChunk::Embedded(kind, bytes) => builder.push_embedded(kind, bytes),
+            ThinPackageChunk::External {
+                kind,
+                logical_len,
+                hash,
+            } => builder.push_external(kind, logical_len, hash),
+        }
+    }
+    let native_capsule = builder
+        .write()
+        .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
+    let package = NativePackage {
+        asset_id,
+        version,
+        kind: AssetKind::Intelligence,
+        capsule_hash: sha256(&native_capsule),
+        native_capsule,
+        capability: None,
+    };
+    verify_native_package_with_shards(&package, &identity.verify_key(), shard_store)?;
     Ok(package)
 }
 
