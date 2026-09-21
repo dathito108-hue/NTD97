@@ -137,13 +137,13 @@ Delivered contract:
 - transient-adapter failure test proving retry reuses the same ActionId.
 
 Exit: NTD97 can materialize a cognitive TaskGraph into governed typed actions, execute and verify multi-step work across registered local/internet/device adapters, and resume interrupted actions without changing task identity.
-## M6 — Major Block F: Android Continuity + Interactive 3D Assistant
+## M6 — Major Block F: Android Continuity + Interactive 3D Assistant — complete
 
 Goal: make NTD97 a persistent mobile assistant interface under operating-system limits.
 
-Implemented core/shell contract:
+Delivered contract:
 
-- new inward-dependent `ntd-mobile-shell` crate;
+- inward-dependent `ntd-mobile-shell` crate;
 - deterministic MCS97 envelope combining SIK97 + TAF97 + capability snapshot + lifecycle metadata;
 - self-contained cold restore without rebuilding capability registry in Android;
 - task/action linkage verification across cognition and tool state;
@@ -156,18 +156,17 @@ Implemented core/shell contract:
 - Android device-protected AtomicFile continuity store;
 - Android JobScheduler + reboot receiver + foreground service paths;
 - generic/private approval notifications;
-- local runtime-host SPI with fail-closed behavior and no cloud fallback;
-- in-app OpenGL ES avatar;
-- permission-gated floating avatar overlay;
-- local PCM AudioRecord/AudioTrack bridge.
+- in-app OpenGL ES avatar and permission-gated floating overlay;
+- local PCM AudioRecord/AudioTrack bridge;
+- concrete local `NtdNativeRuntimeHost` bound to the sovereign Rust runtime through `ntd-android-bridge` JNI;
+- no ServiceLoader dependency, hosted runtime, third-party AI backend or cloud fallback in the canonical Android path;
+- Android SDK 35 / NDK 27 / Gradle 8.9 / JDK 17 build gate;
+- native packaging for `arm64-v8a`, `armeabi-v7a` and `x86_64`;
+- debug APK assembly + artifact publication;
+- API 35 x86_64 emulator validation covering native host attachment, avatar JNI, PCM bridge, notification channels, foreground-service request, overlay service, persisted JobScheduler work, reboot, and post-reboot cold start.
 
-Release-validation gates still open:
+Acceptance result: Rust `fmt -> clippy -D warnings -> workspace tests` PASS and Android build/lifecycle gate PASS. UI exit, process death and reboot preserve the logical task/continuity contract through platform-approved mechanisms. Broader Android-version and representative-device soak/matrix validation remains part of M10 performance/general-agent validation.
 
-- compile/package the Android Gradle app against an Android SDK in CI or a release build environment;
-- package a concrete local `NtdRuntimeHost` provider that binds the Android shell to the native NTD97 runtime;
-- device-test notification/foreground-service restrictions, reboot wake, overlay permission and audio lifecycle across supported Android versions.
-
-Exit remains: UI exit, process death and reboot do not destroy logical task identity; eligible work resumes through platform-approved mechanisms and is represented through the interactive 3D assistant. The core acceptance path is implemented; APK/runtime-host integration must pass before M6 is marked fully complete.
 ## M7 — Major Block G: Paired PC Fabric
 
 - mutual authentication;
