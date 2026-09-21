@@ -539,7 +539,6 @@ fn open_chat_model(
         context_limit,
     }));
     guard.chat_session = None;
-    guard.chat_history.clear();
     Ok(())
 }
 
@@ -563,13 +562,17 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
     let prompt_limit = model.context_limit.saturating_sub(max_new_tokens).max(1);
     let compiled = NativeChatPromptCompiler
         .compile(
-            &guard.chat_history,
+            guard.conversation.turns(),
             user_message,
             &model.tokenizer,
             prompt_limit,
         )
         .map_err(|error| format!("compile chat prompt: {error:?}"))?;
 
+    let task_id = guard
+        .conversation
+        .begin_turn(user_message, compiled.token_ids, max_new_tokens)
+        .map_err(|error| format!("begin sovereign conversation turn: {error:?}"))?;
     let request_id = guard.next_chat_request_id;
     guard.next_chat_request_id = guard
         .next_chat_request_id
@@ -577,11 +580,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         .ok_or_else(|| "chat request id overflow".to_owned())?;
     guard.chat_session = Some(NativeChatSession {
         request_id,
-        user_message: user_message.to_owned(),
-        all_tokens: compiled.token_ids,
-        generated_tokens: Vec::with_capacity(max_new_tokens),
-        generated_text: String::new(),
-        max_new_tokens,
+        task_id,
         cancel: Arc::new(AtomicBool::new(false)),
         status: NativeChatSessionStatus::Running,
     });
