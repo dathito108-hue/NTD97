@@ -834,6 +834,15 @@ mod tests {
         ));
         adaptive.register(CpuTiledProvider::default());
 
+        let mut table = AutotuneTable::default();
+        table.record(ProviderMeasurement {
+            kind: ProviderKind::Npu,
+            op: TensorOp::MatMul,
+            latency_nanos: 10,
+            verified_equivalent: true,
+        });
+        adaptive.set_autotune(table);
+
         assert_eq!(
             adaptive
                 .selected_provider(TensorOp::MatMul)
