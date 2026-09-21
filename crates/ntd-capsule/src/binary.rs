@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::hash::{sha256, Digest};
-use crate::{CapsuleVersion, NativeIntelligenceContract, SectionKind, NCC97_MAGIC, NCC97_MINOR};
+use crate::{CapsuleVersion, NativeIntelligenceContract, SectionKind, NCC97_MAGIC};
 use ntd_ir::IrVersion;
 
 pub const HEADER_LEN: usize = 112;
@@ -594,6 +594,7 @@ fn read_u64(src: &[u8], offset: usize) -> Result<u64, CapsuleError> {
 mod tests {
     use super::*;
     use crate::hash::sha256;
+    use crate::NCC97_MINOR;
 
     fn id() -> [u8; 16] {
         *b"NTD97-CAPSULE-01"
