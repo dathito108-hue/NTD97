@@ -167,11 +167,7 @@ fn fixture() -> Vec<u8> {
     push_u32_kv(&mut out, "llama.feed_forward_length", 2);
     push_u32_kv(&mut out, "llama.attention.head_count", 1);
     push_u32_kv(&mut out, "llama.attention.head_count_kv", 1);
-    push_f32_kv(
-        &mut out,
-        "llama.attention.layer_norm_rms_epsilon",
-        1.0e-5,
-    );
+    push_f32_kv(&mut out, "llama.attention.layer_norm_rms_epsilon", 1.0e-5);
     push_u32_kv(&mut out, "llama.rope.dimension_count", 2);
 
     for tensor in &tensors {
