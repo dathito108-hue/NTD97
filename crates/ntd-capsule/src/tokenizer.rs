@@ -110,7 +110,7 @@ pub fn encode_native_tokenizer(
         &mut payload,
         tokenizer.unknown_token.unwrap_or(NO_SPECIAL_TOKEN),
     );
-    let model_tag = match tokenizer.model {
+    let model_tag = match &tokenizer.model {
         NativeTokenizerModel::Vocabulary => TOKENIZER_MODEL_VOCABULARY,
         NativeTokenizerModel::LlamaSpm { .. } => TOKENIZER_MODEL_LLAMA_SPM,
     };
