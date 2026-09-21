@@ -229,13 +229,13 @@ public final class MainActivity extends Activity {
 
         chatExecutor.execute(() -> {
             if (!host.chatReady()) {
-                finishChatUi("No verified native chat model installed", false);
+                finishChatUi("No verified native chat model installed", true);
                 return;
             }
 
             long requestId = host.submitChat(prompt, CHAT_MAX_NEW_TOKENS);
             if (requestId < 0) {
-                finishChatUi("Native chat request rejected", false);
+                finishChatUi("Native chat request rejected", true);
                 return;
             }
             activeChatRequestId = requestId;
