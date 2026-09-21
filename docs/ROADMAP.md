@@ -13,6 +13,21 @@ The roadmap is milestone-based. Architecture changes should be made only when an
 
 ## M1 — NCC97 Native Intelligence + Assimilation Format
 
+### Phase 003A — Architecture Freeze + NTD97 IR v0
+
+- freeze identity and dependency boundaries;
+- establish independent `ntd-ir` crate;
+- define IR 0.1 version contract;
+- define initial tensor/state/memory/control/tool operation families;
+- structural graph validation;
+- bind NCC97 compatibility to IR version;
+- runtime IR compatibility gate.
+
+Exit: architecture/IR contracts compile, match canonical documentation and pass CI.
+
+### Phase 003B — NCC97 Binary Capsule
+
+
 - binary header and manifest;
 - chunk index;
 - mmap/streaming reader;
