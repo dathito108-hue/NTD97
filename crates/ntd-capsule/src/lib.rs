@@ -4,6 +4,7 @@ mod binary;
 mod descriptors;
 mod hash;
 mod ir_codec;
+mod native_tensor;
 
 pub use binary::{
     CapsuleBuilder, CapsuleError, CapsuleKind, CapsuleView, ChunkSource, ChunkSpec,
@@ -20,6 +21,12 @@ pub use hash::{sha256, Digest};
 pub use ir_codec::{
     decode_graph, decode_graph_section, encode_graph, push_graph_section, GraphSectionError,
     IrCodecError, IR_GRAPH_HEADER_LEN, IR_GRAPH_MAGIC, NODE_HEADER_LEN, VALUE_DECL_LEN,
+};
+pub use native_tensor::{
+    decode_native_tensor, encode_native_tensor, load_native_program, push_native_tensor_shard,
+    push_tensor_descriptor_section, ContentStore, MemoryContentStore, NativeProgram, NativeTensor,
+    NativeTensorError, QuantizationMetadata, NATIVE_TENSOR_HEADER_LEN, NATIVE_TENSOR_MAGIC,
+    NATIVE_TENSOR_MAJOR, NATIVE_TENSOR_MINOR, NO_GRAPH_BINDING,
 };
 
 use ntd_ir::IrVersion;

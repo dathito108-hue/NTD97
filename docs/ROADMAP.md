@@ -2,7 +2,9 @@
 
 The roadmap is milestone-based. Architecture changes should be made only when an invariant cannot be met.
 
-## M0 — Clean Foundation
+From the Native Intelligence Execution Foundation onward, tightly coupled work is delivered as **major implementation blocks**. A block is merged only when it provides a meaningful end-to-end capability rather than a sequence of small phase-only changes.
+
+## M0 — Clean Foundation — complete
 
 - repository bootstrap;
 - canonical architecture;
@@ -11,168 +13,180 @@ The roadmap is milestone-based. Architecture changes should be made only when an
 - minimal CI;
 - no inherited AMPER code.
 
-## M1 — NCC97 Native Intelligence + Assimilation Format
+## M1 — Native Intelligence Format + Execution Foundation
 
-### Phase 003A — Architecture Freeze + NTD97 IR v0
+### Completed foundation contracts
 
-- freeze identity and dependency boundaries;
-- establish independent `ntd-ir` crate;
-- define IR 0.1 version contract;
-- define initial tensor/state/memory/control/tool operation families;
-- structural graph validation;
-- bind NCC97 compatibility to IR version;
-- runtime IR compatibility gate.
-
-Exit: architecture/IR contracts compile, match canonical documentation and pass CI.
-
-### Phase 003B — NCC97 Binary Capsule
-
-- fixed deterministic binary header + manifest;
-- fixed-size chunk index and section descriptors;
-- dependency-free SHA-256 integrity primitive;
-- metadata-root and embedded-payload verification;
-- borrowed-slice reader for mmap/streaming compatibility;
-- deterministic writer;
+- Architecture Freeze + NTD97 IR v0;
+- NCC97 deterministic binary capsule;
+- NCC97 Native IR Serialization;
+- SHA-256 capsule/chunk integrity;
 - Full/Thin/State capsule primitives;
-- external content-addressed chunk reference primitive;
-- tamper/truncation tests.
+- deterministic NIR97 graph encode/decode;
+- tensor descriptor and tokenizer/codec framing.
 
-Exit: a native capsule can be deterministically written, reopened, integrity-verified and round-tripped without implementing any external-model importer yet.
+### Major Block A — Native Intelligence Execution Foundation
 
-### Phase 003C — NCC97 Native IR Serialization
+Goal: prove that native NTD97 intelligence can be loaded and executed end-to-end without a source-model runtime.
 
-- deterministic NTD97 IR graph encoding inside Graph sections;
-- fixed value-declaration and node framing;
-- complete current IR operation-family mapping;
-- Tool::Invoke UTF-8 capability attributes;
-- tensor descriptor schema without execution kernels;
-- tokenizer/codec descriptor framing;
-- IR graph decode + structural validation after capsule read;
-- Graph -> NCC97 -> reopen -> Graph integration test;
-- golden-vector compatibility test;
-- strict trailing/reserved-field rejection.
+Delivered contract:
 
-Exit: a valid NTD97 IR graph can be encoded into NCC97, reopened and reconstructed identically before any inference backend exists.
+- deterministic \`NTP97\` native tensor payload framing;
+- content-addressed tensor shard resolution;
+- embedded/external NCC97 tensor loading;
+- tensor descriptor-to-shard integrity binding;
+- graph-input-to-tensor binding validation;
+- quantization metadata for native/unquantized, symmetric I8 and affine I8;
+- reference tensor materializer;
+- CPU reference provider;
+- NTD97 IR graph executor;
+- NCC97 native graph/tensor program loader;
+- deterministic \`.ncc97 -> native tensors -> IR execution -> output\` integration test.
 
-### Phase 003D — Native Tensor Payload + Content Store Contract
+Exit: a deterministic test graph executes entirely through NTD97-owned formats and provider contracts. No GGUF/ONNX/TFLite runtime is required or allowed in the canonical execution path.
 
-- deterministic tensor-shard payload framing;
-- content-addressed tensor identities bound to SHA-256;
-- embedded and external shard resolution contract;
-- alignment/range validation for zero-copy access;
-- quantization metadata schema without optimized kernels;
-- duplicate-chunk reuse across Thin/Full capsules;
-- tensor descriptor-to-shard integrity binding.
+## M2 — Major Block B: Native Generative Intelligence Runtime
 
-Exit: NCC97 can describe and resolve native tensor data deterministically without depending on GGUF or another source format at runtime.
+Goal: turn the generic native tensor/IR executor into a usable local generative model runtime while preserving NTD97 identity.
 
-## M2 — Adaptive Mobile Runtime
+Planned scope:
+
+- canonical sequence/token semantics;
+- native tokenizer contract and implementation;
+- attention, positional and gather semantics required by the native model graph;
+- KV/state-cache representation owned by NTD97;
+- autoregressive decode loop;
+- native sampling contract;
+- bounded context/prefix reuse;
+- deterministic tiny-model golden inference;
+- source-independent native model package test;
+- importer boundary for converting supported source weights/graphs into NTD97 IR + NCC97 only.
+
+Exit: an NTD97-native text model can accept tokens, execute locally and generate deterministic/reference output without a third-party model backend.
+
+## M3 — Major Block C: Adaptive Mobile Compute Runtime
+
+Goal: make the same native model path practical across current phones.
+
+Planned scope:
 
 - device capability detection;
-- tensor store;
-- CPU reference provider;
-- Vulkan provider interface;
-- memory/thermal/battery budget manager;
-- execution graph loader.
+- optimized CPU provider;
+- Vulkan provider behind the same \`ExecutionProvider\` semantics;
+- replaceable NPU provider interface where platform support exists;
+- memory mapping/paging and tensor placement;
+- quantization profiles;
+- provider autotuning;
+- RAM, thermal, battery and latency budget manager;
+- fallback/recovery under resource pressure;
+- representative-device deterministic equivalence tests.
 
-Exit: deterministic test graph executes through the same provider contract used by mobile.
+Exit: the same NTD97 graph can select the fastest verified local provider that fits device constraints without changing model identity.
 
-## M3 — Cognitive Loop
+## M4 — Major Block D: Cognitive Runtime + Sovereign Memory
 
-- intent IR;
+Goal: build the persistent intelligence loop on top of native inference.
+
+Planned scope:
+
+- intent/task IR;
 - adaptive reasoning budget;
-- task graph compiler;
+- reflex vs deep iterative reasoning inside one runtime;
 - executor/verifier split;
-- short-response policy;
-- persistent checkpoints;
-- persistent world/goal state;
+- persistent goals/world state/checkpoints;
+- episodic, semantic and procedural memory;
+- retrieval/write/forget semantics;
+- learned adapter/delta hooks;
 - cold-process reconstruction of the same cognitive identity.
 
-Exit: one runtime can switch from low-latency reflex behavior to deeper iterative planning without changing backend identity.
+Exit: one local NTD97 identity can reason, remember, checkpoint and recover without switching to another model service.
 
-## M4 — Tool + Internet Fabric
+## M5 — Major Block E: Tool, Internet + Device Action Fabric
+
+Goal: give cognition typed, governed real-world capabilities.
+
+Planned scope:
 
 - capability registry;
 - typed web/search/browser/file actions;
-- permission scopes;
+- permission and authority scopes;
 - side-effect classification;
-- verification and rollback contracts.
+- verification and rollback;
+- Android observation and permitted interaction bridge;
+- app/device action execution;
+- failure recovery and resumable task state.
 
-Exit: tasks can discover and use tools from one capability graph.
+Exit: NTD97 can plan, execute and verify multi-step tasks across local tools, internet and permitted device surfaces.
 
-## M5 — Android Interaction + 3D Embodiment + 24/7 Continuity
+## M6 — Major Block F: Android Continuity + Interactive 3D Assistant
+
+Goal: make NTD97 a persistent mobile assistant interface under operating-system limits.
+
+Planned scope:
 
 - Android app shell;
-- screen/observation pipeline;
-- permitted AccessibilityService automation;
 - foreground/background task continuity;
-- notifications and user approvals;
-- media/voice interfaces;
-- interactive 3D avatar scene;
-- adaptive 3D renderer with expression/gaze/lip-sync/gesture state;
-- user-authorized floating assistant surface where the OS permits it;
-- persistent active-task service policy;
+- notification/approval surfaces;
 - scheduled/retry wake path;
-- reboot/process-death restoration;
-- state reconstruction and checkpoint verification.
+- process-death and reboot reconstruction;
+- voice/media interfaces;
+- interactive 3D avatar;
+- expression, gaze, lip-sync and gesture state;
+- user-authorized floating assistant surface where the OS permits it.
 
-Exit: NTD97 can perform verified multi-app tasks, present an interactive 3D assistant, survive UI exit/process death/reboot at the logical task level, and resume eligible work under Android execution rules.
+Exit: UI exit, process death and reboot do not destroy logical task identity; eligible work resumes through platform-approved mechanisms and is represented through an interactive 3D assistant.
 
-## M6 — Paired PC Fabric
+## M7 — Major Block G: Paired PC Fabric
 
 - mutual authentication;
-- encrypted session;
+- encrypted sessions;
 - typed remote capabilities;
 - artifact transfer;
-- desktop observation/execution agent.
+- desktop observation/execution agent;
+- returned-result verification.
 
-Exit: the phone can delegate a typed task to a trusted PC and verify the returned result.
+Exit: the phone can delegate a typed task to a trusted PC without making the PC part of NTD97's identity.
 
-## M7 — Capability Forge
+## M8 — Major Block H: Capability Forge + Native Assimilation
 
-- capability search/discovery;
+- capability discovery;
 - provenance/license capture;
 - isolated build/test sandbox;
-- generated adapter/skill packages;
+- generated adapters/skills;
+- source intelligence import;
+- semantic normalization into NTD97 IR/NCC97;
+- assimilation validation + atomic commit;
 - signature/version/rollback;
-- regression suite.
+- regression suites.
 
-Exit: a missing capability can be acquired or developed without mutating the core runtime irreversibly.
+Exit: new supported intelligence and capabilities become NTD97-native assets and no source runtime is required after successful assimilation.
 
-## M8 — Sovereign Memory + Portable Intelligence
+## M9 — Major Block I: Portable Sovereign Intelligence
 
-- episodic/semantic/procedural stores;
-- adapter/delta learning hooks;
+- encrypted user-owned memory/state;
 - thin/full/state capsule backup;
+- content-addressed deduplication;
 - restore across devices;
-- encrypted user-owned state;
-- content-addressed NTD97-owned memory format;
-- full sovereign offline restore test.
+- capability/model/memory migration;
+- offline boot + restore;
+- sovereign recovery tests.
 
-Exit: intelligence state can be backed up and restored independently of the app install.
+Exit: model intelligence, learned state and memory can be backed up and restored independently of the app installation.
 
-## M9 — Performance Convergence
+## M10 — Major Block J: Performance Convergence + General Mobile Agent Validation
 
-- latency tracing;
+- latency and energy tracing;
 - prefix/state reuse;
 - memory paging;
-- quantization profiles;
-- provider autotuning;
+- quantization/provider autotuning;
 - thermal-aware execution;
-- power-aware background scheduling.
-
-Exit: device profiles automatically select the fastest verified configuration that fits resource constraints.
-
-## M10 — Sovereign General Mobile Agent Validation
-
 - long-horizon task suites;
-- app/browser/file/PC mixed tasks;
-- failure recovery;
+- browser/app/file/PC mixed tasks;
 - offline degradation;
-- security boundaries;
-- reproducible benchmarks;
-- 24/7 continuity soak tests;
-- offline boot + restore + local task suite;
+- failure recovery;
+- security-boundary tests;
+- 24/7 logical continuity soak tests;
+- representative-device matrix;
 - no-third-party-AI-dependency audit.
 
-Exit: measurable capability, latency, reliability and recovery targets are met on a representative device matrix.
+Exit: measurable capability, latency, reliability, recovery and sovereignty targets are met on representative mobile hardware.

@@ -1,5 +1,14 @@
 #![forbid(unsafe_code)]
 
+mod executor;
+mod tensor;
+
+pub use executor::{ExecutionError, GraphExecutor};
+pub use tensor::{
+    CpuReferenceProvider, ExecutionProvider, QuantizationParams, Tensor, TensorError,
+    TensorLoadError, TensorLoader,
+};
+
 use ntd_core::ReasoningBudget;
 use ntd_ir::IrVersion;
 
@@ -20,10 +29,6 @@ impl CognitiveSignals {
     }
 }
 
-/// Initial deterministic policy for Phase 001.
-///
-/// Later phases may replace the thresholds with learned routing while preserving
-/// the same single-runtime budget contract.
 pub fn accepts_ir(version: IrVersion) -> bool {
     IrVersion::CURRENT.can_read(version)
 }
