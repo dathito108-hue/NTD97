@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ntd_assimilation::{
     build_native_package, lower_llama_model, lowered_llama_candidate, verify_native_package,
-    AssimilationIdentity, ForgeSandbox, GgufModel, GgufValueType, LicenseRecord,
+    AssimilationIdentity, ForgeSandbox, GgufModel, GgufValue, GgufValueType, LicenseRecord,
     NativeValidationSandbox, SourcePackage, GGUF_MAGIC, GGUF_VERSION,
 };
 use ntd_capsule::{
@@ -287,6 +287,35 @@ fn lowering_rejects_unsupported_rope_scaling_instead_of_drifting() {
 
     let model = GgufModel::parse(&bytes).expect("parse modified");
     assert!(lower_llama_model(&bytes, &model).is_err());
+}
+
+#[test]
+fn lowering_rejects_gpt2_until_native_bpe_execution_exists() {
+    let bytes = fixture();
+    let mut model = GgufModel::parse(&bytes).expect("parse");
+    model.metadata.insert(
+        "tokenizer.ggml.model".into(),
+        GgufValue::String("gpt2".into()),
+    );
+
+    assert!(matches!(
+        lower_llama_model(&bytes, &model),
+        Err(ntd_assimilation::GgufError::UnsupportedModelFeature(message))
+            if message.contains("source-equivalent tokenizer")
+    ));
+}
+
+#[test]
+fn lowering_rejects_incomplete_llama_spm_metadata() {
+    let bytes = fixture();
+    let mut model = GgufModel::parse(&bytes).expect("parse");
+    model.metadata.remove("tokenizer.ggml.scores");
+
+    assert!(matches!(
+        lower_llama_model(&bytes, &model),
+        Err(ntd_assimilation::GgufError::UnsupportedModelFeature(message))
+            if message.contains("missing scores/token types")
+    ));
 }
 
 #[test]
