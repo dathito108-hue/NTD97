@@ -2,8 +2,9 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use ntd_capsule::{
-    decode_graph_section, load_native_generative_program, sha256, CapsuleBuilder, CapsuleKind,
-    CapsuleView, ChunkStorageView, Digest, MemoryContentStore, SectionKind,
+    decode_graph_section, decode_native_tokenizer, decode_tensor_descriptors,
+    load_native_generative_program, sha256, CapsuleBuilder, CapsuleKind, CapsuleView,
+    ChunkStorageView, Digest, MemoryContentStore, SectionKind, TENSOR_DESCRIPTOR_MAGIC,
 };
 use ntd_core::{CapabilityId, SideEffectClass};
 use ntd_runtime::{AuthorityScope, CapabilityDescriptor, CapabilityDomain};
@@ -42,6 +43,36 @@ impl AssimilationIdentity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum PackageSection {
+    Embedded {
+        kind: SectionKind,
+        bytes: Vec<u8>,
+    },
+    External {
+        kind: SectionKind,
+        logical_len: u64,
+        hash: Digest,
+    },
+}
+
+impl PackageSection {
+    fn commitment(&self) -> Result<(SectionKind, u64, Digest), AssimilationError> {
+        match self {
+            Self::Embedded { kind, bytes } => Ok((
+                *kind,
+                u64::try_from(bytes.len()).map_err(|_| AssimilationError::Overflow)?,
+                sha256(bytes),
+            )),
+            Self::External {
+                kind,
+                logical_len,
+                hash,
+            } => Ok((*kind, *logical_len, *hash)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativePackage {
     pub asset_id: String,
     pub version: u32,
@@ -75,47 +106,86 @@ pub fn build_native_package(
     )?;
 
     let mut sections = Vec::new();
-    let capability = match candidate {
+    let (capability, capsule_kind) = match candidate {
         NativeCandidate::Capability {
             descriptor,
             adapter,
             ..
         } => {
-            sections.push((
-                SectionKind::Capabilities,
-                encode_capability_descriptor(descriptor)?,
-            ));
-            sections.push((
-                SectionKind::Adapters,
-                encode_adapter(&adapter.format, &adapter.bytes)?,
-            ));
-            Some(descriptor.clone())
+            sections.push(PackageSection::Embedded {
+                kind: SectionKind::Capabilities,
+                bytes: encode_capability_descriptor(descriptor)?,
+            });
+            sections.push(PackageSection::Embedded {
+                kind: SectionKind::Adapters,
+                bytes: encode_adapter(&adapter.format, &adapter.bytes)?,
+            });
+            (Some(descriptor.clone()), CapsuleKind::Full)
         }
         NativeCandidate::Intelligence {
             graph,
             sections: extra,
             ..
         } => {
-            sections.push((
-                SectionKind::Graph,
-                ntd_capsule::encode_graph(graph)
+            sections.push(PackageSection::Embedded {
+                kind: SectionKind::Graph,
+                bytes: ntd_capsule::encode_graph(graph)
                     .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?,
-            ));
+            });
             for section in extra {
-                sections.push((section.kind, section.bytes.clone()));
+                sections.push(PackageSection::Embedded {
+                    kind: section.kind,
+                    bytes: section.bytes.clone(),
+                });
             }
-            None
+            (None, CapsuleKind::Full)
+        }
+        NativeCandidate::StreamedIntelligence {
+            graph,
+            sections: extra,
+            external_sections,
+            ..
+        } => {
+            sections.push(PackageSection::Embedded {
+                kind: SectionKind::Graph,
+                bytes: ntd_capsule::encode_graph(graph)
+                    .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?,
+            });
+            for section in extra {
+                sections.push(PackageSection::Embedded {
+                    kind: section.kind,
+                    bytes: section.bytes.clone(),
+                });
+            }
+            for section in external_sections {
+                sections.push(PackageSection::External {
+                    kind: section.kind,
+                    logical_len: section.logical_len,
+                    hash: section.hash,
+                });
+            }
+            (None, CapsuleKind::Thin)
         }
     };
-    sections.push((SectionKind::Provenance, provenance_bytes));
-    sections.push((SectionKind::AssimilationLog, log_bytes));
+    sections.push(PackageSection::Embedded {
+        kind: SectionKind::Provenance,
+        bytes: provenance_bytes,
+    });
+    sections.push(PackageSection::Embedded {
+        kind: SectionKind::AssimilationLog,
+        bytes: log_bytes,
+    });
 
-    let signable = section_signing_payload(&sections)?;
+    let commitments = sections
+        .iter()
+        .map(PackageSection::commitment)
+        .collect::<Result<Vec<_>, _>>()?;
+    let signable = section_signing_payload(&commitments)?;
     let signature = identity.sign(&signable);
-    sections.push((
-        SectionKind::Signatures,
-        encode_signature(identity.verify_key(), signature),
-    ));
+    sections.push(PackageSection::Embedded {
+        kind: SectionKind::Signatures,
+        bytes: encode_signature(identity.verify_key(), signature),
+    });
 
     let mut id_material = Vec::new();
     push_string(&mut id_material, candidate.asset_id())?;
@@ -125,9 +195,16 @@ pub fn build_native_package(
     let mut capsule_id = [0u8; 16];
     capsule_id.copy_from_slice(&id_digest[..16]);
 
-    let mut builder = CapsuleBuilder::new(CapsuleKind::Full, capsule_id);
-    for (kind, bytes) in sections {
-        builder.push_embedded(kind, bytes);
+    let mut builder = CapsuleBuilder::new(capsule_kind, capsule_id);
+    for section in sections {
+        match section {
+            PackageSection::Embedded { kind, bytes } => builder.push_embedded(kind, bytes),
+            PackageSection::External {
+                kind,
+                logical_len,
+                hash,
+            } => builder.push_external(kind, logical_len, hash),
+        }
     }
     let native_capsule = builder
         .write()
