@@ -1,5 +1,5 @@
 use ntd_assimilation::{
-    GgufConversionPlan, GgufError, GgufModel, GgufValueType, GGUF_MAGIC, GGUF_VERSION,
+    GgufConversionPlan, GgufError, GgufModel, GgufValue, GgufValueType, GGUF_MAGIC, GGUF_VERSION,
 };
 
 fn push_string(out: &mut Vec<u8>, value: &str) {
@@ -169,4 +169,95 @@ fn conversion_plan_keeps_real_tokenizer_semantics_as_activation_blocker() {
         .blockers
         .iter()
         .any(|item| { item.contains("source-equivalent tokenization") }));
+}
+
+#[test]
+fn preserves_sentencepiece_semantic_metadata_for_native_lowering() {
+    let mut model = GgufModel::parse(&fixture()).expect("parse");
+    model.metadata.insert(
+        "tokenizer.ggml.scores".into(),
+        GgufValue::Array {
+            element_type: GgufValueType::Float32,
+            values: vec![
+                GgufValue::Float32(-1.0),
+                GgufValue::Float32(-2.0),
+                GgufValue::Float32(-3.0),
+            ],
+        },
+    );
+    model.metadata.insert(
+        "tokenizer.ggml.token_type".into(),
+        GgufValue::Array {
+            element_type: GgufValueType::Int32,
+            values: vec![
+                GgufValue::Int32(2),
+                GgufValue::Int32(1),
+                GgufValue::Int32(1),
+            ],
+        },
+    );
+    model.metadata.insert(
+        "tokenizer.ggml.pre".into(),
+        GgufValue::String("default".into()),
+    );
+    model
+        .metadata
+        .insert("tokenizer.ggml.add_bos_token".into(), GgufValue::Bool(true));
+    model.metadata.insert(
+        "tokenizer.ggml.add_eos_token".into(),
+        GgufValue::Bool(false),
+    );
+
+    let tokenizer = model.tokenizer().expect("tokenizer");
+    assert_eq!(tokenizer.scores, Some(vec![-1.0, -2.0, -3.0]));
+    assert_eq!(tokenizer.token_types, Some(vec![2, 1, 1]));
+    assert_eq!(tokenizer.pre_tokenizer.as_deref(), Some("default"));
+    assert_eq!(tokenizer.add_bos_token, Some(true));
+    assert_eq!(tokenizer.add_eos_token, Some(false));
+
+    let plan = GgufConversionPlan::from_model(&model).expect("plan");
+    assert!(plan
+        .blockers
+        .iter()
+        .any(|item| item.contains("source metadata is preserved")));
+    assert!(!plan
+        .blockers
+        .iter()
+        .any(|item| item.contains("missing scores/token types")));
+}
+
+#[test]
+fn preserves_gpt2_merge_ranks_and_rejects_malformed_semantic_arrays() {
+    let mut model = GgufModel::parse(&fixture()).expect("parse");
+    model.metadata.insert(
+        "tokenizer.ggml.model".into(),
+        GgufValue::String("gpt2".into()),
+    );
+    model.metadata.insert(
+        "tokenizer.ggml.merges".into(),
+        GgufValue::Array {
+            element_type: GgufValueType::String,
+            values: vec![
+                GgufValue::String("a b".into()),
+                GgufValue::String("b a".into()),
+            ],
+        },
+    );
+
+    let tokenizer = model.tokenizer().expect("tokenizer");
+    assert_eq!(tokenizer.merges, vec!["a b".to_owned(), "b a".to_owned()]);
+    let plan = GgufConversionPlan::from_model(&model).expect("plan");
+    assert!(!plan
+        .blockers
+        .iter()
+        .any(|item| item.contains("missing merge ranks")));
+
+    model.metadata.insert(
+        "tokenizer.ggml.scores".into(),
+        GgufValue::Array {
+            element_type: GgufValueType::Float32,
+            values: vec![GgufValue::Float32(-1.0)],
+        },
+    );
+    assert_eq!(model.tokenizer(), Err(GgufError::InvalidTokenizer));
 }

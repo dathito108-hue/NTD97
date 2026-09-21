@@ -315,6 +315,7 @@ Current implementation:
 - exact GGUF tensor-boundary validation;
 - direct F32/F16/BF16 materialization plus Q4_0/Q8_0 native transcode to NTD97-owned F32;
 - native tokenizer section, tensor descriptor table and NTP97 tensor shard emission;
+- preservation and validation of GGUF tokenizer semantic metadata (SentencePiece scores/token types, GPT-2 merge ranks, pre-tokenizer identity and add-BOS/add-EOS flags) as input to the next source-equivalent native tokenizer step;
 - Forge-native intelligence candidate creation;
 - signed NCC97 package verification through the canonical native generative loader;
 - deterministic tiny-LLaMA GGUF -> NIR97/NCC97 -> GraphGenerator regression path;

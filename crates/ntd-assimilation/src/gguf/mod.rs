@@ -115,6 +115,47 @@ impl GgufValue {
             .map(GgufValue::as_string)
             .collect::<Option<Vec<_>>>()
     }
+
+    pub fn as_f32_array(&self) -> Option<Vec<f32>> {
+        let Self::Array {
+            element_type: GgufValueType::Float32,
+            values,
+        } = self
+        else {
+            return None;
+        };
+        values
+            .iter()
+            .map(|value| match value {
+                GgufValue::Float32(value) => Some(*value),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+    }
+
+    pub fn as_i32_array(&self) -> Option<Vec<i32>> {
+        let Self::Array {
+            element_type: GgufValueType::Int32,
+            values,
+        } = self
+        else {
+            return None;
+        };
+        values
+            .iter()
+            .map(|value| match value {
+                GgufValue::Int32(value) => Some(*value),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,10 +166,16 @@ pub struct GgufTensorInfo {
     pub data_offset: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GgufTokenizer {
     pub model: String,
     pub tokens: Vec<Vec<u8>>,
+    pub scores: Option<Vec<f32>>,
+    pub token_types: Option<Vec<i32>>,
+    pub merges: Vec<String>,
+    pub pre_tokenizer: Option<String>,
+    pub add_bos_token: Option<bool>,
+    pub add_eos_token: Option<bool>,
     pub bos_token: Option<u32>,
     pub eos_token: Option<u32>,
     pub unknown_token: Option<u32>,
@@ -184,7 +231,7 @@ impl GgufModel {
             return Err(GgufError::InvalidTokenizer);
         }
 
-        let special = |key: &'static str| -> Result<Option<u32>, GgufError> {
+        let optional_u32 = |key: &'static str| -> Result<Option<u32>, GgufError> {
             match self.metadata.get(key) {
                 Some(value) => value
                     .as_u32()
@@ -193,13 +240,78 @@ impl GgufModel {
                 None => Ok(None),
             }
         };
+        let optional_bool = |key: &'static str| -> Result<Option<bool>, GgufError> {
+            match self.metadata.get(key) {
+                Some(value) => value
+                    .as_bool()
+                    .map(Some)
+                    .ok_or(GgufError::InvalidMetadataType(key)),
+                None => Ok(None),
+            }
+        };
+        let optional_f32_array = |key: &'static str| -> Result<Option<Vec<f32>>, GgufError> {
+            match self.metadata.get(key) {
+                Some(value) => value
+                    .as_f32_array()
+                    .map(Some)
+                    .ok_or(GgufError::InvalidMetadataType(key)),
+                None => Ok(None),
+            }
+        };
+        let optional_i32_array = |key: &'static str| -> Result<Option<Vec<i32>>, GgufError> {
+            match self.metadata.get(key) {
+                Some(value) => value
+                    .as_i32_array()
+                    .map(Some)
+                    .ok_or(GgufError::InvalidMetadataType(key)),
+                None => Ok(None),
+            }
+        };
+
+        let scores = optional_f32_array("tokenizer.ggml.scores")?;
+        if scores.as_ref().is_some_and(|scores| {
+            scores.len() != tokens.len() || scores.iter().any(|score| !score.is_finite())
+        }) {
+            return Err(GgufError::InvalidTokenizer);
+        }
+        let token_types = optional_i32_array("tokenizer.ggml.token_type")?;
+        if token_types
+            .as_ref()
+            .is_some_and(|types| types.len() != tokens.len())
+        {
+            return Err(GgufError::InvalidTokenizer);
+        }
+        let merges = match self.metadata.get("tokenizer.ggml.merges") {
+            Some(value) => value
+                .as_string_array()
+                .ok_or(GgufError::InvalidMetadataType("tokenizer.ggml.merges"))?
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect(),
+            None => Vec::new(),
+        };
+        let pre_tokenizer = match self.metadata.get("tokenizer.ggml.pre") {
+            Some(value) => Some(
+                value
+                    .as_string()
+                    .ok_or(GgufError::InvalidMetadataType("tokenizer.ggml.pre"))?
+                    .to_owned(),
+            ),
+            None => None,
+        };
 
         let tokenizer = GgufTokenizer {
             model,
             tokens,
-            bos_token: special("tokenizer.ggml.bos_token_id")?,
-            eos_token: special("tokenizer.ggml.eos_token_id")?,
-            unknown_token: special("tokenizer.ggml.unknown_token_id")?,
+            scores,
+            token_types,
+            merges,
+            pre_tokenizer,
+            add_bos_token: optional_bool("tokenizer.ggml.add_bos_token")?,
+            add_eos_token: optional_bool("tokenizer.ggml.add_eos_token")?,
+            bos_token: optional_u32("tokenizer.ggml.bos_token_id")?,
+            eos_token: optional_u32("tokenizer.ggml.eos_token_id")?,
+            unknown_token: optional_u32("tokenizer.ggml.unknown_token_id")?,
         };
         let vocab = u32::try_from(tokenizer.tokens.len()).map_err(|_| GgufError::LimitExceeded)?;
         for token in [
@@ -308,8 +420,23 @@ impl GgufConversionPlan {
                 tokenizer.model
             ));
         } else {
+            match tokenizer.model.as_str() {
+                "llama" if tokenizer.scores.is_none() || tokenizer.token_types.is_none() => {
+                    blockers.push(
+                        "llama tokenizer metadata is missing scores/token types required for source-equivalent SentencePiece semantics"
+                            .into(),
+                    );
+                }
+                "gpt2" if tokenizer.merges.is_empty() => {
+                    blockers.push(
+                        "gpt2 tokenizer metadata is missing merge ranks required for source-equivalent BPE semantics"
+                            .into(),
+                    );
+                }
+                _ => {}
+            }
             blockers.push(format!(
-                "tokenizer '{}' metadata is structurally imported, but production source-equivalent tokenization is not yet verified",
+                "tokenizer '{}' source metadata is preserved, but production source-equivalent tokenization is not yet verified",
                 tokenizer.model
             ));
         }
