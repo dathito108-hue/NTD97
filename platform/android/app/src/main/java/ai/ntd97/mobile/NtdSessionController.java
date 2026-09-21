@@ -26,16 +26,6 @@ public final class NtdSessionController {
     }
 
     public static NtdRuntimeHost.ResumeResult restore(Context context, String wakeReason) {
-        NtdRuntimeHost host = HOST.get();
-        if (host == null) {
-            return new NtdRuntimeHost.ResumeResult(
-                    false,
-                    false,
-                    false,
-                    "Runtime unavailable; durable state preserved",
-                    null);
-        }
-
         try {
             byte[] checkpoint = new NtdContinuityStore(context).read();
             if (checkpoint == null || checkpoint.length == 0) {
@@ -44,6 +34,16 @@ public final class NtdSessionController {
                         false,
                         false,
                         "No durable task to restore",
+                        null);
+            }
+
+            NtdRuntimeHost host = HOST.get();
+            if (host == null) {
+                return new NtdRuntimeHost.ResumeResult(
+                        false,
+                        true,
+                        false,
+                        "Runtime unavailable; durable state preserved",
                         null);
             }
 
