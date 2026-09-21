@@ -50,6 +50,8 @@ const CHAT_STATUS_CANCELLED: i32 = 3;
 const CHAT_STATUS_FAILED: i32 = 4;
 
 struct NativeChatModel {
+    asset_id: String,
+    version: u32,
     activation: ThinGenerativeActivation,
     resolver: FileBackedTensorResolver,
     tokenizer: LlamaSpmTokenizer,
@@ -533,12 +535,13 @@ fn open_chat_model(
 
     let mut guard = lock_state();
     guard.chat_model = Some(Arc::new(NativeChatModel {
+        asset_id: asset_id.to_owned(),
+        version,
         activation,
         resolver,
         tokenizer,
         context_limit,
     }));
-    guard.chat_session = None;
     Ok(())
 }
 
@@ -571,7 +574,13 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
 
     let task_id = guard
         .conversation
-        .begin_turn(user_message, compiled.token_ids, max_new_tokens)
+        .begin_turn(
+            model.asset_id.clone(),
+            model.version,
+            user_message,
+            compiled.token_ids,
+            max_new_tokens,
+        )
         .map_err(|error| format!("begin sovereign conversation turn: {error:?}"))?;
     let request_id = guard.next_chat_request_id;
     guard.next_chat_request_id = guard
@@ -694,6 +703,9 @@ fn next_chat_event(request_id: u64) -> Result<Vec<u8>, String> {
             .chat_model
             .clone()
             .ok_or_else(|| "native chat model was unloaded".to_owned())?;
+        if active.model_asset_id != model.asset_id || active.model_version != model.version {
+            return Err("active NCS97 model identity does not match loaded native model".into());
+        }
         (
             model,
             session.task_id,
