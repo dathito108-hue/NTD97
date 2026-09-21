@@ -43,8 +43,6 @@ pub fn choose_platform_directive(
     resources: ResourceSnapshot,
     context: WakeContext,
 ) -> Result<PlatformDirective, WakePolicyError> {
-    let resources = resources.normalized();
-
     if bundle.state == MobileContinuityState::WaitingApproval {
         let approval = bundle
             .pending_approval
