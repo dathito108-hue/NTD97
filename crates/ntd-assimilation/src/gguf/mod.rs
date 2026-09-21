@@ -93,6 +93,49 @@ impl GgufValue {
         }
     }
 
+    pub fn as_f32(&self) -> Option<f32> {
+        match self {
+            Self::Float32(value) if value.is_finite() => Some(*value),
+            Self::Float64(value) if value.is_finite() => Some(*value as f32),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub fn as_f32_array(&self) -> Option<Vec<f32>> {
+        let Self::Array {
+            element_type: GgufValueType::Float32,
+            values,
+        } = self
+        else {
+            return None;
+        };
+        values.iter().map(GgufValue::as_f32).collect::<Option<Vec<_>>>()
+    }
+
+    pub fn as_i32_array(&self) -> Option<Vec<i32>> {
+        let Self::Array {
+            element_type: GgufValueType::Int32,
+            values,
+        } = self
+        else {
+            return None;
+        };
+        values
+            .iter()
+            .map(|value| match value {
+                GgufValue::Int32(item) => Some(*item),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+    }
+
     pub fn as_string_array(&self) -> Option<Vec<&str>> {
         let Self::Array {
             element_type: GgufValueType::String,
@@ -116,10 +159,14 @@ pub struct GgufTensorInfo {
     pub data_offset: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GgufTokenizer {
     pub model: String,
     pub tokens: Vec<Vec<u8>>,
+    pub scores: Option<Vec<f32>>,
+    pub token_types: Option<Vec<i32>>,
+    pub merges: Vec<String>,
+    pub add_space_prefix: bool,
     pub bos_token: Option<u32>,
     pub eos_token: Option<u32>,
     pub unknown_token: Option<u32>,
@@ -185,9 +232,54 @@ impl GgufModel {
             }
         };
 
+        let scores = match self.metadata.get("tokenizer.ggml.scores") {
+            Some(value) => Some(
+                value
+                    .as_f32_array()
+                    .ok_or(GgufError::InvalidMetadataType("tokenizer.ggml.scores"))?,
+            ),
+            None => None,
+        };
+        let token_types = match self.metadata.get("tokenizer.ggml.token_type") {
+            Some(value) => Some(
+                value
+                    .as_i32_array()
+                    .ok_or(GgufError::InvalidMetadataType("tokenizer.ggml.token_type"))?,
+            ),
+            None => None,
+        };
+        let merges = match self.metadata.get("tokenizer.ggml.merges") {
+            Some(value) => value
+                .as_string_array()
+                .ok_or(GgufError::InvalidMetadataType("tokenizer.ggml.merges"))?
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect(),
+            None => Vec::new(),
+        };
+        let add_space_prefix = match self.metadata.get("tokenizer.ggml.add_space_prefix") {
+            Some(value) => value
+                .as_bool()
+                .ok_or(GgufError::InvalidMetadataType("tokenizer.ggml.add_space_prefix"))?,
+            None => true,
+        };
+        if scores
+            .as_ref()
+            .is_some_and(|values| values.len() != tokens.len())
+            || token_types
+                .as_ref()
+                .is_some_and(|values| values.len() != tokens.len())
+        {
+            return Err(GgufError::InvalidTokenizer);
+        }
+
         let tokenizer = GgufTokenizer {
             model,
             tokens,
+            scores,
+            token_types,
+            merges,
+            add_space_prefix,
             bos_token: special("tokenizer.ggml.bos_token_id")?,
             eos_token: special("tokenizer.ggml.eos_token_id")?,
             unknown_token: special("tokenizer.ggml.unknown_token_id")?,
