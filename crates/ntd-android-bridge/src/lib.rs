@@ -28,10 +28,11 @@ use ntd_mobile_shell::{
 };
 use ntd_runtime::{
     choose_reasoning_budget, decode_conversation_checkpoint, encode_conversation_checkpoint,
-    memory_recall_limit_for_budget, model_inference_signals, CognitiveIdentity,
-    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
-    LlamaSpmTokenizer, NativeChatPromptCompiler, ResourceSnapshot, SamplingMode,
-    SovereignConversationState, ThermalState,
+    memory_recall_limit_for_budget, model_inference_signals, sample_token, CognitiveContext,
+    CognitiveDirective, CognitiveExecutor, CognitiveIdentity, CognitiveObservation,
+    CognitivePlanner, CognitiveVerifier, CpuReferenceProvider, DistributionKind, GenerationConfig,
+    GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer, NativeChatPromptCompiler, ResourceSnapshot,
+    SamplingMode, SovereignConversationState, TaskStatus, ThermalState, VerificationDecision,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
@@ -57,6 +58,122 @@ struct NativeChatModel {
     resolver: FileBackedTensorResolver,
     tokenizer: LlamaSpmTokenizer,
     context_limit: usize,
+}
+
+struct NativeDeliberationPlanner;
+
+impl CognitivePlanner for NativeDeliberationPlanner {
+    fn plan(&mut self, context: CognitiveContext<'_>) -> Result<CognitiveDirective, String> {
+        let mode = if context.task.verification_failures == 0 {
+            "evaluate"
+        } else {
+            "re-evaluate"
+        };
+        Ok(CognitiveDirective::Work {
+            instruction: format!(
+                "{mode} objective with native model; budget={:?}; iteration={}",
+                context.budget,
+                context.iteration.saturating_add(1)
+            ),
+        })
+    }
+}
+
+struct NativeDeliberationExecutor {
+    model: Arc<NativeChatModel>,
+    tokens: Vec<u32>,
+}
+
+impl NativeDeliberationExecutor {
+    fn new(model: Arc<NativeChatModel>, tokens: Vec<u32>) -> Self {
+        Self { model, tokens }
+    }
+}
+
+impl CognitiveExecutor for NativeDeliberationExecutor {
+    fn execute(
+        &mut self,
+        directive: &CognitiveDirective,
+        context: CognitiveContext<'_>,
+    ) -> Result<CognitiveObservation, String> {
+        if !matches!(directive, CognitiveDirective::Work { .. }) {
+            return Err("native deliberation executor only accepts Work directives".into());
+        }
+
+        let generator = GraphGenerator::new(
+            self.model.activation.graph.clone(),
+            CpuReferenceProvider,
+            BTreeMap::new(),
+            self.model.activation.manifest.token_input,
+            usize::try_from(self.model.activation.manifest.distribution_output)
+                .map_err(|_| "distribution output does not fit usize".to_owned())?,
+            usize::try_from(self.model.activation.manifest.vocabulary_size)
+                .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
+        )
+        .map_err(|error| format!("build deliberation generator: {error:?}"))?;
+        let distribution = generator
+            .next_distribution_with_resolver(
+                &self.model.resolver,
+                &self.tokens,
+                self.model.context_limit,
+            )
+            .map_err(|error| format!("native deliberation forward: {error:?}"))?;
+        let signals = model_inference_signals(&distribution)
+            .map_err(|error| format!("analyze deliberation logits: {error:?}"))?;
+        let token = sample_token(
+            &distribution,
+            DistributionKind::Logits,
+            SamplingMode::Greedy,
+            usize::try_from(context.iteration).unwrap_or(usize::MAX),
+        )
+        .map_err(|error| format!("select deliberation token: {error:?}"))?;
+        let token = u32::try_from(token).map_err(|_| "deliberation token overflow".to_owned())?;
+        self.tokens.push(token);
+
+        Ok(CognitiveObservation {
+            summary: format!(
+                "native deliberation iteration {} verified",
+                context.iteration.saturating_add(1)
+            ),
+            evidence: vec![
+                "native-model-logits".into(),
+                format!("token={token}"),
+                format!(
+                    "entropy_milli={}",
+                    (signals.normalized_entropy * 1000.0).round() as u16
+                ),
+                format!("margin_milli={}", (signals.top_margin * 1000.0).round() as u16),
+            ],
+        })
+    }
+}
+
+struct NativeDeliberationVerifier;
+
+impl CognitiveVerifier for NativeDeliberationVerifier {
+    fn verify(
+        &mut self,
+        directive: &CognitiveDirective,
+        observation: &CognitiveObservation,
+        _context: CognitiveContext<'_>,
+    ) -> VerificationDecision {
+        if !matches!(directive, CognitiveDirective::Work { .. }) {
+            return VerificationDecision::Reject {
+                reason: "unexpected deliberation directive".into(),
+            };
+        }
+        if observation
+            .evidence
+            .iter()
+            .any(|evidence| evidence == "native-model-logits")
+        {
+            VerificationDecision::Accept
+        } else {
+            VerificationDecision::Reject {
+                reason: "native deliberation lacks model evidence".into(),
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
