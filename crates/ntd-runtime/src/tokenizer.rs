@@ -181,11 +181,11 @@ impl VocabularyTokenizer {
 
 impl TextTokenizer for VocabularyTokenizer {
     fn vocab_size(&self) -> usize {
-        self.vocab_size()
+        VocabularyTokenizer::vocab_size(self)
     }
 
     fn eos_token(&self) -> Option<u32> {
-        self.eos_token()
+        VocabularyTokenizer::eos_token(self)
     }
 
     fn encode_text(
@@ -523,11 +523,11 @@ impl LlamaSpmTokenizer {
 
 impl TextTokenizer for LlamaSpmTokenizer {
     fn vocab_size(&self) -> usize {
-        self.vocab_size()
+        LlamaSpmTokenizer::vocab_size(self)
     }
 
     fn eos_token(&self) -> Option<u32> {
-        self.eos_token()
+        LlamaSpmTokenizer::eos_token(self)
     }
 
     fn encode_text(
