@@ -2,6 +2,7 @@
 
 mod lower;
 mod reader;
+mod shards;
 mod storage;
 mod transcode;
 
@@ -12,6 +13,7 @@ pub use lower::{
     LlamaTensorBinding, LoweredLlamaModel,
 };
 pub use reader::{parse_gguf, parse_gguf_source};
+pub use shards::{FileTensorShardStore, TensorShardRef, TensorShardSink};
 pub use storage::{FileGgufSource, GgufByteSource, SliceGgufSource};
 pub use transcode::{
     ggml_tensor_byte_len, ggml_type_supported, gguf_tensor_bytes, gguf_tensor_bytes_from_source,
