@@ -140,6 +140,12 @@ impl CapabilityDescriptor {
             return Err(CapabilityError::InvalidVersion);
         }
 
+        for scope in &mut self.required_scopes {
+            scope.0 = scope.0.trim().to_owned();
+            if scope.0.is_empty() {
+                return Err(CapabilityError::EmptyScope);
+            }
+        }
         self.required_scopes.sort();
         self.required_scopes.dedup();
 
