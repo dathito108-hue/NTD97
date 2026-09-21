@@ -67,6 +67,42 @@ public final class NtdSessionController {
         }
     }
 
+    public static long restoreConversation(Context context) {
+        NtdRuntimeHost host = HOST.get();
+        if (host == null) {
+            return -1L;
+        }
+
+        try {
+            byte[] checkpoint = new NtdConversationStore(context).read();
+            if (checkpoint == null || checkpoint.length == 0) {
+                return 0L;
+            }
+            return host.restoreChatCheckpoint(checkpoint);
+        } catch (IOException error) {
+            return -1L;
+        }
+    }
+
+    public static boolean checkpointConversation(Context context) {
+        NtdRuntimeHost host = HOST.get();
+        if (host == null) {
+            return false;
+        }
+
+        byte[] checkpoint = host.chatCheckpoint();
+        if (checkpoint == null || checkpoint.length == 0) {
+            return false;
+        }
+
+        try {
+            new NtdConversationStore(context).write(checkpoint);
+            return true;
+        } catch (IOException error) {
+            return false;
+        }
+    }
+
     public static boolean checkpoint(Context context) {
         NtdRuntimeHost host = HOST.get();
         if (host == null) {

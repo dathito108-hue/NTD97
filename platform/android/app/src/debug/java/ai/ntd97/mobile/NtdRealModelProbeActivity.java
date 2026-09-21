@@ -11,6 +11,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 public final class NtdRealModelProbeActivity extends Activity {
     private static final String ASSET_ROOT = "ntd97-real-model";
@@ -58,15 +59,15 @@ public final class NtdRealModelProbeActivity extends Activity {
         finish();
     }
 
-    private String runChatApiProbe() {
+    private String runChatApiProbe() throws IOException {
         NtdNativeRuntimeHost host = NtdNativeRuntimeHost.create(this);
         if (host == null || !host.chatReady()) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         long requestId = host.submitChat("Once upon a time", 4);
         if (requestId < 0) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         int tokenCount = 0;
@@ -81,10 +82,45 @@ public final class NtdRealModelProbeActivity extends Activity {
                 completed = true;
                 break;
             }
-            return "chat_submit=ok\nchat_stream=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=ok\nchat_stream=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         boolean statusOk = completed && tokenCount > 0 && host.chatStatus(requestId) == 2;
+
+        long checkpointRequest = host.submitChat("resume this response", 4);
+        boolean restoreOk = false;
+        boolean storeOk = false;
+        NtdConversationStore store = new NtdConversationStore(this);
+        try {
+            if (checkpointRequest >= 0) {
+                NtdRuntimeHost.ChatEvent first = host.nextChatEvent(checkpointRequest);
+                byte[] checkpoint = host.chatCheckpoint();
+                if (first.kind == NtdRuntimeHost.ChatEvent.TOKEN && checkpoint.length > 0) {
+                    store.write(checkpoint);
+                    byte[] persisted = store.read();
+                    storeOk = persisted != null && Arrays.equals(checkpoint, persisted);
+                    long restoredRequest = storeOk
+                            ? host.restoreChatCheckpoint(persisted)
+                            : -1L;
+                    if (restoredRequest > 0) {
+                        boolean restoredComplete = false;
+                        for (int attempt = 0; attempt < 8; attempt++) {
+                            NtdRuntimeHost.ChatEvent event = host.nextChatEvent(restoredRequest);
+                            if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+                                continue;
+                            }
+                            restoredComplete = event.kind == NtdRuntimeHost.ChatEvent.COMPLETE;
+                            break;
+                        }
+                        restoreOk = restoredComplete
+                                && host.chatStatus(restoredRequest) == 2
+                                && host.chatTranscript().contains("resume this response");
+                    }
+                }
+            }
+        } finally {
+            store.clear();
+        }
 
         long cancelRequest = host.submitChat("cancel this response", 8);
         boolean cancelOk = cancelRequest >= 0
@@ -94,6 +130,8 @@ public final class NtdRealModelProbeActivity extends Activity {
 
         return "chat_submit=ok\n"
                 + "chat_stream=" + (completed && tokenCount > 0 ? "ok" : "failed") + "\n"
+                + "chat_restore=" + (restoreOk ? "ok" : "failed") + "\n"
+                + "chat_store=" + (storeOk ? "ok" : "failed") + "\n"
                 + "chat_cancel=" + (cancelOk ? "ok" : "failed") + "\n"
                 + "chat_status=" + (statusOk ? "ok" : "failed") + "\n";
     }

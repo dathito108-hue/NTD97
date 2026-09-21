@@ -129,6 +129,28 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     }
 
     @Override
+    public byte[] chatCheckpoint() {
+        byte[] checkpoint = nativeChatCheckpoint();
+        return checkpoint == null ? new byte[0] : checkpoint;
+    }
+
+    @Override
+    public long restoreChatCheckpoint(byte[] checkpoint) {
+        if (checkpoint == null || checkpoint.length == 0) {
+            return 0L;
+        }
+        return nativeRestoreChatCheckpoint(checkpoint);
+    }
+
+    @Override
+    public String chatTranscript() {
+        byte[] transcript = nativeChatTranscript();
+        return transcript == null
+                ? ""
+                : new String(transcript, StandardCharsets.UTF_8);
+    }
+
+    @Override
     public void acceptMicrophonePcm(short[] samples, int sampleRateHz) {
         if (samples == null || samples.length == 0) {
             return;
@@ -294,6 +316,12 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static native boolean nativeCancelChat(long requestId);
 
     private static native int nativeChatStatus(long requestId);
+
+    private static native byte[] nativeChatCheckpoint();
+
+    private static native long nativeRestoreChatCheckpoint(byte[] checkpoint);
+
+    private static native byte[] nativeChatTranscript();
 
     private static native byte[] nativeRealModelProbe(
             String capsulePath,

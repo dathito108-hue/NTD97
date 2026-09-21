@@ -2,6 +2,7 @@
 
 mod action_checkpoint;
 mod action_fabric;
+mod assistant;
 mod capability;
 mod checkpoint;
 mod cognition;
@@ -22,6 +23,11 @@ pub use action_fabric::{
     ActionFabric, ActionFabricError, ActionFabricState, ActionId, ActionPlanId, ActionPlanState,
     ActionPlanStatus, ActionStatus, ActionStepReport, ActionVerification, ActionVerifier,
     AdapterResult, CapabilityAdapter, PlannedAction,
+};
+pub use assistant::{
+    decode_conversation_checkpoint, encode_conversation_checkpoint, ActiveConversationTurn,
+    ConversationStateError, SovereignConversationState, NCS97_HEADER_LEN, NCS97_MAGIC, NCS97_MAJOR,
+    NCS97_MINOR,
 };
 pub use capability::{
     ActionOutput, ActionValue, AuthorityGrant, AuthorityScope, CapabilityDescriptor,

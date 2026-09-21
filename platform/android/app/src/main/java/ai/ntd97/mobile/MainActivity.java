@@ -40,6 +40,8 @@ public final class MainActivity extends Activity {
     private final StringBuilder transcript = new StringBuilder();
     private volatile long activeChatRequestId = -1L;
     private volatile boolean chatCancelRequested;
+    private volatile boolean conversationRestored;
+    private volatile boolean activityDestroyed;
     private boolean voiceActive;
 
     @Override
@@ -168,7 +170,7 @@ public final class MainActivity extends Activity {
 
         setContentView(root);
         restoreFromUi();
-        appendTranscript("NTD97 local chat ready.\n");
+        restoreConversationFromDisk();
     }
 
     @Override
@@ -180,15 +182,17 @@ public final class MainActivity extends Activity {
     @Override
     protected void onPause() {
         NtdSessionController.checkpoint(this);
+        if (conversationRestored) {
+            NtdSessionController.checkpointConversation(this);
+        }
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
-        long requestId = activeChatRequestId;
-        NtdRuntimeHost host = NtdSessionController.runtime();
-        if (host != null && requestId >= 0) {
-            host.cancelChat(requestId);
+        activityDestroyed = true;
+        if (conversationRestored) {
+            NtdSessionController.checkpointConversation(this);
         }
         chatExecutor.shutdownNow();
         audioController.close();
@@ -252,6 +256,8 @@ public final class MainActivity extends Activity {
         while (!Thread.currentThread().isInterrupted()) {
             NtdRuntimeHost.ChatEvent event = host.nextChatEvent(requestId);
             if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+                conversationRestored = true;
+                NtdSessionController.checkpointConversation(this);
                 if (!event.text.isEmpty()) {
                     runOnUiThread(() -> appendTranscript(event.text));
                 }
@@ -271,8 +277,12 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        host.cancelChat(requestId);
-        finishChatUi("Generation interrupted", true);
+        if (conversationRestored) {
+            NtdSessionController.checkpointConversation(this);
+        }
+        if (!activityDestroyed) {
+            finishChatUi("Generation interrupted", true);
+        }
     }
 
     private void cancelChat() {
@@ -286,6 +296,8 @@ public final class MainActivity extends Activity {
     }
 
     private void finishChatUi(String status, boolean terminateAssistantLine) {
+        conversationRestored = true;
+        NtdSessionController.checkpointConversation(this);
         activeChatRequestId = -1L;
         runOnUiThread(() -> {
             if (terminateAssistantLine) {
@@ -302,6 +314,67 @@ public final class MainActivity extends Activity {
         transcriptView.setText(transcript.toString());
         transcriptScroll.post(
                 () -> transcriptScroll.fullScroll(ScrollView.FOCUS_DOWN));
+    }
+
+    private void restoreConversationFromDisk() {
+        NtdRuntimeHost host = NtdSessionController.runtime();
+        if (host == null) {
+            appendTranscript("NTD97 local chat unavailable.\n");
+            return;
+        }
+
+        sendButton.setEnabled(false);
+        stopButton.setEnabled(false);
+        statusView.setText("Restoring sovereign conversation...");
+
+        chatExecutor.execute(() -> {
+            long requestId = NtdSessionController.restoreConversation(this);
+            conversationRestored = requestId >= 0;
+            String restoredTranscript = host.chatTranscript();
+            runOnUiThread(() -> {
+                transcript.setLength(0);
+                if (restoredTranscript.isEmpty()) {
+                    appendTranscript("NTD97 local chat ready.\n");
+                } else {
+                    appendTranscript(restoredTranscript);
+                    if (!restoredTranscript.endsWith("\n")) {
+                        appendTranscript("\n");
+                    }
+                }
+            });
+
+            if (requestId < 0) {
+                runOnUiThread(() -> {
+                    statusView.setText("Conversation restore failed");
+                    sendButton.setEnabled(true);
+                });
+                return;
+            }
+            if (requestId == 0) {
+                runOnUiThread(() -> {
+                    statusView.setText("Native runtime ready");
+                    sendButton.setEnabled(true);
+                });
+                return;
+            }
+
+            activeChatRequestId = requestId;
+            chatCancelRequested = false;
+            runOnUiThread(() -> {
+                statusView.setText("Restoring native generation...");
+                sendButton.setEnabled(false);
+                stopButton.setEnabled(true);
+            });
+
+            if (!host.chatReady()) {
+                runOnUiThread(() -> statusView.setText(
+                        "Verified native model required to resume generation"));
+                return;
+            }
+
+            runOnUiThread(() -> statusView.setText("Resuming local generation..."));
+            streamChat(host, requestId);
+        });
     }
 
     private void restoreFromUi() {

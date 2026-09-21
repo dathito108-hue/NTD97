@@ -57,6 +57,8 @@ for REQUIRED in \
   android_real_model=PASS \
   chat_submit=ok \
   chat_stream=ok \
+  chat_restore=ok \
+  chat_store=ok \
   chat_cancel=ok \
   chat_status=ok
 do

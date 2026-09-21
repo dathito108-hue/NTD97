@@ -395,6 +395,88 @@ impl CognitiveRuntime {
         &mut self.state
     }
 
+    pub fn start_external_task(&mut self, task_id: u64) -> Result<(), CognitiveError> {
+        self.state.tick = self
+            .state
+            .tick
+            .checked_add(1)
+            .ok_or(CognitiveError::Overflow)?;
+        let task = self
+            .state
+            .tasks
+            .get_mut(&task_id)
+            .ok_or(CognitiveError::MissingTask(task_id))?;
+        if matches!(task.status, TaskStatus::Completed | TaskStatus::Failed) {
+            return Ok(());
+        }
+        task.status = TaskStatus::Running;
+        task.updated_tick = self.state.tick;
+        Ok(())
+    }
+
+    pub fn complete_external_task(
+        &mut self,
+        task_id: u64,
+        summary: impl Into<String>,
+    ) -> Result<(), CognitiveError> {
+        let summary = summary.into();
+        if summary.trim().is_empty() {
+            return Err(CognitiveError::Executor(
+                "external task completion summary is empty".into(),
+            ));
+        }
+
+        self.state.tick = self
+            .state
+            .tick
+            .checked_add(1)
+            .ok_or(CognitiveError::Overflow)?;
+        let observation = CognitiveObservation::new(summary.clone());
+        self.commit_directive(
+            task_id,
+            &CognitiveDirective::Complete { summary },
+            &observation,
+        )
+    }
+
+    pub fn pause_external_task(
+        &mut self,
+        task_id: u64,
+        reason: impl Into<String>,
+    ) -> Result<(), CognitiveError> {
+        let reason = reason.into();
+        if reason.trim().is_empty() {
+            return Err(CognitiveError::Executor(
+                "external task pause reason is empty".into(),
+            ));
+        }
+
+        self.state.tick = self
+            .state
+            .tick
+            .checked_add(1)
+            .ok_or(CognitiveError::Overflow)?;
+        let task = self
+            .state
+            .tasks
+            .get_mut(&task_id)
+            .ok_or(CognitiveError::MissingTask(task_id))?;
+        if matches!(task.status, TaskStatus::Completed | TaskStatus::Failed) {
+            return Ok(());
+        }
+        task.status = TaskStatus::Paused;
+        task.updated_tick = self.state.tick;
+        task.last_observation = Some(reason.clone());
+        self.state.memory.store(
+            MemoryKind::Episodic,
+            format!("task {task_id} paused: {reason}"),
+            vec!["task".into(), "pause".into()],
+            400,
+            self.state.tick,
+        )?;
+        Ok(())
+    }
+
     pub fn activate_delta<H: DeltaActivationHook>(
         &mut self,
         delta_id: u64,
@@ -768,6 +850,54 @@ fn validate_state(state: &CognitiveState) -> Result<(), CognitiveError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn external_completion_and_pause_use_canonical_task_transitions() {
+        let identity = CognitiveIdentity(*b"NTD97-COGNITION1");
+        let mut runtime = CognitiveRuntime::new(identity);
+        let completed = runtime
+            .state_mut()
+            .submit_task(
+                ntd_core::Intent::new("answer user"),
+                ntd_core::TaskGraph::default(),
+                None,
+            )
+            .expect("completed task");
+        runtime.start_external_task(completed).expect("start");
+        assert_eq!(
+            runtime.state().tasks.get(&completed).expect("task").status,
+            TaskStatus::Running
+        );
+        runtime
+            .complete_external_task(completed, "answer committed")
+            .expect("complete");
+        assert_eq!(
+            runtime.state().tasks.get(&completed).expect("task").status,
+            TaskStatus::Completed
+        );
+
+        let paused = runtime
+            .state_mut()
+            .submit_task(
+                ntd_core::Intent::new("interrupted user turn"),
+                ntd_core::TaskGraph::default(),
+                None,
+            )
+            .expect("paused task");
+        runtime
+            .pause_external_task(paused, "generation cancelled")
+            .expect("pause");
+        assert_eq!(
+            runtime.state().tasks.get(&paused).expect("task").status,
+            TaskStatus::Paused
+        );
+        assert!(runtime
+            .state()
+            .memory
+            .records()
+            .values()
+            .any(|record| record.content.contains("generation cancelled")));
+    }
+
     use super::*;
     use ntd_core::TaskGraph;
 

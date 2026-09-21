@@ -27,9 +27,10 @@ use ntd_mobile_shell::{
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
 use ntd_runtime::{
-    ConversationTurn, CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator,
-    LlamaSpmConfig, LlamaSpmTokenizer, NativeChatPromptCompiler, ResourceSnapshot, SamplingMode,
-    ThermalState,
+    decode_conversation_checkpoint, encode_conversation_checkpoint, CognitiveIdentity,
+    CpuReferenceProvider, DistributionKind, GenerationConfig, GraphGenerator, LlamaSpmConfig,
+    LlamaSpmTokenizer, NativeChatPromptCompiler, ResourceSnapshot, SamplingMode,
+    SovereignConversationState, ThermalState,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
@@ -49,6 +50,8 @@ const CHAT_STATUS_CANCELLED: i32 = 3;
 const CHAT_STATUS_FAILED: i32 = 4;
 
 struct NativeChatModel {
+    asset_id: String,
+    version: u32,
     activation: ThinGenerativeActivation,
     resolver: FileBackedTensorResolver,
     tokenizer: LlamaSpmTokenizer,
@@ -65,11 +68,7 @@ enum NativeChatSessionStatus {
 
 struct NativeChatSession {
     request_id: u64,
-    user_message: String,
-    all_tokens: Vec<u32>,
-    generated_tokens: Vec<u32>,
-    generated_text: String,
-    max_new_tokens: usize,
+    task_id: u64,
     cancel: Arc<AtomicBool>,
     status: NativeChatSessionStatus,
 }
@@ -80,7 +79,7 @@ struct NativeState {
     input_peak_milli: u16,
     chat_model: Option<Arc<NativeChatModel>>,
     chat_session: Option<NativeChatSession>,
-    chat_history: Vec<ConversationTurn>,
+    conversation: SovereignConversationState,
     next_chat_request_id: u64,
 }
 
@@ -98,7 +97,7 @@ impl Default for NativeState {
             input_peak_milli: 0,
             chat_model: None,
             chat_session: None,
-            chat_history: Vec::new(),
+            conversation: SovereignConversationState::new(CognitiveIdentity(*b"NTD97-ASSISTANT1")),
             next_chat_request_id: 1,
         }
     }
@@ -536,13 +535,13 @@ fn open_chat_model(
 
     let mut guard = lock_state();
     guard.chat_model = Some(Arc::new(NativeChatModel {
+        asset_id: asset_id.to_owned(),
+        version,
         activation,
         resolver,
         tokenizer,
         context_limit,
     }));
-    guard.chat_session = None;
-    guard.chat_history.clear();
     Ok(())
 }
 
@@ -566,13 +565,23 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
     let prompt_limit = model.context_limit.saturating_sub(max_new_tokens).max(1);
     let compiled = NativeChatPromptCompiler
         .compile(
-            &guard.chat_history,
+            guard.conversation.turns(),
             user_message,
             &model.tokenizer,
             prompt_limit,
         )
         .map_err(|error| format!("compile chat prompt: {error:?}"))?;
 
+    let task_id = guard
+        .conversation
+        .begin_turn(
+            model.asset_id.clone(),
+            model.version,
+            user_message,
+            compiled.token_ids,
+            max_new_tokens,
+        )
+        .map_err(|error| format!("begin sovereign conversation turn: {error:?}"))?;
     let request_id = guard.next_chat_request_id;
     guard.next_chat_request_id = guard
         .next_chat_request_id
@@ -580,11 +589,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         .ok_or_else(|| "chat request id overflow".to_owned())?;
     guard.chat_session = Some(NativeChatSession {
         request_id,
-        user_message: user_message.to_owned(),
-        all_tokens: compiled.token_ids,
-        generated_tokens: Vec::with_capacity(max_new_tokens),
-        generated_text: String::new(),
-        max_new_tokens,
+        task_id,
         cancel: Arc::new(AtomicBool::new(false)),
         status: NativeChatSessionStatus::Running,
     });
@@ -600,10 +605,6 @@ fn chat_status(request_id: u64) -> i32 {
     else {
         return CHAT_STATUS_MISSING;
     };
-    if session.cancel.load(Ordering::Acquire) && session.status == NativeChatSessionStatus::Running
-    {
-        return CHAT_STATUS_CANCELLED;
-    }
     match session.status {
         NativeChatSessionStatus::Running => CHAT_STATUS_RUNNING,
         NativeChatSessionStatus::Complete => CHAT_STATUS_COMPLETE,
@@ -613,23 +614,44 @@ fn chat_status(request_id: u64) -> i32 {
 }
 
 fn cancel_chat(request_id: u64) -> bool {
-    let cancel = {
+    let (task_id, cancel) = {
         let guard = lock_state();
-        guard
-            .chat_session
-            .as_ref()
-            .filter(|session| {
-                session.request_id == request_id
-                    && session.status == NativeChatSessionStatus::Running
-            })
-            .map(|session| Arc::clone(&session.cancel))
+        let Some(session) = guard.chat_session.as_ref().filter(|session| {
+            session.request_id == request_id && session.status == NativeChatSessionStatus::Running
+        }) else {
+            return false;
+        };
+        (session.task_id, Arc::clone(&session.cancel))
     };
-    if let Some(cancel) = cancel {
-        cancel.store(true, Ordering::Release);
-        true
-    } else {
-        false
+    cancel.store(true, Ordering::Release);
+
+    let mut guard = lock_state();
+    if guard
+        .conversation
+        .active()
+        .is_some_and(|active| active.task_id == task_id)
+        && guard
+            .conversation
+            .cancel_turn(task_id, "user cancelled native generation")
+            .is_err()
+    {
+        if let Some(session) = guard
+            .chat_session
+            .as_mut()
+            .filter(|session| session.request_id == request_id)
+        {
+            session.status = NativeChatSessionStatus::Failed;
+        }
+        return false;
     }
+    if let Some(session) = guard
+        .chat_session
+        .as_mut()
+        .filter(|session| session.request_id == request_id)
+    {
+        session.status = NativeChatSessionStatus::Cancelled;
+    }
+    true
 }
 
 fn encode_chat_event(kind: u8, token: Option<u32>, text: &str) -> Vec<u8> {
@@ -640,16 +662,11 @@ fn encode_chat_event(kind: u8, token: Option<u32>, text: &str) -> Vec<u8> {
 }
 
 fn terminal_chat_event(request_id: u64) -> Option<Vec<u8>> {
-    let mut guard = lock_state();
+    let guard = lock_state();
     let session = guard
         .chat_session
-        .as_mut()
+        .as_ref()
         .filter(|session| session.request_id == request_id)?;
-
-    if session.cancel.load(Ordering::Acquire) && session.status == NativeChatSessionStatus::Running
-    {
-        session.status = NativeChatSessionStatus::Cancelled;
-    }
 
     match session.status {
         NativeChatSessionStatus::Running => None,
@@ -670,55 +687,56 @@ fn next_chat_event(request_id: u64) -> Result<Vec<u8>, String> {
         return Ok(event);
     }
 
-    let (model, all_tokens, generated_len, max_new_tokens, cancel) = {
+    let (model, task_id, all_tokens, generated_len, max_new_tokens, cancel) = {
         let guard = lock_state();
         let session = guard
             .chat_session
             .as_ref()
             .filter(|session| session.request_id == request_id)
             .ok_or_else(|| "unknown chat request".to_owned())?;
+        let active = guard
+            .conversation
+            .active()
+            .filter(|active| active.task_id == session.task_id)
+            .ok_or_else(|| "active sovereign conversation turn is missing".to_owned())?;
         let model = guard
             .chat_model
             .clone()
             .ok_or_else(|| "native chat model was unloaded".to_owned())?;
+        if active.model_asset_id != model.asset_id || active.model_version != model.version {
+            return Err("active NCS97 model identity does not match loaded native model".into());
+        }
         (
             model,
-            session.all_tokens.clone(),
-            session.generated_tokens.len(),
-            session.max_new_tokens,
+            session.task_id,
+            guard
+                .conversation
+                .all_tokens_for_active()
+                .map_err(|error| format!("restore active token prefix: {error:?}"))?,
+            active.generated_tokens.len(),
+            active.max_new_tokens,
             Arc::clone(&session.cancel),
         )
     };
 
     if generated_len >= max_new_tokens {
         let mut guard = lock_state();
-        let commit = {
-            let session = guard
-                .chat_session
-                .as_mut()
-                .filter(|session| session.request_id == request_id)
-                .ok_or_else(|| "unknown chat request".to_owned())?;
-            session.status = NativeChatSessionStatus::Complete;
-            Some((session.user_message.clone(), session.generated_text.clone()))
-        };
-        if let Some((user, assistant)) = commit {
-            guard.chat_history.push(ConversationTurn::user(user));
-            guard
-                .chat_history
-                .push(ConversationTurn::assistant(assistant));
-        }
-        return Ok(encode_chat_event(CHAT_EVENT_COMPLETE, None, ""));
-    }
-
-    if cancel.load(Ordering::Acquire) {
-        let mut guard = lock_state();
+        guard
+            .conversation
+            .complete_turn(task_id)
+            .map_err(|error| format!("commit sovereign conversation turn: {error:?}"))?;
         if let Some(session) = guard
             .chat_session
             .as_mut()
             .filter(|session| session.request_id == request_id)
         {
-            session.status = NativeChatSessionStatus::Cancelled;
+            session.status = NativeChatSessionStatus::Complete;
         }
+        return Ok(encode_chat_event(CHAT_EVENT_COMPLETE, None, ""));
+    }
+
+    if cancel.load(Ordering::Acquire) {
+        cancel_chat(request_id);
         return Ok(encode_chat_event(CHAT_EVENT_CANCELLED, None, ""));
     }
 
@@ -758,36 +776,102 @@ fn next_chat_event(request_id: u64) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("decode chat token: {error:?}"))?;
 
     let mut guard = lock_state();
-    let mut commit = None;
+    let cancelled = match guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
     {
-        let session = guard
+        Some(session) => {
+            session.status != NativeChatSessionStatus::Running
+                || session.cancel.load(Ordering::Acquire)
+        }
+        None => true,
+    };
+    if cancelled {
+        return Ok(encode_chat_event(CHAT_EVENT_CANCELLED, None, ""));
+    }
+
+    guard
+        .conversation
+        .append_generated(task_id, token, &piece)
+        .map_err(|error| format!("checkpoint generated token: {error:?}"))?;
+    let active = guard
+        .conversation
+        .active()
+        .ok_or_else(|| "active sovereign conversation turn disappeared".to_owned())?;
+    let reached_eos = model.tokenizer.eos_token() == Some(token);
+    let complete = reached_eos || active.generated_tokens.len() >= active.max_new_tokens;
+    if complete {
+        guard
+            .conversation
+            .complete_turn(task_id)
+            .map_err(|error| format!("commit sovereign conversation turn: {error:?}"))?;
+        if let Some(session) = guard
             .chat_session
             .as_mut()
             .filter(|session| session.request_id == request_id)
-            .ok_or_else(|| "chat request changed during generation".to_owned())?;
-        if session.cancel.load(Ordering::Acquire) {
-            session.status = NativeChatSessionStatus::Cancelled;
-            return Ok(encode_chat_event(CHAT_EVENT_CANCELLED, None, ""));
-        }
-
-        session.all_tokens.push(token);
-        session.generated_tokens.push(token);
-        session.generated_text.push_str(&piece);
-
-        let reached_eos = model.tokenizer.eos_token() == Some(token);
-        if reached_eos || session.generated_tokens.len() >= session.max_new_tokens {
+        {
             session.status = NativeChatSessionStatus::Complete;
-            commit = Some((session.user_message.clone(), session.generated_text.clone()));
         }
-    }
-    if let Some((user, assistant)) = commit {
-        guard.chat_history.push(ConversationTurn::user(user));
-        guard
-            .chat_history
-            .push(ConversationTurn::assistant(assistant));
     }
 
     Ok(encode_chat_event(CHAT_EVENT_TOKEN, Some(token), &piece))
+}
+
+fn checkpoint_chat() -> Result<Vec<u8>, String> {
+    let guard = lock_state();
+    encode_conversation_checkpoint(&guard.conversation)
+        .map_err(|error| format!("encode NCS97: {error:?}"))
+}
+
+fn restore_chat_checkpoint(bytes: &[u8]) -> Result<u64, String> {
+    let conversation = decode_conversation_checkpoint(bytes)
+        .map_err(|error| format!("decode NCS97: {error:?}"))?;
+    let active_task = conversation.active().map(|active| active.task_id);
+
+    let mut guard = lock_state();
+    if let Some(session) = guard.chat_session.as_ref() {
+        session.cancel.store(true, Ordering::Release);
+    }
+    guard.conversation = conversation;
+
+    let Some(task_id) = active_task else {
+        guard.chat_session = None;
+        return Ok(0);
+    };
+
+    let request_id = guard.next_chat_request_id;
+    guard.next_chat_request_id = guard
+        .next_chat_request_id
+        .checked_add(1)
+        .ok_or_else(|| "chat request id overflow".to_owned())?;
+    guard.chat_session = Some(NativeChatSession {
+        request_id,
+        task_id,
+        cancel: Arc::new(AtomicBool::new(false)),
+        status: NativeChatSessionStatus::Running,
+    });
+    Ok(request_id)
+}
+
+fn chat_transcript() -> String {
+    let guard = lock_state();
+    let mut text = String::new();
+    for turn in guard.conversation.turns() {
+        match turn.role {
+            ntd_runtime::ConversationRole::User => text.push_str("You: "),
+            ntd_runtime::ConversationRole::Assistant => text.push_str("NTD97: "),
+        }
+        text.push_str(&turn.content);
+        text.push('\n');
+    }
+    if let Some(active) = guard.conversation.active() {
+        text.push_str("You: ");
+        text.push_str(&active.user_message);
+        text.push_str("\nNTD97: ");
+        text.push_str(&active.generated_text);
+    }
+    text
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -912,6 +996,44 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatStatu
         return CHAT_STATUS_MISSING;
     };
     chat_status(request_id)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatCheckpoint(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jbyteArray {
+    match checkpoint_chat() {
+        Ok(bytes) => java_bytes(&env, &bytes),
+        Err(_) => java_bytes(&env, &[]),
+    }
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeRestoreChatCheckpoint(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    checkpoint: JByteArray<'_>,
+) -> jlong {
+    let bytes = match env.convert_byte_array(&checkpoint) {
+        Ok(bytes) => bytes,
+        Err(_) => return -1,
+    };
+    restore_chat_checkpoint(&bytes)
+        .ok()
+        .and_then(|request_id| i64::try_from(request_id).ok())
+        .unwrap_or(-1)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatTranscript(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jbyteArray {
+    java_bytes(&env, chat_transcript().as_bytes())
 }
 
 fn real_model_probe(
