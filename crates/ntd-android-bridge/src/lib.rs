@@ -383,7 +383,6 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativePullSpeak
     java_bytes(&env, &[])
 }
 
-
 fn java_string(env: &mut JNIEnv<'_>, value: &JString<'_>) -> Option<String> {
     env.get_string(value)
         .ok()
