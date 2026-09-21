@@ -5,11 +5,13 @@ use std::{
 };
 
 use ntd_assimilation::{
-    build_native_package, lower_llama_model, lower_llama_model_from_source,
-    lower_llama_model_to_shards, lowered_llama_candidate, streamed_llama_thin_capsule,
-    verify_native_package, AssimilationIdentity, FileTensorShardStore, ForgeSandbox,
-    GgufByteSource, GgufError, GgufModel, GgufValueType, LicenseRecord, NativeValidationSandbox,
-    SliceGgufSource, SourcePackage, GGUF_MAGIC, GGUF_VERSION,
+    activate_thin_generative_capsule, build_native_package, build_streamed_native_package,
+    lower_llama_model, lower_llama_model_from_source, lower_llama_model_to_shards,
+    lowered_llama_candidate, streamed_llama_thin_capsule, verify_native_package,
+    verify_native_package_with_shards, AssimilationIdentity, FileBackedTensorResolver,
+    FileTensorShardStore, ForgeSandbox, GgufByteSource, GgufError, GgufModel, GgufValueType,
+    LicenseRecord, NativeAssetStore, NativeValidationSandbox, SliceGgufSource, SourcePackage,
+    GGUF_MAGIC, GGUF_VERSION,
 };
 use ntd_capsule::{
     load_native_generative_program, CapsuleKind, CapsuleView, MemoryContentStore,
@@ -508,6 +510,136 @@ fn streamed_ntp97_shards_reload_through_canonical_thin_capsule() {
     assert_eq!(loaded.program.graph, expected.graph);
     assert_eq!(loaded.program.tensors, expected.tensors);
     assert_eq!(loaded.tokenizer, expected.tokenizer);
+
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn signed_thin_package_activates_and_generates_with_lazy_file_backed_tensors() {
+    let bytes = fixture();
+    let source_bytes = SliceGgufSource::new(&bytes);
+    let model = GgufModel::parse_source(&source_bytes).expect("parse");
+    let expected = lower_llama_model(&bytes, &model).expect("in-memory lower");
+
+    let root = shard_root();
+    let mut shard_store = FileTensorShardStore::open(&root).expect("shard store");
+    let streamed =
+        lower_llama_model_to_shards(&source_bytes, &model, &mut shard_store).expect("stream lower");
+
+    let candidate =
+        lowered_llama_candidate("model.ntd97-thin-reference", 1, &expected).expect("candidate");
+    let mut sandbox = NativeValidationSandbox;
+    let report = sandbox.validate(&candidate).expect("sandbox");
+    let source = SourcePackage::new(
+        "application/x-gguf",
+        bytes.clone(),
+        "memory://ntd97-thin.gguf",
+        LicenseRecord::new("MIT", "test fixture").expect("license"),
+        "NTD97 deterministic Thin NCC97 fixture",
+    )
+    .expect("source");
+    let identity = AssimilationIdentity::from_seed([33; 32]);
+
+    let package = build_streamed_native_package(
+        "model.ntd97-thin",
+        1,
+        &streamed,
+        &source.provenance,
+        "ntd97.gguf.v3",
+        &report,
+        &shard_store,
+        &identity,
+    )
+    .expect("signed thin package");
+    verify_native_package_with_shards(&package, &identity.verify_key(), &shard_store)
+        .expect("verify thin package");
+
+    let view = CapsuleView::read(&package.native_capsule).expect("capsule");
+    assert_eq!(view.kind, CapsuleKind::Thin);
+
+    let mut asset_store = NativeAssetStore::new(identity.verify_key());
+    asset_store
+        .commit_batch_with_shards(vec![package.clone()], &shard_store)
+        .expect("commit thin package");
+    assert_eq!(
+        asset_store
+            .active("model.ntd97-thin")
+            .expect("active package")
+            .capsule_hash,
+        package.capsule_hash
+    );
+
+    let activation =
+        activate_thin_generative_capsule(&package.native_capsule, &shard_store).expect("activate");
+    assert_eq!(activation.graph, streamed.graph);
+    assert_eq!(activation.tokenizer, streamed.tokenizer);
+    assert_eq!(activation.manifest.token_input, streamed.token_input);
+    assert_eq!(
+        usize::try_from(activation.manifest.distribution_output).expect("distribution output"),
+        streamed.distribution_output
+    );
+    assert_eq!(
+        usize::try_from(activation.manifest.vocabulary_size).expect("vocabulary size"),
+        streamed.vocabulary_size
+    );
+    assert_eq!(activation.tensor_shards.len(), streamed.tensor_shards.len());
+
+    let resolver = FileBackedTensorResolver::from_activation(shard_store.clone(), &activation);
+    assert_eq!(resolver.binding_count(), streamed.tensor_shards.len());
+
+    let mut static_inputs = BTreeMap::new();
+    for native in &expected.tensors {
+        let value = native.graph_value.expect("binding");
+        let tensor = TensorLoader::load(
+            native.descriptor.dtype,
+            &native.descriptor.shape,
+            QuantizationParams::None,
+            &native.payload,
+        )
+        .expect("load reference tensor");
+        static_inputs.insert(value, tensor);
+    }
+
+    let reference_generator = GraphGenerator::new(
+        expected.graph.clone(),
+        CpuReferenceProvider,
+        static_inputs,
+        expected.token_input,
+        expected.distribution_output,
+        expected.vocabulary_size,
+    )
+    .expect("reference generator");
+    let lazy_generator = GraphGenerator::new(
+        activation.graph.clone(),
+        CpuReferenceProvider,
+        BTreeMap::new(),
+        activation.manifest.token_input,
+        usize::try_from(activation.manifest.distribution_output).expect("distribution output"),
+        usize::try_from(activation.manifest.vocabulary_size).expect("vocabulary size"),
+    )
+    .expect("lazy generator");
+
+    let config = GenerationConfig {
+        max_new_tokens: 2,
+        context_limit: 8,
+        eos_token: None,
+        distribution: DistributionKind::Logits,
+        sampling: SamplingMode::Greedy,
+    };
+    let reference = reference_generator
+        .generate_tokens(&[0], config)
+        .expect("reference generation");
+    let lazy = lazy_generator
+        .generate_tokens_with_resolver(&resolver, &[0], config)
+        .expect("lazy generation");
+    assert_eq!(lazy, reference);
+
+    let first_shard = streamed.tensor_shards.first().expect("first shard");
+    std::fs::write(shard_store.shard_path(&first_shard.hash), b"tampered").expect("tamper shard");
+    assert!(
+        verify_native_package_with_shards(&package, &identity.verify_key(), &shard_store).is_err(),
+        "external shard tampering must invalidate Thin package activation"
+    );
 
     std::fs::remove_dir_all(root).expect("cleanup");
 }
