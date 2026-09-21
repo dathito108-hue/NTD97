@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+use ntd_ir::IrVersion;
+
 pub const NCC97_MAGIC: [u8; 6] = *b"NCC97\0";
 pub const NCC97_MAJOR: u16 = 0;
 pub const NCC97_MINOR: u16 = 1;
@@ -19,6 +21,10 @@ pub enum SectionKind {
     DeviceProfiles = 10,
     Provenance = 11,
     Signatures = 12,
+    AssimilationLog = 13,
+    WorldStateSchema = 14,
+    ContinuityState = 15,
+    EmbodimentProfile = 16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,13 +44,44 @@ impl CapsuleVersion {
     }
 }
 
+/// Version contract recorded by an NCC97 manifest.
+///
+/// Phase 003A deliberately freezes the semantic contract only. The exact binary
+/// header layout, offsets, encoding and reader/writer implementation belong to
+/// Phase 003B.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeIntelligenceContract {
+    pub capsule: CapsuleVersion,
+    pub ir: IrVersion,
+}
+
+impl NativeIntelligenceContract {
+    pub const CURRENT: Self = Self {
+        capsule: CapsuleVersion::CURRENT,
+        ir: IrVersion::CURRENT,
+    };
+
+    pub fn can_read(self, other: Self) -> bool {
+        self.capsule.can_read(other.capsule) && self.ir.can_read(other.ir)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn rejects_unknown_major_version() {
+    fn rejects_unknown_capsule_major_version() {
         let current = CapsuleVersion::CURRENT;
         assert!(!current.can_read(CapsuleVersion { major: 1, minor: 0 }));
+    }
+
+    #[test]
+    fn rejects_unknown_ir_major_version() {
+        let current = NativeIntelligenceContract::CURRENT;
+        assert!(!current.can_read(NativeIntelligenceContract {
+            capsule: CapsuleVersion::CURRENT,
+            ir: IrVersion { major: 1, minor: 0 },
+        }));
     }
 }
