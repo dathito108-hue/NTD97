@@ -43,6 +43,7 @@ public final class NtdRealModelProbeActivity extends Activity {
             if (result.isEmpty()) {
                 result = "android_real_model=failed\nerror=empty native result\n";
             }
+            result = result + runChatApiProbe();
         } catch (Exception error) {
             String message = error.getMessage();
             if (message == null || message.isEmpty()) {
@@ -55,6 +56,46 @@ public final class NtdRealModelProbeActivity extends Activity {
 
         writeResult(result);
         finish();
+    }
+
+    private String runChatApiProbe() {
+        NtdNativeRuntimeHost host = NtdNativeRuntimeHost.create(this);
+        if (host == null || !host.chatReady()) {
+            return "chat_submit=failed\nchat_stream=failed\nchat_cancel=failed\nchat_status=failed\n";
+        }
+
+        long requestId = host.submitChat("Once upon a time", 4);
+        if (requestId < 0) {
+            return "chat_submit=failed\nchat_stream=failed\nchat_cancel=failed\nchat_status=failed\n";
+        }
+
+        int tokenCount = 0;
+        boolean completed = false;
+        for (int attempt = 0; attempt < 8; attempt++) {
+            NtdRuntimeHost.ChatEvent event = host.nextChatEvent(requestId);
+            if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+                tokenCount++;
+                continue;
+            }
+            if (event.kind == NtdRuntimeHost.ChatEvent.COMPLETE) {
+                completed = true;
+                break;
+            }
+            return "chat_submit=ok\nchat_stream=failed\nchat_cancel=failed\nchat_status=failed\n";
+        }
+
+        boolean statusOk = completed && tokenCount > 0 && host.chatStatus(requestId) == 2;
+
+        long cancelRequest = host.submitChat("cancel this response", 8);
+        boolean cancelOk = cancelRequest >= 0
+                && host.cancelChat(cancelRequest)
+                && host.nextChatEvent(cancelRequest).kind == NtdRuntimeHost.ChatEvent.CANCELLED
+                && host.chatStatus(cancelRequest) == 3;
+
+        return "chat_submit=ok\n"
+                + "chat_stream=" + (completed && tokenCount > 0 ? "ok" : "failed") + "\n"
+                + "chat_cancel=" + (cancelOk ? "ok" : "failed") + "\n"
+                + "chat_status=" + (statusOk ? "ok" : "failed") + "\n";
     }
 
     private void copyAssetTree(

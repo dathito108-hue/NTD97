@@ -5,6 +5,7 @@ mod action_fabric;
 mod capability;
 mod checkpoint;
 mod cognition;
+mod conversation;
 mod executor;
 mod generation;
 mod gpt2;
@@ -36,13 +37,18 @@ pub use cognition::{
     CognitiveTask, CognitiveVerifier, DeltaActivationHook, Goal, GoalStatus, LearnedDelta,
     TaskStatus, VerificationDecision, WorldFact,
 };
+pub use conversation::{
+    ChatPromptError, CompiledChatPrompt, ConversationRole, ConversationTurn,
+    NativeChatPromptCompiler,
+};
 pub use executor::{
     EmptyTensorResolver, ExecutionError, GraphExecutor, TensorResolveError, TensorResolver,
 };
 pub use generation::{
-    sample_token, DistributionKind, GeneratedText, GenerationConfig, GenerationError,
-    GenerationResult, GraphGenerator, KvCache, KvCacheError, KvLayerCache, PrefixCache,
-    SamplingError, SamplingMode,
+    sample_token, DistributionKind, GeneratedText, GenerationConfig, GenerationControl,
+    GenerationError, GenerationFinishReason, GenerationResult, GraphGenerator, KvCache,
+    KvCacheError, KvLayerCache, PrefixCache, SamplingError, SamplingMode,
+    StreamingGenerationResult,
 };
 pub use gpt2::{Gpt2BpeConfig, Gpt2BpeTokenizer};
 pub use memory::{MemoryError, MemoryHit, MemoryKind, MemoryQuery, MemoryRecord, SovereignMemory};

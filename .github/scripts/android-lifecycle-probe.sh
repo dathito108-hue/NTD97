@@ -54,7 +54,11 @@ printf '%s\n' "${REAL_MODEL_PROBE}"
 for REQUIRED in \
   signature=ok \
   activation=ok \
-  android_real_model=PASS
+  android_real_model=PASS \
+  chat_submit=ok \
+  chat_stream=ok \
+  chat_cancel=ok \
+  chat_status=ok
 do
   printf '%s\n' "${REAL_MODEL_PROBE}" | grep -Fxq "${REQUIRED}"
 done

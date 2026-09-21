@@ -53,6 +53,25 @@ pub struct GenerationResult {
     pub all_tokens: Vec<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationControl {
+    Continue,
+    Cancel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationFinishReason {
+    MaxTokens,
+    Eos,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamingGenerationResult {
+    pub generation: GenerationResult,
+    pub finish_reason: GenerationFinishReason,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedText {
     pub prompt_tokens: Vec<u32>,
@@ -244,6 +263,84 @@ where
             prompt_tokens: prompt_tokens.to_vec(),
             generated_tokens,
             all_tokens,
+        })
+    }
+
+    pub fn generate_tokens_with_resolver_streaming<R, F>(
+        &self,
+        resolver: &R,
+        prompt_tokens: &[u32],
+        config: GenerationConfig,
+        mut on_token: F,
+    ) -> Result<StreamingGenerationResult, GenerationError>
+    where
+        R: TensorResolver,
+        F: FnMut(u32, &[u32]) -> GenerationControl,
+    {
+        if prompt_tokens.is_empty() {
+            return Err(GenerationError::EmptyPrompt);
+        }
+        if config.context_limit == 0 {
+            return Err(GenerationError::InvalidContextLimit);
+        }
+
+        for token in prompt_tokens {
+            let id =
+                usize::try_from(*token).map_err(|_| GenerationError::TokenIdOutOfRange(*token))?;
+            if id >= self.vocab_size {
+                return Err(GenerationError::TokenIdOutOfRange(*token));
+            }
+        }
+
+        let mut all_tokens = prompt_tokens.to_vec();
+        let mut generated_tokens = Vec::with_capacity(config.max_new_tokens);
+        let mut finish_reason = GenerationFinishReason::MaxTokens;
+
+        for step in 0..config.max_new_tokens {
+            let start = all_tokens.len().saturating_sub(config.context_limit);
+            let window = &all_tokens[start..];
+            let token_tensor = Tensor::new(
+                vec![window.len()],
+                window.iter().map(|token| *token as f32).collect(),
+            )
+            .map_err(GenerationError::Tensor)?;
+
+            let mut inputs = self.static_inputs.clone();
+            inputs.insert(self.token_input, token_tensor);
+
+            let outputs = self
+                .executor
+                .execute_with_resolver(&self.graph, inputs, resolver)
+                .map_err(GenerationError::Execution)?;
+            let output = outputs.get(self.distribution_output).ok_or(
+                GenerationError::MissingDistributionOutput(self.distribution_output),
+            )?;
+            let distribution = last_distribution(output, self.vocab_size)?;
+            let next = sample_token(distribution, config.distribution, config.sampling, step)
+                .map_err(GenerationError::Sampling)?;
+
+            let next_u32 = u32::try_from(next).map_err(|_| GenerationError::InvalidVocabulary)?;
+            generated_tokens.push(next_u32);
+            all_tokens.push(next_u32);
+            let control = on_token(next_u32, &generated_tokens);
+
+            if config.eos_token == Some(next_u32) {
+                finish_reason = GenerationFinishReason::Eos;
+                break;
+            }
+            if control == GenerationControl::Cancel {
+                finish_reason = GenerationFinishReason::Cancelled;
+                break;
+            }
+        }
+
+        Ok(StreamingGenerationResult {
+            generation: GenerationResult {
+                prompt_tokens: prompt_tokens.to_vec(),
+                generated_tokens,
+                all_tokens,
+            },
+            finish_reason,
         })
     }
 
@@ -628,6 +725,53 @@ mod tests {
             .expect("generate");
 
         assert_eq!(result.generated_tokens, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn streaming_generation_can_cancel_between_tokens() {
+        let transitions = Tensor::new(
+            vec![4, 4],
+            vec![
+                0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0,
+            ],
+        )
+        .expect("transitions");
+        let mut static_inputs = BTreeMap::new();
+        static_inputs.insert(ValueId(1), transitions);
+        let generator = GraphGenerator::new(
+            transition_graph(),
+            crate::CpuReferenceProvider,
+            static_inputs,
+            ValueId(0),
+            0,
+            4,
+        )
+        .expect("generator");
+
+        let mut streamed = Vec::new();
+        let result = generator
+            .generate_tokens_with_resolver_streaming(
+                &crate::EmptyTensorResolver,
+                &[0],
+                GenerationConfig {
+                    max_new_tokens: 8,
+                    context_limit: 4,
+                    eos_token: Some(3),
+                    distribution: DistributionKind::Probabilities,
+                    sampling: SamplingMode::Greedy,
+                },
+                |token, generated| {
+                    streamed.push(token);
+                    assert_eq!(generated, streamed.as_slice());
+                    GenerationControl::Cancel
+                },
+            )
+            .expect("stream");
+
+        assert_eq!(streamed, vec![1]);
+        assert_eq!(result.generation.generated_tokens, vec![1]);
+        assert_eq!(result.generation.all_tokens, vec![0, 1]);
+        assert_eq!(result.finish_reason, GenerationFinishReason::Cancelled);
     }
 
     #[test]
