@@ -27,8 +27,8 @@ pub use gguf::{
 };
 pub use importer::{ImporterRegistry, SourceImporter};
 pub use package::{
-    build_native_package, load_native_capability, verify_native_package, AssimilationIdentity,
-    NativePackage,
+    build_native_package, build_streamed_native_package, load_native_capability,
+    verify_native_package, verify_native_package_with_shards, AssimilationIdentity, NativePackage,
 };
 pub use sandbox::{ForgeSandbox, NativeValidationSandbox, SandboxReport};
 pub use source::{
