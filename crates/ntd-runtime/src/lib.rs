@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use ntd_core::ReasoningBudget;
+use ntd_ir::IrVersion;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CognitiveSignals {
@@ -23,6 +24,10 @@ impl CognitiveSignals {
 ///
 /// Later phases may replace the thresholds with learned routing while preserving
 /// the same single-runtime budget contract.
+pub fn accepts_ir(version: IrVersion) -> bool {
+    IrVersion::CURRENT.can_read(version)
+}
+
 pub fn choose_reasoning_budget(signals: CognitiveSignals) -> ReasoningBudget {
     let s = signals.normalized();
 
@@ -40,6 +45,12 @@ pub fn choose_reasoning_budget(signals: CognitiveSignals) -> ReasoningBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_accepts_current_ir_contract() {
+        assert!(accepts_ir(IrVersion::CURRENT));
+        assert!(!accepts_ir(IrVersion { major: 1, minor: 0 }));
+    }
 
     #[test]
     fn simple_work_uses_reflex_budget() {
