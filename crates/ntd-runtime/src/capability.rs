@@ -37,7 +37,8 @@ pub struct AuthorityScope(pub String);
 impl AuthorityScope {
     pub fn new(value: impl Into<String>) -> Result<Self, CapabilityError> {
         let value = value.into();
-        if value.trim().is_empty() {
+        let value = value.trim().to_owned();
+        if value.is_empty() {
             return Err(CapabilityError::EmptyScope);
         }
         Ok(Self(value))
@@ -131,7 +132,8 @@ impl CapabilityDescriptor {
     }
 
     pub fn normalize(&mut self) -> Result<(), CapabilityError> {
-        if self.id.0.trim().is_empty() {
+        self.id.0 = self.id.0.trim().to_owned();
+        if self.id.0.is_empty() {
             return Err(CapabilityError::EmptyCapabilityId);
         }
         if self.version == 0 {
