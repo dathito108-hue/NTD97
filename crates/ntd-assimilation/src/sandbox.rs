@@ -32,7 +32,11 @@ impl ForgeSandbox for NativeValidationSandbox {
 
         for regression in candidate.regressions() {
             match (&regression.probe, candidate) {
-                (RegressionProbe::GraphRoundTrip, NativeCandidate::Intelligence { graph, .. }) => {
+                (
+                    RegressionProbe::GraphRoundTrip,
+                    NativeCandidate::Intelligence { graph, .. }
+                    | NativeCandidate::StreamedIntelligence { graph, .. },
+                ) => {
                     let encoded = encode_graph(graph).map_err(|error| {
                         AssimilationError::SandboxRejected(format!("{error:?}"))
                     })?;
