@@ -3,9 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ntd_capsule::{
-    encode_native_tensor, encode_native_tokenizer, encode_tensor_descriptors, CapsuleBuilder,
-    CapsuleKind, NativeTensor, NativeTokenizerDescriptor, NativeTokenizerModel,
-    QuantizationMetadata, SectionKind, TensorDescriptor,
+    encode_native_generative_manifest, encode_native_tensor, encode_native_tokenizer,
+    encode_tensor_descriptors, CapsuleBuilder, CapsuleKind, NativeGenerativeManifest, NativeTensor,
+    NativeTokenizerDescriptor, NativeTokenizerModel, QuantizationMetadata, SectionKind,
+    TensorDescriptor,
 };
 use ntd_ir::{
     DType, Graph, IrVersion, Node, NodeId, OpKind, TensorOp, ValueDecl, ValueId, ValueType,
@@ -480,6 +481,17 @@ pub fn streamed_llama_thin_capsule(
         encode_native_tokenizer(&model.tokenizer)
             .map_err(|error| GgufError::NativeLowering(format!("tokenizer: {error:?}")))?,
     );
+    builder.push_embedded(
+        SectionKind::GenerativeManifest,
+        encode_native_generative_manifest(NativeGenerativeManifest {
+            token_input: model.token_input,
+            distribution_output: u32::try_from(model.distribution_output)
+                .map_err(|_| GgufError::LimitExceeded)?,
+            vocabulary_size: u32::try_from(model.vocabulary_size)
+                .map_err(|_| GgufError::LimitExceeded)?,
+        })
+        .map_err(|error| GgufError::NativeLowering(format!("generative manifest: {error:?}")))?,
+    );
     builder
         .write()
         .map_err(|error| GgufError::NativeLowering(format!("thin capsule: {error:?}")))
@@ -519,6 +531,17 @@ pub fn lowered_llama_candidate(
         kind: SectionKind::Tokenizer,
         bytes: encode_native_tokenizer(&model.tokenizer)
             .map_err(|error| GgufError::NativeLowering(format!("tokenizer: {error:?}")))?,
+    });
+    sections.push(NativeSection {
+        kind: SectionKind::GenerativeManifest,
+        bytes: encode_native_generative_manifest(NativeGenerativeManifest {
+            token_input: model.token_input,
+            distribution_output: u32::try_from(model.distribution_output)
+                .map_err(|_| GgufError::LimitExceeded)?,
+            vocabulary_size: u32::try_from(model.vocabulary_size)
+                .map_err(|_| GgufError::LimitExceeded)?,
+        })
+        .map_err(|error| GgufError::NativeLowering(format!("generative manifest: {error:?}")))?,
     });
 
     let candidate = NativeCandidate::Intelligence {
