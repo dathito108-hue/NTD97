@@ -595,12 +595,7 @@ fn submit_chat_reserved(
 ) -> Result<u64, String> {
     let prompt_limit = model.context_limit.saturating_sub(max_new_tokens).max(1);
     let base = NativeChatPromptCompiler
-        .compile(
-            history,
-            user_message,
-            &model.tokenizer,
-            prompt_limit,
-        )
+        .compile(history, user_message, &model.tokenizer, prompt_limit)
         .map_err(|error| format!("compile preflight chat prompt: {error:?}"))?;
 
     let generator = GraphGenerator::new(
@@ -664,12 +659,7 @@ fn submit_chat_reserved(
         )
         .map_err(|error| format!("begin sovereign conversation turn: {error:?}"))?;
     conversation
-        .record_reasoning_profile(
-            task_id,
-            budget,
-            signals,
-            compiled.retained_memory_items,
-        )
+        .record_reasoning_profile(task_id, budget, signals, compiled.retained_memory_items)
         .map_err(|error| format!("record sovereign reasoning profile: {error:?}"))?;
 
     let request_id = guard.next_chat_request_id;
@@ -713,7 +703,10 @@ fn chat_reasoning_budget(request_id: u64) -> i32 {
     else {
         return 0;
     };
-    match guard.conversation.reasoning_budget_for_task(session.task_id) {
+    match guard
+        .conversation
+        .reasoning_budget_for_task(session.task_id)
+    {
         Some(ntd_runtime::ReasoningBudget::Reflex) => 1,
         Some(ntd_runtime::ReasoningBudget::Standard) => 2,
         Some(ntd_runtime::ReasoningBudget::Deep) => 3,
