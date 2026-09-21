@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ntd-capsule = { path = "../ntd-capsule" }
 ntd-core = { path = "../ntd-core" }
 ntd-ir = { path = "../ntd-ir" }
 ntd-mobile-shell = { path = "../ntd-mobile-shell" }
