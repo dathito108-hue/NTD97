@@ -110,12 +110,51 @@ pub fn encode_native_tokenizer(
         &mut payload,
         tokenizer.unknown_token.unwrap_or(NO_SPECIAL_TOKEN),
     );
-    push_u32(&mut payload, 0);
+    let model_tag = match tokenizer.model {
+        NativeTokenizerModel::Vocabulary => TOKENIZER_MODEL_VOCABULARY,
+        NativeTokenizerModel::LlamaSpm { .. } => TOKENIZER_MODEL_LLAMA_SPM,
+    };
+    push_u32(&mut payload, model_tag);
 
     for token in &tokenizer.tokens {
         let len = u32::try_from(token.len()).map_err(|_| NativeTokenizerError::Overflow)?;
         push_u32(&mut payload, len);
         payload.extend_from_slice(token);
+    }
+
+    if let NativeTokenizerModel::LlamaSpm {
+        score_bits,
+        token_types,
+        add_space_prefix,
+        add_bos_token,
+        add_eos_token,
+    } = &tokenizer.model
+    {
+        let score_count =
+            u32::try_from(score_bits.len()).map_err(|_| NativeTokenizerError::Overflow)?;
+        push_u32(&mut payload, score_count);
+        for score in score_bits {
+            push_u32(&mut payload, *score);
+        }
+
+        let type_count =
+            u32::try_from(token_types.len()).map_err(|_| NativeTokenizerError::Overflow)?;
+        push_u32(&mut payload, type_count);
+        for token_type in token_types {
+            push_i32(&mut payload, *token_type);
+        }
+
+        let mut flags = 0u32;
+        if *add_space_prefix {
+            flags |= TOKENIZER_FLAG_ADD_SPACE_PREFIX;
+        }
+        if *add_bos_token {
+            flags |= TOKENIZER_FLAG_ADD_BOS;
+        }
+        if *add_eos_token {
+            flags |= TOKENIZER_FLAG_ADD_EOS;
+        }
+        push_u32(&mut payload, flags);
     }
 
     encode_descriptor_frame(&DescriptorFrame {
@@ -133,7 +172,7 @@ pub fn decode_native_tokenizer(
     if frame.kind != DescriptorFrameKind::Tokenizer {
         return Err(NativeTokenizerError::WrongDescriptorKind(frame.kind));
     }
-    if frame.format != NATIVE_TOKENIZER_FORMAT {
+    if frame.format != NATIVE_TOKENIZER_FORMAT && frame.format != LEGACY_NATIVE_TOKENIZER_FORMAT {
         return Err(NativeTokenizerError::WrongFormat(frame.format));
     }
 
@@ -155,7 +194,9 @@ pub fn decode_native_tokenizer(
     let bos_token = decode_special(cursor.u32()?);
     let eos_token = decode_special(cursor.u32()?);
     let unknown_token = decode_special(cursor.u32()?);
-    if cursor.u32()? != 0 {
+    let model_tag = cursor.u32()?;
+
+    if minor <= 1 && model_tag != TOKENIZER_MODEL_VOCABULARY {
         return Err(NativeTokenizerError::NonCanonicalEncoding);
     }
 
@@ -166,6 +207,43 @@ pub fn decode_native_tokenizer(
         tokens.push(cursor.take(len)?.to_vec());
     }
 
+    let model = if minor <= 1 {
+        NativeTokenizerModel::Vocabulary
+    } else {
+        match model_tag {
+            TOKENIZER_MODEL_VOCABULARY => NativeTokenizerModel::Vocabulary,
+            TOKENIZER_MODEL_LLAMA_SPM => {
+                let score_count =
+                    usize::try_from(cursor.u32()?).map_err(|_| NativeTokenizerError::Overflow)?;
+                let mut score_bits = Vec::with_capacity(score_count);
+                for _ in 0..score_count {
+                    score_bits.push(cursor.u32()?);
+                }
+
+                let type_count =
+                    usize::try_from(cursor.u32()?).map_err(|_| NativeTokenizerError::Overflow)?;
+                let mut token_types = Vec::with_capacity(type_count);
+                for _ in 0..type_count {
+                    token_types.push(cursor.i32()?);
+                }
+
+                let flags = cursor.u32()?;
+                if flags & !TOKENIZER_KNOWN_FLAGS != 0 {
+                    return Err(NativeTokenizerError::NonCanonicalEncoding);
+                }
+
+                NativeTokenizerModel::LlamaSpm {
+                    score_bits,
+                    token_types,
+                    add_space_prefix: flags & TOKENIZER_FLAG_ADD_SPACE_PREFIX != 0,
+                    add_bos_token: flags & TOKENIZER_FLAG_ADD_BOS != 0,
+                    add_eos_token: flags & TOKENIZER_FLAG_ADD_EOS != 0,
+                }
+            }
+            other => return Err(NativeTokenizerError::InvalidTokenizerModel(other)),
+        }
+    };
+
     if !cursor.is_finished() {
         return Err(NativeTokenizerError::NonCanonicalEncoding);
     }
@@ -175,6 +253,7 @@ pub fn decode_native_tokenizer(
         bos_token,
         eos_token,
         unknown_token,
+        model,
     };
     validate_tokenizer(&tokenizer)?;
     Ok(tokenizer)
