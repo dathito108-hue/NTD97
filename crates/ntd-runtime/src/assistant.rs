@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeSet;
+
 use ntd_core::{Intent, ReasoningBudget, TaskGraph};
 
 use crate::{
@@ -46,6 +48,7 @@ pub enum ConversationStateError {
     TaskMismatch { expected: u64, actual: u64 },
     InvalidHistory,
     InvalidActiveTurn,
+    InvalidTaskGraph,
     LimitExceeded,
     Truncated,
     InvalidMagic,
@@ -252,6 +255,60 @@ impl SovereignConversationState {
             .values()
             .next_back()
             .is_some_and(|task| matches!(task.status, TaskStatus::Paused | TaskStatus::Failed))
+    }
+
+    pub fn install_action_task_graph(
+        &mut self,
+        task_id: u64,
+        graph: TaskGraph,
+    ) -> Result<(), ConversationStateError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or(ConversationStateError::MissingActiveTurn)?;
+        ensure_task(active.task_id, task_id)?;
+        if graph.actions.is_empty() {
+            return Err(ConversationStateError::InvalidTaskGraph);
+        }
+
+        let mut seen = BTreeSet::new();
+        for node in &graph.actions {
+            if node.id == 0
+                || !seen.insert(node.id)
+                || node.capability.0.trim().is_empty()
+            {
+                return Err(ConversationStateError::InvalidTaskGraph);
+            }
+        }
+
+        let mut cognition = self.cognition.clone();
+        let task = cognition
+            .state_mut()
+            .tasks
+            .get_mut(&task_id)
+            .ok_or(ConversationStateError::InvalidTaskGraph)?;
+        if matches!(task.status, TaskStatus::Completed | TaskStatus::Failed) {
+            return Err(ConversationStateError::InvalidTaskGraph);
+        }
+        task.graph = graph;
+        let action_count = task.graph.actions.len();
+        cognition.state_mut().set_world_fact(
+            format!("conversation.task.{task_id}.action_count"),
+            action_count.to_string(),
+        )?;
+        self.cognition = cognition;
+        Ok(())
+    }
+
+    pub fn action_count_for_task(&self, task_id: u64) -> Option<usize> {
+        let key = format!("conversation.task.{task_id}.action_count");
+        self.cognition
+            .state()
+            .world
+            .get(&key)?
+            .value
+            .parse::<usize>()
+            .ok()
     }
 
     pub fn record_reasoning_profile(
@@ -838,6 +895,41 @@ mod tests {
             Some(ReasoningBudget::Deep)
         );
         assert_eq!(restored.recalled_memory_items_for_task(task), Some(4));
+    }
+
+    #[test]
+    fn installed_action_task_graph_survives_ncs97_checkpoint() {
+        use ntd_core::{ActionNode, CapabilityId, SideEffectClass};
+
+        let mut state = SovereignConversationState::new(identity());
+        let task = state
+            .begin_turn("model.test", 1, "observe device", vec![1, 2], 8)
+            .expect("begin");
+        state
+            .install_action_task_graph(
+                task,
+                TaskGraph {
+                    actions: vec![ActionNode {
+                        id: 1,
+                        capability: CapabilityId("device.observe".into()),
+                        side_effect: SideEffectClass::ReadOnly,
+                        verification_required: true,
+                    }],
+                },
+            )
+            .expect("install graph");
+
+        let encoded = encode_conversation_checkpoint(&state).expect("encode");
+        let restored = decode_conversation_checkpoint(&encoded).expect("decode");
+        let restored_task = restored
+            .cognition()
+            .state()
+            .tasks
+            .get(&task)
+            .expect("task");
+
+        assert_eq!(restored_task.graph.actions.len(), 1);
+        assert_eq!(restored.action_count_for_task(task), Some(1));
     }
 
     #[test]
