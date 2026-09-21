@@ -377,6 +377,9 @@ fn validate_graph_binding(
         .find(|decl| decl.id == value_id)
         .ok_or(NativeTensorError::GraphBindingMissing(value_id))?;
     match decl.ty {
+        ValueType::Scalar(dtype) if dtype == descriptor.dtype && descriptor.shape.is_empty() => {
+            Ok(())
+        }
         ValueType::Tensor { dtype, rank }
             if dtype == descriptor.dtype && usize::from(rank) == descriptor.shape.len() =>
         {
@@ -648,6 +651,30 @@ mod tests {
             id: ValueId(id),
             ty: ValueType::Tensor { dtype, rank },
         }
+    }
+
+    #[test]
+    fn scalar_descriptor_binds_scalar_graph_input() {
+        let graph = Graph {
+            version: IrVersion::CURRENT,
+            inputs: vec![ValueDecl {
+                id: ValueId(0),
+                ty: ValueType::Scalar(DType::F32),
+            }],
+            outputs: vec![ValueId(0)],
+            nodes: Vec::new(),
+        };
+        let descriptor = TensorDescriptor {
+            id: 1,
+            dtype: DType::F32,
+            shape: Vec::new(),
+            byte_len: 4,
+        };
+
+        assert_eq!(
+            validate_graph_binding(&graph, ValueId(0), &descriptor),
+            Ok(())
+        );
     }
 
     #[test]

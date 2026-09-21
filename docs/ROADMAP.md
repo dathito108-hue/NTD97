@@ -308,20 +308,25 @@ Required contract:
 
 Current implementation:
 
-- GGUF v3 parser/intake and conversion planning are implemented on the M11 branch;
-- GGUF tokenizer/tensor-table validation is fail-closed;
-- IR 0.3 adds SiLU, Reshape and Transpose;
-- RMSNorm accepts learned scale;
-- causal attention supports grouped-query heads;
-- transformer semantics have direct execution tests.
+- bounded clean-room GGUF v3 parser/intake and conversion planning;
+- fail-closed tokenizer/tensor-table validation;
+- NTD97 IR 0.4 transformer semantics: SiLU, dynamic Reshape, Transpose, PositionIds, learned/model-epsilon RMSNorm and grouped-query causal attention;
+- strict canonical LLaMA-family metadata/tensor-role lowering into a full-context NIR97 graph;
+- exact GGUF tensor-boundary validation;
+- direct F32/F16/BF16 materialization plus Q4_0/Q8_0 native transcode to NTD97-owned F32;
+- native tokenizer section, tensor descriptor table and NTP97 tensor shard emission;
+- Forge-native intelligence candidate creation;
+- signed NCC97 package verification through the canonical native generative loader;
+- deterministic tiny-LLaMA GGUF -> NIR97/NCC97 -> GraphGenerator regression path;
+- unsupported source semantics, unconsumed tensors and unsupported GGML types remain fail-closed.
 
 Still required before M11 completion:
 
-- canonical Llama-family graph lowering;
-- production quantized tensor transcode;
-- NCC97 model-package emission from real GGUF;
-- semantic-equivalence execution on a representative real model;
-- Android loading/generation using the resulting native model.
+- source-equivalent real tokenizer semantics for supported SentencePiece/GPT-2 BPE models;
+- representative real-model source-vs-NIR97 semantic-equivalence execution;
+- common mobile GGUF K-quant transcodes such as Q4_K/Q5_K/Q6_K;
+- streaming/mapped large-file import path;
+- Android loading/generation using the resulting real native model.
 
 Exit: at least one real supported external model can be imported once, converted to signed NTD97-native NCC97 assets, then loaded and used for local text generation without the source model runtime or a hosted AI backend.
 

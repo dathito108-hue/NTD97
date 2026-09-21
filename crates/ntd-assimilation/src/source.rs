@@ -248,10 +248,15 @@ impl NativeCandidate {
                                 | SectionKind::Signatures
                                 | SectionKind::AssimilationLog
                         )
-                        || !kinds.insert(section.kind as u16)
                     {
                         return Err(AssimilationError::InvalidCandidate(
                             "invalid native section set".into(),
+                        ));
+                    }
+
+                    if section.kind != SectionKind::Tensors && !kinds.insert(section.kind as u16) {
+                        return Err(AssimilationError::InvalidCandidate(
+                            "duplicate singleton native section".into(),
                         ));
                     }
                 }

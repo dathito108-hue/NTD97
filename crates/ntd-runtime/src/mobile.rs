@@ -325,6 +325,7 @@ impl ProviderProfile {
                 TensorOp::Silu,
                 TensorOp::Reshape,
                 TensorOp::Transpose,
+                TensorOp::PositionIds,
             ],
         }
     }

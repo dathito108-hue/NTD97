@@ -128,3 +128,45 @@ fn rejects_out_of_range_special_token() {
     bytes[value_offset..value_offset + 4].copy_from_slice(&99u32.to_le_bytes());
     assert_eq!(GgufModel::parse(&bytes), Err(GgufError::InvalidTokenizer));
 }
+
+#[test]
+fn conversion_plan_distinguishes_supported_transcode_from_unsupported_types() {
+    let mut model = GgufModel::parse(&fixture()).expect("parse");
+
+    model.tensors[0].ggml_type = 2;
+    let q4 = GgufConversionPlan::from_model(&model).expect("q4 plan");
+    assert_eq!(q4.direct_tensor_count, 0);
+    assert_eq!(q4.transcode_tensor_count, 1);
+    assert_eq!(q4.unsupported_tensor_count, 0);
+    assert!(!q4
+        .blockers
+        .iter()
+        .any(|item| item.contains("unsupported GGML")));
+
+    model.tensors[0].ggml_type = 30;
+    let bf16 = GgufConversionPlan::from_model(&model).expect("bf16 plan");
+    assert_eq!(bf16.direct_tensor_count, 1);
+    assert_eq!(bf16.transcode_tensor_count, 0);
+    assert_eq!(bf16.unsupported_tensor_count, 0);
+
+    model.tensors[0].ggml_type = 12;
+    let q4_k = GgufConversionPlan::from_model(&model).expect("q4_k plan");
+    assert_eq!(q4_k.direct_tensor_count, 0);
+    assert_eq!(q4_k.transcode_tensor_count, 0);
+    assert_eq!(q4_k.unsupported_tensor_count, 1);
+    assert!(q4_k
+        .blockers
+        .iter()
+        .any(|item| item.contains("unsupported GGML")));
+}
+
+#[test]
+fn conversion_plan_keeps_real_tokenizer_semantics_as_activation_blocker() {
+    let model = GgufModel::parse(&fixture()).expect("parse");
+    let plan = GgufConversionPlan::from_model(&model).expect("plan");
+    assert!(!plan.activation_ready());
+    assert!(plan
+        .blockers
+        .iter()
+        .any(|item| { item.contains("source-equivalent tokenization") }));
+}
