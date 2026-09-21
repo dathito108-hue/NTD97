@@ -270,6 +270,10 @@ pub enum RemoteMessage {
     Request(RemoteRequest),
     Result(RemoteResult),
     ArtifactChunk(ArtifactChunk),
+    ArtifactPull {
+        transfer_id: u64,
+        offset: u64,
+    },
 }
 
 pub fn encode_message(message: &RemoteMessage) -> Result<Vec<u8>, PcFabricError> {
@@ -304,6 +308,18 @@ pub fn encode_message(message: &RemoteMessage) -> Result<Vec<u8>, PcFabricError>
             push_u64(&mut payload, chunk.offset);
             push_bytes(&mut payload, &chunk.data)?;
             (4u8, payload)
+        }
+        RemoteMessage::ArtifactPull {
+            transfer_id,
+            offset,
+        } => {
+            if *transfer_id == 0 {
+                return Err(PcFabricError::InvalidArtifact);
+            }
+            let mut payload = Vec::new();
+            push_u64(&mut payload, *transfer_id);
+            push_u64(&mut payload, *offset);
+            (5u8, payload)
         }
     };
 
@@ -364,6 +380,10 @@ pub fn decode_message(bytes: &[u8]) -> Result<RemoteMessage, PcFabricError> {
             offset: cursor.u64()?,
             data: cursor.bytes()?.to_vec(),
         }),
+        5 => RemoteMessage::ArtifactPull {
+            transfer_id: cursor.u64()?,
+            offset: cursor.u64()?,
+        },
         _ => return Err(PcFabricError::InvalidMessage),
     };
     if !cursor.is_finished() {
