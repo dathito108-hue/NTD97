@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 use ntd_core::{Intent, ReasoningBudget, TaskGraph};
 
 use crate::{
-    decode_cognitive_checkpoint, encode_cognitive_checkpoint, CheckpointError,
-    AssistantActionPlan, CognitiveCycleReport, CognitiveError, CognitiveIdentity, CognitiveRuntime,
-    CognitiveSignals, ConversationRole, ConversationTurn, MemoryError, MemoryKind, TaskStatus,
+    decode_cognitive_checkpoint, encode_cognitive_checkpoint, AssistantActionPlan, CheckpointError,
+    CognitiveCycleReport, CognitiveError, CognitiveIdentity, CognitiveRuntime, CognitiveSignals,
+    ConversationRole, ConversationTurn, MemoryError, MemoryKind, TaskStatus,
 };
 
 pub const NCS97_MAGIC: [u8; 6] = *b"NCS97\0";
@@ -273,10 +273,7 @@ impl SovereignConversationState {
 
         let mut seen = BTreeSet::new();
         for node in &graph.actions {
-            if node.id == 0
-                || !seen.insert(node.id)
-                || node.capability.0.trim().is_empty()
-            {
+            if node.id == 0 || !seen.insert(node.id) || node.capability.0.trim().is_empty() {
                 return Err(ConversationStateError::InvalidTaskGraph);
             }
         }
@@ -1058,16 +1055,13 @@ mod tests {
             )]),
             canonical_text: "NTD97_ACTIONS_V1\n1|device.observe|battery\nEND".into(),
         };
-        state.install_action_plan(task, &plan).expect("install plan");
+        state
+            .install_action_plan(task, &plan)
+            .expect("install plan");
 
         let encoded = encode_conversation_checkpoint(&state).expect("encode");
         let restored = decode_conversation_checkpoint(&encoded).expect("decode");
-        let restored_task = restored
-            .cognition()
-            .state()
-            .tasks
-            .get(&task)
-            .expect("task");
+        let restored_task = restored.cognition().state().tasks.get(&task).expect("task");
 
         assert_eq!(restored_task.graph.actions.len(), 1);
         assert_eq!(restored.action_count_for_task(task), Some(1));
