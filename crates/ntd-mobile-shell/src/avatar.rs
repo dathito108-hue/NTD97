@@ -272,8 +272,6 @@ fn derive_pose(
 }
 
 fn render_profile(resources: ResourceSnapshot) -> AvatarRenderProfile {
-    let resources = resources.normalized();
-
     if resources.thermal == ThermalState::Critical || resources.battery_percent <= 10 {
         AvatarRenderProfile {
             target_fps: 5,
