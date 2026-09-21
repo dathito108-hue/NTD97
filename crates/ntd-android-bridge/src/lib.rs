@@ -68,10 +68,7 @@ struct NativeModelReasoningProbe<'a> {
 }
 
 impl<'a> NativeModelReasoningProbe<'a> {
-    fn new(
-        model: &'a NativeChatModel,
-        prompt_tokens: Vec<u32>,
-    ) -> Result<Self, String> {
+    fn new(model: &'a NativeChatModel, prompt_tokens: Vec<u32>) -> Result<Self, String> {
         let generator = GraphGenerator::new(
             model.activation.graph.clone(),
             CpuReferenceProvider,
@@ -94,10 +91,7 @@ impl<'a> NativeModelReasoningProbe<'a> {
 }
 
 impl NativeReasoningProbe for NativeModelReasoningProbe<'_> {
-    fn probe(
-        &mut self,
-        context: CognitiveContext<'_>,
-    ) -> Result<CognitiveObservation, String> {
+    fn probe(&mut self, context: CognitiveContext<'_>) -> Result<CognitiveObservation, String> {
         let distribution = self
             .generator
             .next_distribution_with_resolver(
@@ -742,13 +736,9 @@ fn submit_chat_reserved(
         .map_err(|error| format!("record sovereign reasoning profile: {error:?}"))?;
 
     let mut probe = NativeModelReasoningProbe::new(model, compiled.token_ids.clone())?;
-    let report = run_budgeted_reasoning_cycle(
-        conversation.cognition_mut(),
-        task_id,
-        signals,
-        &mut probe,
-    )
-    .map_err(|error| format!("run budgeted native reasoning cycle: {error:?}"))?;
+    let report =
+        run_budgeted_reasoning_cycle(conversation.cognition_mut(), task_id, signals, &mut probe)
+            .map_err(|error| format!("run budgeted native reasoning cycle: {error:?}"))?;
     if report.budget != budget || report.status != TaskStatus::Running {
         return Err(format!(
             "native reasoning cycle did not remain runnable: budget={:?} status={:?}",
@@ -859,7 +849,6 @@ fn chat_reasoning_iterations(request_id: u64) -> i32 {
         .and_then(|value| i32::try_from(value).ok())
         .unwrap_or(0)
 }
-
 
 fn cancel_chat(request_id: u64) -> bool {
     let (task_id, cancel) = {
@@ -1257,7 +1246,6 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatReaso
     };
     chat_reasoning_iterations(request_id)
 }
-
 
 #[allow(unsafe_code)]
 #[no_mangle]
