@@ -280,15 +280,8 @@ impl ActionFabric {
             return Err(ActionFabricError::InvalidState);
         }
 
-        let plan_id = ActionPlanId(self.state.next_plan_id);
-        self.state.next_plan_id = self
-            .state
-            .next_plan_id
-            .checked_add(1)
-            .ok_or(ActionFabricError::Overflow)?;
-
         let mut seen_nodes = BTreeSet::new();
-        let mut actions = Vec::with_capacity(graph.actions.len());
+        let mut validated = Vec::with_capacity(graph.actions.len());
         for node in &graph.actions {
             if !seen_nodes.insert(node.id) {
                 return Err(ActionFabricError::InvalidState);
@@ -310,21 +303,48 @@ impl ActionFabric {
                 return Err(ActionFabricError::VerificationContractMismatch(node.id));
             }
 
-            let action_id = ActionId(self.state.next_action_id);
-            self.state.next_action_id = self
-                .state
-                .next_action_id
-                .checked_add(1)
-                .ok_or(ActionFabricError::Overflow)?;
+            validated.push((
+                node.clone(),
+                action,
+                descriptor.version,
+                node.verification_required || descriptor.verification_required,
+            ));
+        }
 
+        if let Some((&unexpected, _)) = payloads.iter().next() {
+            return Err(ActionFabricError::UnexpectedActionPayload(unexpected));
+        }
+
+        let plan_id = ActionPlanId(self.state.next_plan_id);
+        let next_plan_id = self
+            .state
+            .next_plan_id
+            .checked_add(1)
+            .ok_or(ActionFabricError::Overflow)?;
+        let action_count =
+            u64::try_from(validated.len()).map_err(|_| ActionFabricError::Overflow)?;
+        let first_action_id = self.state.next_action_id;
+        let next_action_id = first_action_id
+            .checked_add(action_count)
+            .ok_or(ActionFabricError::Overflow)?;
+
+        let mut actions = Vec::with_capacity(validated.len());
+        for (offset, (node, action, capability_version, verification_required)) in
+            validated.into_iter().enumerate()
+        {
+            let offset = u64::try_from(offset).map_err(|_| ActionFabricError::Overflow)?;
+            let action_id = ActionId(
+                first_action_id
+                    .checked_add(offset)
+                    .ok_or(ActionFabricError::Overflow)?,
+            );
             actions.push(PlannedAction {
                 id: action_id,
                 node_id: node.id,
-                capability: node.capability.clone(),
-                capability_version: descriptor.version,
+                capability: node.capability,
+                capability_version,
                 side_effect: node.side_effect,
-                verification_required: node.verification_required
-                    || descriptor.verification_required,
+                verification_required,
                 action,
                 status: ActionStatus::Prepared,
                 attempts: 0,
@@ -335,10 +355,8 @@ impl ActionFabric {
             });
         }
 
-        if let Some((&unexpected, _)) = payloads.iter().next() {
-            return Err(ActionFabricError::UnexpectedActionPayload(unexpected));
-        }
-
+        self.state.next_plan_id = next_plan_id;
+        self.state.next_action_id = next_action_id;
         self.state.plans.insert(
             plan_id.0,
             ActionPlanState {
