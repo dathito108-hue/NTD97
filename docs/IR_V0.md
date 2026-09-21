@@ -1,6 +1,6 @@
 # NTD97 IR v0 Contract
 
-Status: IR version 0.1 contract.
+Status: IR version 0.2 contract.
 
 NTD97 IR is the native semantic boundary between assimilated intelligence and the sovereign execution runtime.
 
@@ -10,7 +10,7 @@ Current contract:
 
 ```text
 major = 0
-minor = 1
+minor = 2
 ```
 
 Compatibility rule:
@@ -19,36 +19,17 @@ Compatibility rule:
 - a reader may accept an equal or older minor version;
 - an unknown major version is rejected before execution.
 
-The 0.x family remains experimental, but compatibility is still checked explicitly.
+IR 0.2 is an additive extension of 0.1. It adds the native `CausalAttention` tensor semantic; existing 0.1 graphs remain readable.
 
 ## 2. Graph model
 
-A graph contains:
-
-- version;
-- declared graph inputs;
-- ordered nodes;
-- declared graph outputs.
-
-Each node contains:
-
-- stable `NodeId`;
-- operation kind;
-- input `ValueId` references;
-- newly defined output values and their types.
-
-Phase 003A uses a forward, topologically ordered graph contract. A node may reference graph inputs or values defined by earlier nodes.
+A graph contains a version, declared inputs, topologically ordered nodes and declared outputs. Nodes use stable `NodeId` and `ValueId` identities. A node may reference graph inputs or values defined by earlier nodes.
 
 ## 3. Value types
 
-IR v0 defines:
+IR v0 defines scalar values, tensors with dtype + rank, bytes and opaque handles.
 
-- scalar values;
-- tensor values with dtype + rank;
-- bytes;
-- opaque handles.
-
-Initial dtypes:
+Current dtypes:
 
 - F32;
 - F16;
@@ -59,13 +40,11 @@ Initial dtypes:
 - I64;
 - Bool.
 
-Shape dimensions and tensor layouts are deliberately deferred to the binary/tensor contract in the following phases.
+Concrete tensor dimensions remain runtime/capsule data rather than source-format ABI.
 
-## 4. Operation families
+## 4. Tensor semantics
 
-### Tensor
-
-Initial semantic identifiers:
+Current tensor operation identities:
 
 - Add;
 - Mul;
@@ -74,66 +53,59 @@ Initial semantic identifiers:
 - RmsNorm;
 - Softmax;
 - Gather;
-- RotaryPosition.
+- RotaryPosition;
+- CausalAttention.
 
 These are semantic operation identities, not optimized kernels.
 
-### State
+Reference generative semantics in IR 0.2:
+
+- `Gather(table, indices)` selects rows from a rank-2 table using a rank-1 integer-token sequence and produces `[sequence, width]`.
+- `RotaryPosition(values, positions)` applies canonical rotary pair rotation to rank-3 `[sequence, heads, width]` values with an explicit rank-1 position sequence.
+- `CausalAttention(query, key, value)` consumes equal rank-3 `[sequence, heads, width]` tensors, applies scaled dot-product attention with a causal prefix mask, and returns the same shape.
+
+Hardware providers may optimize these operations, but their observable result must preserve the same NTD97 semantics.
+
+## 5. State, memory, control and tool families
+
+State:
 
 - Read;
 - Write;
 - Checkpoint.
 
-### Memory
+Memory:
 
 - Retrieve;
 - Store;
 - Forget.
 
-### Control
+Control:
 
 - Select;
 - Merge;
 - Barrier.
 
-### Tool
+Tool:
 
 - Invoke a named capability;
 - Observe;
 - Verify.
 
-Tool operations describe typed execution intent. They do not bypass capability authorization or verification.
+Tool operations describe typed intent and do not bypass capability authorization or verification.
 
-## 5. Structural validation
+## 6. Structural validation
 
-The current validator rejects:
+The validator rejects unsupported IR versions, duplicate node IDs, duplicate value definitions, inputs that are not yet defined and graph outputs that do not exist.
 
-- unsupported IR version;
-- duplicate node IDs;
-- duplicate value definitions;
-- a node input that is not yet defined;
-- a declared graph output that does not exist.
+Provider-specific shape/arity validation is performed again at execution time. Source runtimes cannot supply hidden semantics.
 
-Type inference, shape inference, operator-specific arity rules and side-effect validation are planned extensions. They are not silently assumed in v0.1.
+## 7. Design constraint
 
-## 6. Design constraint
+IR describes what NTD97 executes, not how a source ecosystem encoded it. GGUF, SafeTensors, ONNX, TFLite or another importer must normalize supported content into these semantics or reject it. They never become permanent execution backends.
 
-IR operations describe **what NTD97 means to execute**, not how one source ecosystem encoded the computation.
+## 8. Runtime and serialization binding
 
-A GGUF, SafeTensors, ONNX or other importer must normalize into these semantics or reject unsupported content.
+The runtime rejects incompatible IR before execution. CPU/GPU/NPU providers implement the same semantic graph contract.
 
-This rule is what prevents source formats from becoming permanent architectural backends.
-
-## 7. Runtime contract
-
-The runtime must reject incompatible IR before any operation executes.
-
-Future hardware providers implement IR semantics through native CPU/GPU/NPU kernels while preserving the same observable graph behavior.
-
-## 8. Binary serialization binding
-
-Phase 003C binds this semantic IR to the deterministic `NIR97\0` Graph-section encoding documented in `NCC97_IR_SERIALIZATION_V0.md`.
-
-Serialization is subordinate to IR semantics: the wire format preserves the graph contract and decoded graphs must pass the same structural validator before use.
-
-Tensor execution kernels and source-model importers remain outside the IR contract.
+NIR97 serialization remains deterministic and subordinate to IR semantics. IR 0.2 assigns the additive tensor opcode for `CausalAttention` while preserving every 0.1 opcode.
