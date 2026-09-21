@@ -705,7 +705,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         return Err("max_new_tokens must be greater than zero".into());
     }
 
-    let (model, history, prior_failure) = {
+    let (model, history, prior_failure, resources) = {
         let mut guard = lock_state();
         if guard.chat_submit_in_progress
             || guard
@@ -724,6 +724,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
             model,
             guard.conversation.turns().to_vec(),
             guard.conversation.prior_conversation_failure(),
+            guard.resources,
         )
     };
 
@@ -731,6 +732,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         &model,
         &history,
         prior_failure,
+        resources,
         user_message,
         max_new_tokens,
     );
@@ -739,10 +741,160 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
     result
 }
 
+fn action_planning_prompt(user_message: &str) -> String {
+    format!(
+        "Choose local action. Reply exactly DIRECT or NTD97_ACTIONS_V1\\n1|device.observe|surface\\nEND. User: {user_message}\\nPlan:"
+    )
+}
+
+fn run_native_action_planner(
+    model: &NativeChatModel,
+    user_message: &str,
+) -> Result<NativeActionPlanningOutcome, String> {
+    let prompt = action_planning_prompt(user_message);
+    let prompt_tokens = model
+        .tokenizer
+        .encode(&prompt, true)
+        .map_err(|error| format!("encode native action planner prompt: {error:?}"))?;
+    if prompt_tokens.is_empty() || prompt_tokens.len() >= model.context_limit {
+        return Ok(NativeActionPlanningOutcome::Invalid);
+    }
+
+    let available = model.context_limit - prompt_tokens.len();
+    let max_new_tokens = ACTION_PLANNER_MAX_NEW_TOKENS.min(available);
+    if max_new_tokens == 0 {
+        return Ok(NativeActionPlanningOutcome::Invalid);
+    }
+
+    let generator = GraphGenerator::new(
+        model.activation.graph.clone(),
+        CpuReferenceProvider,
+        BTreeMap::new(),
+        model.activation.manifest.token_input,
+        usize::try_from(model.activation.manifest.distribution_output)
+            .map_err(|_| "distribution output does not fit usize".to_owned())?,
+        usize::try_from(model.activation.manifest.vocabulary_size)
+            .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
+    )
+    .map_err(|error| format!("build native action planner generator: {error:?}"))?;
+    let generated = generator
+        .generate_tokens_with_resolver(
+            &model.resolver,
+            &prompt_tokens,
+            GenerationConfig {
+                max_new_tokens,
+                context_limit: model.context_limit,
+                eos_token: model.tokenizer.eos_token(),
+                distribution: DistributionKind::Logits,
+                sampling: SamplingMode::Greedy,
+            },
+        )
+        .map_err(|error| format!("native action planner generation: {error:?}"))?;
+    let decoded = model
+        .tokenizer
+        .decode_after(
+            prompt_tokens.last().copied(),
+            &generated.generated_tokens,
+            true,
+        )
+        .map_err(|error| format!("decode native action planner output: {error:?}"))?;
+
+    Ok(match parse_native_action_plan(&decoded) {
+        Ok(AssistantPlanDecision::Direct) => NativeActionPlanningOutcome::Direct,
+        Ok(AssistantPlanDecision::Actions(plan)) => {
+            NativeActionPlanningOutcome::Actions(plan)
+        }
+        Err(_) => NativeActionPlanningOutcome::Invalid,
+    })
+}
+
+fn execute_android_verified_actions(
+    conversation: &mut SovereignConversationState,
+    model: &NativeChatModel,
+    task_id: u64,
+    user_message: &str,
+    prompt_limit: usize,
+    resources: ResourceSnapshot,
+    action_plan: &AssistantActionPlan,
+) -> Result<(), String> {
+    if action_plan
+        .graph
+        .actions
+        .iter()
+        .any(|node| node.capability.0 != "device.observe")
+    {
+        conversation
+            .record_action_planner_status(task_id, "unsupported")
+            .map_err(|error| format!("record unsupported action plan: {error:?}"))?;
+        return Err("model requested a capability without an Android chat adapter".into());
+    }
+
+    conversation
+        .install_action_plan(task_id, action_plan)
+        .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
+
+    let mut registry = CapabilityRegistry::new();
+    registry
+        .register(
+            CapabilityDescriptor::new(
+                CapabilityId("device.observe".into()),
+                1,
+                CapabilityDomain::Device,
+                SideEffectClass::ReadOnly,
+            )
+            .map_err(|error| format!("build device.observe descriptor: {error:?}"))?,
+        )
+        .map_err(|error| format!("register device.observe capability: {error:?}"))?;
+    let mut fabric = ActionFabric::new(registry);
+    fabric
+        .register_adapter(
+            CapabilityId("device.observe".into()),
+            AndroidResourceAdapter { snapshot: resources },
+        )
+        .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+
+    let task = conversation
+        .cognition()
+        .state()
+        .tasks
+        .get(&task_id)
+        .cloned()
+        .ok_or_else(|| "model-grounded cognitive task disappeared".to_owned())?;
+    let run = execute_verified_assistant_plan(
+        &mut fabric,
+        &task,
+        action_plan,
+        &AuthorityGrant::new(),
+        &mut AndroidResourceVerifier,
+        user_message,
+    )
+    .map_err(|error| format!("execute verified Android action plan: {error:?}"))?;
+
+    let synthesis_tokens = model
+        .tokenizer
+        .encode(&run.synthesis_prompt, true)
+        .map_err(|error| format!("encode verified synthesis prompt: {error:?}"))?;
+    if synthesis_tokens.is_empty() || synthesis_tokens.len() > prompt_limit {
+        return Err("verified synthesis prompt exceeds native context budget".into());
+    }
+
+    conversation
+        .replace_active_prompt_tokens(task_id, synthesis_tokens)
+        .map_err(|error| format!("install verified synthesis prompt: {error:?}"))?;
+    conversation
+        .record_verified_action_count(task_id, run.evidence.len())
+        .map_err(|error| format!("record verified action count: {error:?}"))?;
+    conversation
+        .record_action_planner_status(task_id, "actions")
+        .map_err(|error| format!("record action planner status: {error:?}"))?;
+    Ok(())
+}
+
 fn submit_chat_reserved(
     model: &Arc<NativeChatModel>,
     history: &[ntd_runtime::ConversationTurn],
     prior_failure: bool,
+    resources: ResourceSnapshot,
     user_message: &str,
     max_new_tokens: usize,
 ) -> Result<u64, String> {
@@ -832,6 +984,36 @@ fn submit_chat_reserved(
     conversation
         .record_reasoning_cycle_report(task_id, &report)
         .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
+
+    match run_native_action_planner(model, user_message)? {
+        NativeActionPlanningOutcome::Direct => {
+            conversation
+                .record_action_planner_status(task_id, "direct")
+                .map_err(|error| format!("record direct planner status: {error:?}"))?;
+            conversation
+                .record_verified_action_count(task_id, 0)
+                .map_err(|error| format!("record direct verified action count: {error:?}"))?;
+        }
+        NativeActionPlanningOutcome::Invalid => {
+            conversation
+                .record_action_planner_status(task_id, "invalid")
+                .map_err(|error| format!("record invalid planner status: {error:?}"))?;
+            conversation
+                .record_verified_action_count(task_id, 0)
+                .map_err(|error| format!("record invalid verified action count: {error:?}"))?;
+        }
+        NativeActionPlanningOutcome::Actions(action_plan) => {
+            execute_android_verified_actions(
+                &mut conversation,
+                model,
+                task_id,
+                user_message,
+                prompt_limit,
+                resources,
+                &action_plan,
+            )?;
+        }
+    }
 
     let mut guard = lock_state();
     let loaded_model = guard
