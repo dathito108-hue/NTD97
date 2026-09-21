@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![allow(non_snake_case)]
 
 use std::{
@@ -173,6 +173,7 @@ fn java_bytes(env: &JNIEnv<'_>, bytes: &[u8]) -> jbyteArray {
         .unwrap_or_else(|_| null_mut())
 }
 
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeRestoreAndVerify(
     mut env: JNIEnv<'_>,
@@ -241,6 +242,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeRestoreAn
     java_bytes(&env, &encoded)
 }
 
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeCheckpoint(
     env: JNIEnv<'_>,
@@ -264,6 +266,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeCheckpoin
     }
 }
 
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeResolveApproval(
     _env: JNIEnv<'_>,
@@ -295,6 +298,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeResolveAp
     1
 }
 
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeAvatarState(
     env: JNIEnv<'_>,
@@ -310,6 +314,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeAvatarSta
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeUpdateResources(
     _env: JNIEnv<'_>,
@@ -338,6 +343,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeUpdateRes
     };
 }
 
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeAcceptMicrophonePcm(
     env: JNIEnv<'_>,
@@ -362,6 +368,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeAcceptMic
     lock_state().input_peak_milli = peak_milli;
 }
 
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativePullSpeakerPcm(
     env: JNIEnv<'_>,
