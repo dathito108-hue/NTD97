@@ -316,8 +316,8 @@ pub fn build_streamed_native_package(
         .write()
         .map_err(|error| AssimilationError::Capsule(format!("{error:?}")))?;
     let package = NativePackage {
-        asset_id,
-        spec.version,
+        asset_id: spec.asset_id,
+        version: spec.version,
         kind: AssetKind::Intelligence,
         capsule_hash: sha256(&native_capsule),
         native_capsule,
