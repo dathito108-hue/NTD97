@@ -59,8 +59,8 @@ impl FileTensorShardStore {
         hash: &Digest,
         logical_len: u64,
     ) -> Result<Vec<u8>, GgufError> {
-        let bytes = fs::read(self.shard_path(hash))
-            .map_err(|error| GgufError::Io(error.to_string()))?;
+        let bytes =
+            fs::read(self.shard_path(hash)).map_err(|error| GgufError::Io(error.to_string()))?;
         let actual_len = u64::try_from(bytes.len()).map_err(|_| GgufError::LimitExceeded)?;
         if actual_len != logical_len || sha256(&bytes) != *hash {
             return Err(GgufError::InvalidTensor);
