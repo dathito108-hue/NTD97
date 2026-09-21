@@ -986,6 +986,44 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatStatu
     chat_status(request_id)
 }
 
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatCheckpoint(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jbyteArray {
+    match checkpoint_chat() {
+        Ok(bytes) => java_bytes(&env, &bytes),
+        Err(_) => java_bytes(&env, &[]),
+    }
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeRestoreChatCheckpoint(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    checkpoint: JByteArray<'_>,
+) -> jlong {
+    let bytes = match env.convert_byte_array(&checkpoint) {
+        Ok(bytes) => bytes,
+        Err(_) => return -1,
+    };
+    restore_chat_checkpoint(&bytes)
+        .ok()
+        .and_then(|request_id| i64::try_from(request_id).ok())
+        .unwrap_or(-1)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatTranscript(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jbyteArray {
+    java_bytes(&env, chat_transcript().as_bytes())
+}
+
 fn real_model_probe(
     capsule_path: &str,
     shard_root: &str,
