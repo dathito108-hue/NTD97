@@ -294,7 +294,10 @@ fn softmax(inputs: &[&Tensor]) -> Result<Tensor, TensorError> {
     let mut data = Vec::with_capacity(input.data.len());
     for row in input.data.chunks_exact(width) {
         let max = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        let exp = row.iter().map(|value| (*value - max).exp()).collect::<Vec<_>>();
+        let exp = row
+            .iter()
+            .map(|value| (*value - max).exp())
+            .collect::<Vec<_>>();
         let sum = exp.iter().sum::<f32>();
         data.extend(exp.into_iter().map(|value| value / sum));
     }
@@ -314,7 +317,9 @@ fn require_arity(inputs: &[&Tensor], expected: usize) -> Result<(), TensorError>
 
 fn element_count_usize(shape: &[usize]) -> Result<usize, TensorError> {
     shape.iter().try_fold(1usize, |count, dimension| {
-        count.checked_mul(*dimension).ok_or(TensorError::InvalidShape)
+        count
+            .checked_mul(*dimension)
+            .ok_or(TensorError::InvalidShape)
     })
 }
 
