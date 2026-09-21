@@ -10,6 +10,7 @@ members = [
     "crates/ntd-pc-fabric",
     "crates/ntd-assimilation",
     "crates/ntd-portability",
+    "crates/ntd-validation",
 ]
 
 [workspace.package]
