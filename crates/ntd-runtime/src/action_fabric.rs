@@ -6,7 +6,7 @@ use ntd_core::{ActionNode, CapabilityId, SideEffectClass, TaskGraph};
 
 use crate::{
     ActionOutput, AuthorityGrant, CapabilityDescriptor, CapabilityError, CapabilityRegistry,
-    TypedAction,
+    CognitiveTask, TypedAction,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -268,6 +268,14 @@ impl ActionFabric {
         }
         self.adapters.insert(capability.0, Box::new(adapter));
         Ok(())
+    }
+
+    pub fn prepare_cognitive_task(
+        &mut self,
+        task: &CognitiveTask,
+        payloads: BTreeMap<u32, TypedAction>,
+    ) -> Result<ActionPlanId, ActionFabricError> {
+        self.prepare_plan(task.id, &task.graph, payloads)
     }
 
     pub fn prepare_plan(
