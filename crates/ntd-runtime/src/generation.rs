@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use ntd_ir::{Graph, ValueId};
 
 use crate::{
-    ExecutionError, ExecutionProvider, GraphExecutor, Tensor, TensorError, TextTokenizer,
-    TokenizerError,
+    ExecutionError, ExecutionProvider, GraphExecutor, Tensor, TensorError, TensorResolver,
+    TextTokenizer, TokenizerError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,6 +181,100 @@ where
             prompt_tokens: prompt_tokens.to_vec(),
             generated_tokens,
             all_tokens,
+        })
+    }
+
+    pub fn generate_tokens_with_resolver<R: TensorResolver>(
+        &self,
+        resolver: &R,
+        prompt_tokens: &[u32],
+        config: GenerationConfig,
+    ) -> Result<GenerationResult, GenerationError> {
+        if prompt_tokens.is_empty() {
+            return Err(GenerationError::EmptyPrompt);
+        }
+        if config.context_limit == 0 {
+            return Err(GenerationError::InvalidContextLimit);
+        }
+
+        for token in prompt_tokens {
+            let id =
+                usize::try_from(*token).map_err(|_| GenerationError::TokenIdOutOfRange(*token))?;
+            if id >= self.vocab_size {
+                return Err(GenerationError::TokenIdOutOfRange(*token));
+            }
+        }
+
+        let mut all_tokens = prompt_tokens.to_vec();
+        let mut generated_tokens = Vec::with_capacity(config.max_new_tokens);
+
+        for step in 0..config.max_new_tokens {
+            let start = all_tokens.len().saturating_sub(config.context_limit);
+            let window = &all_tokens[start..];
+            let token_tensor = Tensor::new(
+                vec![window.len()],
+                window.iter().map(|token| *token as f32).collect(),
+            )
+            .map_err(GenerationError::Tensor)?;
+
+            let mut inputs = self.static_inputs.clone();
+            inputs.insert(self.token_input, token_tensor);
+
+            let outputs = self
+                .executor
+                .execute_with_resolver(&self.graph, inputs, resolver)
+                .map_err(GenerationError::Execution)?;
+            let output = outputs.get(self.distribution_output).ok_or(
+                GenerationError::MissingDistributionOutput(self.distribution_output),
+            )?;
+            let distribution = last_distribution(output, self.vocab_size)?;
+            let next = sample_token(distribution, config.distribution, config.sampling, step)
+                .map_err(GenerationError::Sampling)?;
+
+            let next_u32 = u32::try_from(next).map_err(|_| GenerationError::InvalidVocabulary)?;
+            generated_tokens.push(next_u32);
+            all_tokens.push(next_u32);
+
+            if config.eos_token == Some(next_u32) {
+                break;
+            }
+        }
+
+        Ok(GenerationResult {
+            prompt_tokens: prompt_tokens.to_vec(),
+            generated_tokens,
+            all_tokens,
+        })
+    }
+
+    pub fn generate_text_with_resolver<T: TextTokenizer, R: TensorResolver>(
+        &self,
+        resolver: &R,
+        tokenizer: &T,
+        prompt: &str,
+        add_special_tokens: bool,
+        mut config: GenerationConfig,
+    ) -> Result<GeneratedText, GenerationError> {
+        if tokenizer.vocab_size() != self.vocab_size {
+            return Err(GenerationError::InvalidVocabulary);
+        }
+
+        let prompt_tokens = tokenizer
+            .encode_text(prompt, add_special_tokens)
+            .map_err(GenerationError::Tokenizer)?;
+        if config.eos_token.is_none() {
+            config.eos_token = tokenizer.eos_token();
+        }
+
+        let generated = self.generate_tokens_with_resolver(resolver, &prompt_tokens, config)?;
+        let text = tokenizer
+            .decode_text(&generated.generated_tokens, true)
+            .map_err(GenerationError::Tokenizer)?;
+
+        Ok(GeneratedText {
+            prompt_tokens: generated.prompt_tokens,
+            generated_tokens: generated.generated_tokens,
+            text,
         })
     }
 
