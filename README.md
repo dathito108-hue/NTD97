@@ -64,7 +64,7 @@ Import adapters may accept formats such as GGUF, SafeTensors, ONNX and TFLite, p
 
 ## Repository status
 
-**Phase 003B — NCC97 Binary Capsule**
+**Phase 003C — NCC97 Native IR Serialization**
 
 This repository starts from zero. No AMPER source tree or architecture is inherited.
 
@@ -74,5 +74,6 @@ See:
 - `docs/ARCHITECTURE_FREEZE.md`
 - `docs/IR_V0.md`
 - `docs/NCC97_BINARY_V0.md`
+- `docs/NCC97_IR_SERIALIZATION_V0.md`
 - `docs/COGNITIVE_CAPSULE.md`\n- `docs/SOVEREIGN_MODEL.md`\n- `docs/CONTINUITY_3D.md`
 - `docs/ROADMAP.md`
