@@ -11,7 +11,7 @@ use ntd_assimilation::{
     verify_native_package_with_shards, AssimilationIdentity, FileBackedTensorResolver,
     FileTensorShardStore, ForgeSandbox, GgufByteSource, GgufError, GgufModel, GgufValueType,
     LicenseRecord, NativeAssetStore, NativeValidationSandbox, SliceGgufSource, SourcePackage,
-    GGUF_MAGIC, GGUF_VERSION,
+    StreamedPackageSpec, GGUF_MAGIC, GGUF_VERSION,
 };
 use ntd_capsule::{
     load_native_generative_program, CapsuleKind, CapsuleView, MemoryContentStore,
@@ -541,11 +541,9 @@ fn signed_thin_package_activates_and_generates_with_lazy_file_backed_tensors() {
     let identity = AssimilationIdentity::from_seed([33; 32]);
 
     let package = build_streamed_native_package(
-        "model.ntd97-thin",
-        1,
+        StreamedPackageSpec::new("model.ntd97-thin", 1, "ntd97.gguf.v3").expect("package spec"),
         &streamed,
         &source.provenance,
-        "ntd97.gguf.v3",
         &report,
         &shard_store,
         &identity,
