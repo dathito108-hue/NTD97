@@ -161,7 +161,7 @@ fn conversion_plan_distinguishes_supported_transcode_from_unsupported_types() {
             .any(|item| item.contains("unsupported GGML")));
     }
 
-    model.tensors[0].ggml_type = 15;
+    model.tensors[0].ggml_type = 10;
     let q2_k = GgufConversionPlan::from_model(&model).expect("unsupported plan");
     assert_eq!(q2_k.direct_tensor_count, 0);
     assert_eq!(q2_k.transcode_tensor_count, 0);
