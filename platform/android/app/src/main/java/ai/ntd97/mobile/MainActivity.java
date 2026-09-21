@@ -19,10 +19,13 @@ import android.widget.TextView;
 public final class MainActivity extends Activity {
     public static final String EXTRA_OPEN_APPROVAL = "open_approval";
     private static final int NOTIFICATION_PERMISSION_REQUEST = 97;
+    private static final int MICROPHONE_PERMISSION_REQUEST = 98;
 
     private NtdAvatarGLSurfaceView avatarView;
     private TextView statusView;
     private LinearLayout approvalPanel;
+    private final NtdAudioController audioController = new NtdAudioController();
+    private boolean voiceActive;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -53,6 +56,11 @@ public final class MainActivity extends Activity {
         overlay.setText("Floating assistant");
         overlay.setOnClickListener(view -> openOverlay());
         controls.addView(overlay);
+
+        Button voice = new Button(this);
+        voice.setText("Voice");
+        voice.setOnClickListener(view -> toggleVoice());
+        controls.addView(voice);
 
         approvalPanel = new LinearLayout(this);
         approvalPanel.setOrientation(LinearLayout.HORIZONTAL);
@@ -91,6 +99,12 @@ public final class MainActivity extends Activity {
         super.onPause();
     }
 
+    @Override
+    protected void onDestroy() {
+        audioController.close();
+        super.onDestroy();
+    }
+
     private void restoreFromUi() {
         NtdRuntimeHost.ResumeResult result =
                 NtdSessionController.restore(this, "user_interaction");
@@ -126,6 +140,29 @@ public final class MainActivity extends Activity {
         } else {
             statusView.setText("Approval state changed; reopen task");
         }
+    }
+
+    private void toggleVoice() {
+        if (voiceActive) {
+            audioController.stopCapture();
+            audioController.stopPlayback();
+            voiceActive = false;
+            statusView.setText("Voice stopped");
+            return;
+        }
+
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                    new String[]{Manifest.permission.RECORD_AUDIO},
+                    MICROPHONE_PERMISSION_REQUEST);
+            return;
+        }
+
+        boolean capture = audioController.startCapture(this);
+        boolean playback = audioController.startPlayback();
+        voiceActive = capture || playback;
+        statusView.setText(voiceActive ? "Local voice active" : "Voice unavailable");
     }
 
     private void openOverlay() {
