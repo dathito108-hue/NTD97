@@ -206,6 +206,7 @@ pub enum ActionFabricError {
         reason: String,
     },
     RollbackUnavailable(ActionId),
+    DurabilityBarrier(String),
     TerminalPlan(ActionPlanStatus),
     InvalidActionStatus(u8),
     InvalidPlanStatus(u8),
@@ -387,7 +388,26 @@ impl ActionFabric {
     where
         V: ActionVerifier,
     {
-        let (cursor, action_snapshot) = {
+        self.execute_next_with_barrier(
+            plan_id,
+            authority,
+            verifier,
+            &mut |_registry, _state| Ok(()),
+        )
+    }
+
+    pub fn execute_next_with_barrier<V, B>(
+        &mut self,
+        plan_id: ActionPlanId,
+        authority: &AuthorityGrant,
+        verifier: &mut V,
+        barrier: &mut B,
+    ) -> Result<ActionStepReport, ActionFabricError>
+    where
+        V: ActionVerifier,
+        B: FnMut(&CapabilityRegistry, &ActionFabricState) -> Result<(), String>,
+    {
+        let (cursor, original_plan_status, action_snapshot) = {
             let plan = self
                 .state
                 .plans
@@ -403,7 +423,7 @@ impl ActionFabric {
             }
 
             let action = plan.actions.get(plan.cursor).cloned();
-            (plan.cursor, action)
+            (plan.cursor, plan.status, action)
         };
 
         let Some(action_snapshot) = action_snapshot else {
@@ -447,6 +467,14 @@ impl ActionFabric {
             action.attempts = action.attempts.saturating_add(1);
         }
         self.set_plan_status(plan_id, ActionPlanStatus::Ready)?;
+
+        if let Err(reason) = barrier(&self.registry, &self.state) {
+            let action = self.action_mut(plan_id, cursor)?;
+            action.status = action_snapshot.status;
+            action.attempts = action_snapshot.attempts;
+            self.set_plan_status(plan_id, original_plan_status)?;
+            return Err(ActionFabricError::DurabilityBarrier(reason));
+        }
 
         let adapter = self
             .adapters
