@@ -63,10 +63,7 @@ pub enum MediaEvent {
     VoiceInputStopped,
     TranscriptReady(String),
     SpeechStarted(String),
-    SpeechProgress {
-        amplitude_milli: u16,
-        viseme: u8,
-    },
+    SpeechProgress { amplitude_milli: u16, viseme: u8 },
     SpeechFinished,
     Failure(String),
 }
