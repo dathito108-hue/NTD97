@@ -1,0 +1,151 @@
+name: m11-android-real-native-model
+
+on:
+  push:
+    branches:
+      - m11-android-real-native-model
+    paths:
+      - ".github/workflows/m11-android-real-native-model.yml"
+      - ".github/scripts/android-real-model-probe.sh"
+      - ".github/scripts/stories260k-tokenizer-probe.c"
+      - ".github/scripts/no-third-party-ai-dependency-audit.sh"
+      - "crates/ntd-android-bridge/**"
+      - "crates/ntd-assimilation/**"
+      - "crates/ntd-capsule/**"
+      - "crates/ntd-ir/**"
+      - "crates/ntd-runtime/**"
+      - "platform/android/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m11-android-real-native-model-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-real-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+      NDK_VERSION: "27.0.12077973"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build proven native stories260K bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output stories260K.gguf \
+            "https://huggingface.co/ggml-org/tiny-llamas/resolve/main/stories260K.gguf?download=true"
+          printf '%s  %s\n' \
+            '047bf46455a544931cff6fef14d7910154c56afbc23ab1c5e56a72e69912c04b' \
+            'stories260K.gguf' | sha256sum --check --strict
+
+          curl --fail --location --retry 3 \
+            --output stories260K.bin \
+            "https://huggingface.co/karpathy/tinyllamas/resolve/main/stories260K/stories260K.bin?download=true"
+          curl --fail --location --retry 3 \
+            --output tok512.bin \
+            "https://huggingface.co/karpathy/tinyllamas/resolve/main/stories260K/tok512.bin?download=true"
+          curl --fail --location --retry 3 \
+            --output llama2c-run.c \
+            "https://raw.githubusercontent.com/karpathy/llama2.c/350e04fe35433e6d2941dce5a1f53308f87058eb/run.c"
+          printf '%s  %s\n' \
+            'b0a507e7ad0f626624f17112325e66691f9076d622e1d3274d103d00299f2696' \
+            'stories260K.bin' | sha256sum --check --strict
+          printf '%s  %s\n' \
+            '037cb335abb25d1fa9e8ecae30ed2a3a8ace9302862ebcdc05d51a6bbb10c312' \
+            'tok512.bin' | sha256sum --check --strict
+
+          cc -O3 -o llama2c-reference llama2c-run.c -lm
+          ./llama2c-reference stories260K.bin \
+            -z tok512.bin -t 0.0 -n 128 \
+            > source-output.txt 2> source-stderr.txt
+          cp .github/scripts/stories260k-tokenizer-probe.c tokenizer-probe.c
+          cc -O3 -o tokenizer-probe tokenizer-probe.c -lm
+          ./tokenizer-probe tok512.bin > source-token-ids.txt
+
+          cargo run -p ntd-assimilation --bin stories260k-evidence -- \
+            stories260K.gguf source-output.txt source-token-ids.txt native-export
+
+          test -f native-export/stories260K.ncc97
+          test "$(find native-export/shards -maxdepth 1 -type f -name '*.ntp97' | wc -l)" -eq 52
+          find native-export -maxdepth 2 -type f | sort
+          if find native-export -type f | grep -Eq '\.gguf$|\.bin$|run\.c$'; then
+            echo "source artifact leaked into native export" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK and NDK
+        shell: bash
+        run: |
+          ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "${ANDROID_SDK_ROOT}/cmdline-tools" -type f -path "*/bin/sdkmanager" | sort -V | tail -n 1)"
+          test -x "${SDKMANAGER}"
+          yes | "${SDKMANAGER}" --licenses >/dev/null || true
+          "${SDKMANAGER}" "platforms;android-35" "build-tools;35.0.0" "ndk;${NDK_VERSION}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> "${GITHUB_ENV}"
+          echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> "${GITHUB_ENV}"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "${GITHUB_ENV}"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.80.1
+          targets: x86_64-linux-android
+
+      - name: Build x86_64 native Android runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_BIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="${NDK_BIN}/x86_64-linux-android26-clang"
+          cargo build --release -p ntd-android-bridge --target x86_64-linux-android
+          mkdir -p platform/android/app/src/main/jniLibs/x86_64
+          cp target/x86_64-linux-android/release/libntd97_android.so \
+            platform/android/app/src/main/jniLibs/x86_64/
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Audit sovereignty dependency boundary
+        run: bash .github/scripts/no-third-party-ai-dependency-audit.sh
+
+      - name: Assemble debug APK
+        run: |
+          gradle -p platform/android :app:assembleDebug --stacktrace \
+            -PntdGitSha="${GITHUB_SHA}" \
+            -PntdSovereigntyAuditPassed=true
+
+      - name: Enable KVM
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Validate real native model on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_7_pro
+          cores: 2
+          ram-size: 2048M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: bash .github/scripts/android-real-model-probe.sh native-export
