@@ -76,7 +76,7 @@ pub use tokenizer::{
     TOKEN_TYPE_USER_DEFINED,
 };
 
-use ntd_core::ReasoningBudget;
+pub use ntd_core::ReasoningBudget;
 use ntd_ir::IrVersion;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
