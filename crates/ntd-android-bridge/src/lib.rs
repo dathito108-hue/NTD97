@@ -2380,13 +2380,21 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
             .map_err(|error| format!("cancel denied chat task: {error:?}"))?;
 
         let mut guard = lock_state();
-        let session = guard
+        if !guard
+            .chat_session
+            .as_ref()
+            .is_some_and(|session| session.request_id == request_id)
+        {
+            return Err("chat request changed during denial".into());
+        }
+        guard.conversation = conversation;
+        if let Some(session) = guard
             .chat_session
             .as_mut()
             .filter(|session| session.request_id == request_id)
-            .ok_or_else(|| "chat request changed during denial".to_owned())?;
-        session.status = NativeChatSessionStatus::Cancelled;
-        guard.conversation = conversation;
+        {
+            session.status = NativeChatSessionStatus::Cancelled;
+        }
         return Ok(true);
     }
 
@@ -2454,19 +2462,23 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
                 .set_chat_approval_status(task_id, "approved")
                 .map_err(|error| format!("record approved chat execution: {error:?}"))?;
             let mut guard = lock_state();
-            let session = guard
-                .chat_session
-                .as_mut()
-                .filter(|session| {
-                    session.request_id == request_id
-                        && session.status == NativeChatSessionStatus::WaitingApproval
-                })
-                .ok_or_else(|| "chat request changed during approved execution".to_owned())?;
             if guard.conversation != conversation {
                 return Err("sovereign conversation changed during approved execution".into());
             }
+            if !guard.chat_session.as_ref().is_some_and(|session| {
+                session.request_id == request_id
+                    && session.status == NativeChatSessionStatus::WaitingApproval
+            }) {
+                return Err("chat request changed during approved execution".into());
+            }
             guard.conversation = executed;
-            session.status = NativeChatSessionStatus::Running;
+            if let Some(session) = guard
+                .chat_session
+                .as_mut()
+                .filter(|session| session.request_id == request_id)
+            {
+                session.status = NativeChatSessionStatus::Running;
+            }
             Ok(true)
         }
         Err(error) => {
