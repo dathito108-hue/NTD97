@@ -5580,7 +5580,7 @@ fn production_capability_probe(
     }
 
     let search_action = TypedAction::WebSearch {
-        query: "NTD97 sovereign mobile intelligence".into(),
+        query: "android".into(),
         max_results: 5,
     };
     let mut search_descriptor = CapabilityDescriptor::new(
@@ -5620,6 +5620,24 @@ fn production_capability_probe(
         != ActionVerification::Accept
     {
         return Err("production web.search evidence verification failed".into());
+    }
+    let ActionValue::TextList(search_items) = &search_output.value else {
+        return Err("production web.search did not return normalized TextList".into());
+    };
+    if search_items.is_empty()
+        || search_items.len() > 5
+        || search_items
+            .iter()
+            .any(|item| !normalized_search_item_valid(item))
+    {
+        return Err("production web.search normalized result set is invalid".into());
+    }
+    if search_output.evidence.iter().any(|item| {
+        item.contains("?q=")
+            || item.contains("per_page=")
+            || item.contains("search/repositories")
+    }) {
+        return Err("production web.search leaked endpoint path/query into evidence".into());
     }
 
     let browser_observe_action = TypedAction::BrowserObserve {
@@ -6281,7 +6299,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\napp_accessibility_authority_block=ok\napp_accessibility_missing_target_block=ok\napp_accessibility_click=ok\napp_accessibility_set_text=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nweb_search_normalized=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\napp_accessibility_authority_block=ok\napp_accessibility_missing_target_block=ok\napp_accessibility_click=ok\napp_accessibility_set_text=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
