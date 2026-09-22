@@ -1073,11 +1073,19 @@ impl CapabilityAdapter for AndroidBrowserObserveAdapter {
         if observation.len() > MAX_PLATFORM_TEXT_BYTES {
             return Err("browser observation exceeds native evidence limit".into());
         }
+        let receipt = browser_receipt(&observation)?;
+        if !browser_receipt_matches(&receipt, "observe", target, None) {
+            return Err("browser observation receipt does not bind the requested target".into());
+        }
         Ok(AdapterResult::Completed {
             output: ActionOutput {
                 summary: "verified Android browser observation".into(),
                 value: ActionValue::Text(observation),
-                evidence: vec!["android-webview-browser".into(), "operation:observe".into()],
+                evidence: vec![
+                    "android-webview-browser".into(),
+                    "operation:observe".into(),
+                    format!("receipt:{receipt}"),
+                ],
             },
             rollback_token: None,
         })
@@ -1100,11 +1108,14 @@ impl CapabilityAdapter for AndroidBrowserInteractAdapter {
         else {
             return Err("Android browser interaction adapter received wrong action".into());
         };
-        if operation != "click" && operation != "set_value" {
+        if !matches!(
+            operation.as_str(),
+            "click" | "set_value" | "submit" | "navigate"
+        ) {
             return Err("unsupported Android browser interaction operation".into());
         }
-        if operation == "click" && value.is_some() {
-            return Err("browser click must not carry a value".into());
+        if matches!(operation.as_str(), "click" | "submit" | "navigate") && value.is_some() {
+            return Err("browser interaction operation must not carry a value".into());
         }
         if operation == "set_value" && !value.as_ref().is_some_and(|value| !value.is_empty()) {
             return Err("browser set_value requires a value".into());
@@ -1115,6 +1126,18 @@ impl CapabilityAdapter for AndroidBrowserInteractAdapter {
             return Err("browser interaction receipt exceeds native evidence limit".into());
         }
         let receipt = browser_receipt(&result)?;
+        if !browser_receipt_matches(&receipt, operation, target, value.as_deref()) {
+            return Err("browser interaction receipt does not bind the canonical action".into());
+        }
+        if operation == "set_value" {
+            let expected_hash = value
+                .as_ref()
+                .map(|value| digest_hex(&sha256(value.as_bytes())))
+                .ok_or_else(|| "browser set_value lost its value".to_owned())?;
+            if browser_platform_field(&result, "value_sha256") != Some(expected_hash.as_str()) {
+                return Err("browser set_value platform read-back hash mismatch".into());
+            }
+        }
         Ok(AdapterResult::Completed {
             output: ActionOutput {
                 summary: format!("verified Android browser {operation} interaction"),
@@ -1145,6 +1168,44 @@ fn browser_receipt(result: &str) -> Result<String, String> {
         return Err("browser interaction platform receipt is invalid".into());
     }
     Ok(receipt.to_owned())
+}
+
+fn browser_platform_field<'a>(result: &'a str, key: &str) -> Option<&'a str> {
+    let prefix = format!("{key}=");
+    result
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+}
+
+fn browser_receipt_matches(
+    receipt: &str,
+    operation: &str,
+    target: &str,
+    value: Option<&str>,
+) -> bool {
+    let mut parts = receipt.split(':');
+    let Some(platform) = parts.next() else {
+        return false;
+    };
+    let Some(receipt_operation) = parts.next() else {
+        return false;
+    };
+    let Some(sequence) = parts.next() else {
+        return false;
+    };
+    let Some(receipt_digest) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some()
+        || platform != "android-webview"
+        || receipt_operation != operation
+        || sequence.parse::<u64>().ok().is_none_or(|sequence| sequence == 0)
+        || receipt_digest.len() != 64
+    {
+        return false;
+    }
+    let canonical = format!("{operation}\n{target}\n{}", value.unwrap_or_default());
+    digest_hex(&sha256(canonical.as_bytes())) == receipt_digest
 }
 
 fn android_browser_observe(target: &str) -> Result<String, String> {
