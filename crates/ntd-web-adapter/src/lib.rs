@@ -78,7 +78,9 @@ pub struct ProductionWebAdapter {
 impl ProductionWebAdapter {
     pub fn new(config: WebAdapterConfig) -> Result<Self, WebAdapterError> {
         validate_config(&config)?;
-        validate_url(&config.search_endpoint, config.allow_private_networks)?;
+        let search_endpoint =
+            Url::parse(&config.search_endpoint).map_err(|_| WebAdapterError::InvalidUrl)?;
+        validate_url_shape(&search_endpoint)?;
 
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(config.connect_timeout)
@@ -324,16 +326,24 @@ pub fn validate_url(input: &str, allow_private_networks: bool) -> Result<(), Web
     validate_parsed_url(&parsed, allow_private_networks)
 }
 
-fn validate_parsed_url(
-    url: &Url,
-    allow_private_networks: bool,
-) -> Result<(), WebAdapterError> {
+fn validate_url_shape(url: &Url) -> Result<(), WebAdapterError> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err(WebAdapterError::UnsupportedScheme);
     }
     if !url.username().is_empty() || url.password().is_some() {
         return Err(WebAdapterError::CredentialsNotAllowed);
     }
+    if url.host().is_none() {
+        return Err(WebAdapterError::InvalidUrl);
+    }
+    Ok(())
+}
+
+fn validate_parsed_url(
+    url: &Url,
+    allow_private_networks: bool,
+) -> Result<(), WebAdapterError> {
+    validate_url_shape(url)?;
 
     let host = url.host().ok_or(WebAdapterError::InvalidUrl)?;
     if allow_private_networks {
