@@ -1199,7 +1199,10 @@ fn browser_receipt_matches(
     if parts.next().is_some()
         || platform != "android-webview"
         || receipt_operation != operation
-        || sequence.parse::<u64>().ok().is_none_or(|sequence| sequence == 0)
+        || sequence
+            .parse::<u64>()
+            .ok()
+            .map_or(true, |sequence| sequence == 0)
         || receipt_digest.len() != 64
     {
         return false;
@@ -2315,8 +2318,9 @@ impl ActionVerifier for AndroidProductionVerifier {
                 };
                 let value_hash_valid = if operation == "set_value" {
                     value.as_ref().is_some_and(|value| {
+                        let expected_hash = digest_hex(&sha256(value.as_bytes()));
                         browser_platform_field(platform, "value_sha256")
-                            == Some(digest_hex(&sha256(value.as_bytes())).as_str())
+                            == Some(expected_hash.as_str())
                     })
                 } else {
                     true
