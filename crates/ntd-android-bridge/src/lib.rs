@@ -343,6 +343,7 @@ fn decode_android_web_fetch_result(bytes: &[u8]) -> Result<AndroidWebFetchResult
     })
 }
 
+#[derive(Debug, Clone)]
 struct AndroidScopedFileAdapter {
     root: PathBuf,
 }
@@ -1371,16 +1372,17 @@ fn execute_android_verified_actions(
     resources: ResourceSnapshot,
     action_plan: &AssistantActionPlan,
 ) -> Result<(), String> {
+    let supported = ["device.observe", "web.fetch", "file.read", "file.write"];
     if action_plan
         .graph
         .actions
         .iter()
-        .any(|node| node.capability.0 != "device.observe")
+        .any(|node| !supported.contains(&node.capability.0.as_str()))
     {
         conversation
             .record_action_planner_status(task_id, "unsupported")
             .map_err(|error| format!("record unsupported action plan: {error:?}"))?;
-        return Err("model requested a capability without an Android chat adapter".into());
+        return Err("model requested a capability without a production Android adapter".into());
     }
 
     conversation
@@ -1388,26 +1390,114 @@ fn execute_android_verified_actions(
         .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
 
     let mut registry = CapabilityRegistry::new();
-    registry
-        .register(
-            CapabilityDescriptor::new(
+    let mut fabric_capabilities = std::collections::BTreeSet::new();
+    for node in &action_plan.graph.actions {
+        if !fabric_capabilities.insert(node.capability.0.clone()) {
+            continue;
+        }
+
+        let mut descriptor = match node.capability.0.as_str() {
+            "device.observe" => CapabilityDescriptor::new(
                 CapabilityId("device.observe".into()),
                 1,
                 CapabilityDomain::Device,
                 SideEffectClass::ReadOnly,
-            )
-            .map_err(|error| format!("build device.observe descriptor: {error:?}"))?,
-        )
-        .map_err(|error| format!("register device.observe capability: {error:?}"))?;
+            ),
+            "web.fetch" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("web.fetch".into()),
+                    1,
+                    CapabilityDomain::Web,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "file.read" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("file.read".into()),
+                    1,
+                    CapabilityDomain::File,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.app_private")
+                            .map_err(|error| format!("file scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "file.write" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("file.write".into()),
+                    1,
+                    CapabilityDomain::File,
+                    SideEffectClass::Reversible,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.rollback_supported = true;
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.app_private")
+                            .map_err(|error| format!("file scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            _ => unreachable!("unsupported capabilities rejected above"),
+        }
+        .map_err(|error| format!("build Android capability descriptor: {error:?}"))?;
+        descriptor.normalize()
+            .map_err(|error| format!("normalize Android capability descriptor: {error:?}"))?;
+        registry
+            .register(descriptor)
+            .map_err(|error| format!("register Android capability: {error:?}"))?;
+    }
+
     let mut fabric = ActionFabric::new(registry);
-    fabric
-        .register_adapter(
-            CapabilityId("device.observe".into()),
-            AndroidResourceAdapter {
-                snapshot: resources,
-            },
+    if fabric_capabilities.contains("device.observe") {
+        fabric
+            .register_adapter(
+                CapabilityId("device.observe".into()),
+                AndroidResourceAdapter {
+                    snapshot: resources,
+                },
+            )
+            .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("web.fetch") {
+        fabric
+            .register_adapter(CapabilityId("web.fetch".into()), AndroidWebFetchAdapter)
+            .map_err(|error| format!("register Android HTTPS adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("file.read") || fabric_capabilities.contains("file.write") {
+        let adapter = AndroidScopedFileAdapter::new(model.capability_root.clone())?;
+        if fabric_capabilities.contains("file.read") {
+            fabric
+                .register_adapter(CapabilityId("file.read".into()), adapter.clone())
+                .map_err(|error| format!("register app-private file.read adapter: {error:?}"))?;
+        }
+        if fabric_capabilities.contains("file.write") {
+            fabric
+                .register_adapter(CapabilityId("file.write".into()), adapter)
+                .map_err(|error| format!("register app-private file.write adapter: {error:?}"))?;
+        }
+    }
+
+    let authority = AuthorityGrant::new()
+        .with_scope(
+            AuthorityScope::new("network.read")
+                .map_err(|error| format!("network authority scope: {error:?}"))?,
         )
-        .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+        .with_scope(
+            AuthorityScope::new("file.app_private")
+                .map_err(|error| format!("file authority scope: {error:?}"))?,
+        );
 
     let task = conversation
         .cognition()
@@ -1420,8 +1510,8 @@ fn execute_android_verified_actions(
         &mut fabric,
         &task,
         action_plan,
-        &AuthorityGrant::new(),
-        &mut AndroidResourceVerifier,
+        &authority,
+        &mut AndroidProductionVerifier,
         user_message,
     )
     .map_err(|error| format!("execute verified Android action plan: {error:?}"))?;
