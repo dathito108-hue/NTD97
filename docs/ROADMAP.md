@@ -485,11 +485,17 @@ Current implementation:
 - accessibility interaction is restricted to the exact foreground package and a unique `view_id` selector; click requires a clickable node, set_text requires an editable node plus post-action text read-back, while missing/ambiguous selectors and package mismatch fail closed;
 - launch and accessibility authority are separated: launch requires `app.launch`, accessibility requires `app.accessibility.interact`, and both remain ExternalWrite actions gated by persisted chat approval/reconfirm semantics;
 - accessibility receipts bind exact package + operation + SHA-256 of the canonical payload without copying user-entered text into verifier evidence;
-- emulator acceptance first proves accessibility interaction fails closed while the service is disabled, then explicitly enables NTD97's service, executes a real Button click and EditText set_text through production ActionFabric, verifies native receipts and confirms the real UI effects.
+- emulator acceptance first proves accessibility interaction fails closed while the service is disabled, then explicitly enables NTD97's service, executes a real Button click and EditText set_text through production ActionFabric, verifies native receipts and confirms the real UI effects;
+- WebSearch now exposes a user-facing configuration surface for a public-HTTPS endpoint template plus provider-independent JSON field mappings (`results/title/url/snippet`) instead of embedding a provider SDK or schema;
+- configuration is persisted in Android app-private preferences, validated again on process initialization and can be cleared back to an explicitly unconfigured fail-closed state;
+- provider responses are parsed at the Android boundary, mapped into bounded canonical `title + public HTTPS URL + snippet` items, deduplicated by URL and stripped of raw provider JSON before crossing into native cognition;
+- search endpoint evidence exposes only the HTTPS source host rather than the configured path/query so endpoint tokens are not copied into ActionFabric evidence;
+- Rust decodes the normalized search protocol into `ActionValue::TextList`, binds result count and a canonical SHA-256 digest into evidence and independently rejects malformed item framing, over-limit result counts or digest mismatch;
+- emulator acceptance persists/reloads a field mapping, proves unconfigured search still fails closed, performs a real mapped JSON search, requires at least one normalized result and verifies provider endpoint path/query do not leak into evidence.
 
 Still required before M13 completion:
 
-- user-facing WebSearch endpoint configuration/discovery and provider-result normalization beyond the provider-independent runtime boundary;
+- WebSearch provider discovery/presets and credential-header handling beyond the generic endpoint + field-mapping configuration foundation;
 - broader browser session persistence/navigation/form semantics beyond the initial fail-closed observe/click/set-value foundation;
 - successful SAF read/write acceptance on representative physical phones/providers, including grant revocation/reselection and provider-specific edge cases;
 - representative-phone process-death acceptance for resumable upload and SAF provider state, including retryable network loss after the durable TAF97 checkpoint;
