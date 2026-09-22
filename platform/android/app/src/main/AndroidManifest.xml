@@ -17,6 +17,10 @@
         android:label="NTD97"
         android:supportsRtl="true">
 
+        <meta-data
+            android:name="ai.ntd97.web_search.opensearch_description"
+            android:value="https://en.wikipedia.org/w/opensearch_desc.php" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
