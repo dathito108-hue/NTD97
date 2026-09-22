@@ -1087,6 +1087,109 @@ Assistant:"
         ));
     }
 
+    struct RetryThenDeviceAdapter {
+        retry: bool,
+    }
+
+    impl crate::CapabilityAdapter for RetryThenDeviceAdapter {
+        fn execute(
+            &mut self,
+            _action_id: crate::ActionId,
+            action: &TypedAction,
+        ) -> Result<crate::AdapterResult, String> {
+            if self.retry {
+                self.retry = false;
+                return Ok(crate::AdapterResult::Retryable {
+                    reason: "checkpoint first".into(),
+                    resume_token: None,
+                });
+            }
+            match action {
+                TypedAction::DeviceObserve { surface } => Ok(crate::AdapterResult::Completed {
+                    output: ActionOutput {
+                        summary: format!("observed {surface} after resume"),
+                        value: ActionValue::Text("77".into()),
+                        evidence: vec!["verified:device-local".into()],
+                    },
+                    rollback_token: None,
+                }),
+                _ => Err("unexpected action".into()),
+            }
+        }
+    }
+
+    #[test]
+    fn persisted_plan_continues_without_creating_a_second_plan() {
+        let parsed = parse_native_action_plan("NTD97_ACTIONS_V1\n1|device.observe|battery\nEND")
+            .expect("parse");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+
+        let mut registry = crate::CapabilityRegistry::new();
+        registry
+            .register(
+                crate::CapabilityDescriptor::new(
+                    CapabilityId("device.observe".into()),
+                    1,
+                    crate::CapabilityDomain::Device,
+                    SideEffectClass::ReadOnly,
+                )
+                .expect("descriptor"),
+            )
+            .expect("register");
+        let mut fabric = ActionFabric::new(registry);
+        fabric
+            .register_adapter(
+                CapabilityId("device.observe".into()),
+                RetryThenDeviceAdapter { retry: true },
+            )
+            .expect("adapter");
+
+        let mut cognition =
+            crate::CognitiveRuntime::new(crate::CognitiveIdentity(*b"NTD97-ACTIONRUN1"));
+        let task_id = cognition
+            .state_mut()
+            .submit_task(
+                ntd_core::Intent::new("battery status"),
+                plan.graph.clone(),
+                None,
+            )
+            .expect("task");
+        let task = cognition.state().tasks.get(&task_id).expect("task").clone();
+
+        assert!(matches!(
+            execute_verified_assistant_plan(
+                &mut fabric,
+                &task,
+                &plan,
+                &AuthorityGrant::new(),
+                &mut AcceptVerifier,
+                "battery status",
+            ),
+            Err(AssistantActionRunError::Incomplete {
+                action_status: Some(ActionStatus::Retryable),
+                ..
+            })
+        ));
+        assert_eq!(fabric.state().plans.len(), 1);
+
+        let resumed = continue_verified_assistant_plan(
+            &mut fabric,
+            crate::ActionPlanId(1),
+            &task,
+            &plan,
+            &AuthorityGrant::new(),
+            &mut AcceptVerifier,
+            "battery status",
+        )
+        .expect("resume");
+
+        assert_eq!(fabric.state().plans.len(), 1);
+        assert_eq!(resumed.evidence.len(), 1);
+        assert!(resumed.synthesis_prompt.contains("battery"));
+    }
+
     #[test]
     fn final_answer_context_rejects_uncommitted_action() {
         let plan = ActionPlanState {
