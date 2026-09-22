@@ -3216,7 +3216,10 @@ fn recover_orphaned_chat_turn(
         return Ok(false);
     };
     conversation
-        .cancel_turn(task_id, "recovered orphaned native chat turn before new request")
+        .cancel_turn(
+            task_id,
+            "recovered orphaned native chat turn before new request",
+        )
         .map_err(|error| format!("cancel orphaned sovereign conversation turn: {error:?}"))?;
     Ok(true)
 }
@@ -7265,7 +7268,10 @@ mod tests {
         let task = conversation
             .begin_turn("model.test", 1, "orphaned", vec![1], 4)
             .expect("begin turn");
-        assert_eq!(conversation.active().map(|active| active.task_id), Some(task));
+        assert_eq!(
+            conversation.active().map(|active| active.task_id),
+            Some(task)
+        );
 
         assert!(recover_orphaned_chat_turn(&mut conversation).expect("recover"));
         assert!(conversation.active().is_none());
