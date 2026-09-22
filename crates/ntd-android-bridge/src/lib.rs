@@ -2923,6 +2923,95 @@ fn production_capability_probe(
         return Err("production file.write rollback did not restore absent state".into());
     }
 
+    let artifact_action = TypedAction::ArtifactDownload {
+        url: "https://example.com/".into(),
+        path: "m13/download.html".into(),
+    };
+    let mut artifact_descriptor = CapabilityDescriptor::new(
+        CapabilityId("artifact.download".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::Reversible,
+    )
+    .map_err(|error| format!("artifact.download descriptor: {error:?}"))?;
+    artifact_descriptor.resumable = true;
+    artifact_descriptor.rollback_supported = true;
+    let network_scope = AuthorityScope::new("network.read")
+        .map_err(|error| format!("artifact network authority scope: {error:?}"))?;
+    let file_scope = AuthorityScope::new("file.app_private")
+        .map_err(|error| format!("artifact file authority scope: {error:?}"))?;
+    artifact_descriptor
+        .required_scopes
+        .extend([network_scope.clone(), file_scope.clone()]);
+    artifact_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize artifact.download descriptor: {error:?}"))?;
+    if AuthorityGrant::new().permits(&artifact_descriptor).is_ok() {
+        return Err("artifact download was not denied without explicit scopes".into());
+    }
+    AuthorityGrant::new()
+        .with_scope(network_scope)
+        .with_scope(file_scope)
+        .permits(&artifact_descriptor)
+        .map_err(|error| format!("artifact download explicit authority rejected: {error:?}"))?;
+
+    let mut artifact = AndroidArtifactDownloadAdapter::new(root.clone())?;
+    let artifact_result = artifact
+        .execute(ntd_runtime::ActionId(96), &artifact_action)
+        .map_err(|error| format!("production artifact.download stage probe: {error}"))?;
+    let AdapterResult::Suspended {
+        resume_token,
+        note: _,
+    } = artifact_result
+    else {
+        return Err("production artifact.download did not suspend after staging".into());
+    };
+    let artifact_resumed = artifact
+        .resume(ntd_runtime::ActionId(96), &artifact_action, &resume_token)
+        .map_err(|error| format!("production artifact.download resume probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: artifact_output,
+        rollback_token: Some(artifact_rollback),
+    } = artifact_resumed
+    else {
+        return Err("production artifact.download resume did not complete".into());
+    };
+    if verifier.verify(&artifact_descriptor, &artifact_action, &artifact_output)
+        != ActionVerification::Accept
+    {
+        return Err("production artifact.download evidence verification failed".into());
+    }
+    let downloaded = fs::read(root.join("m13/download.html"))
+        .map_err(|error| format!("read committed artifact download: {error}"))?;
+    if downloaded.is_empty()
+        || sha256(&downloaded)
+            != match &artifact_output.value {
+                ActionValue::Fields(fields) => {
+                    let expected = fields
+                        .get("sha256")
+                        .ok_or_else(|| "artifact output missing sha256".to_owned())?;
+                    let actual = digest_hex(&sha256(&downloaded));
+                    if &actual != expected {
+                        return Err("artifact output hash does not match committed bytes".into());
+                    }
+                    sha256(&downloaded)
+                }
+                _ => return Err("artifact output did not contain field evidence".into()),
+            }
+    {
+        return Err("artifact committed bytes failed hash verification".into());
+    }
+    artifact
+        .rollback(
+            ntd_runtime::ActionId(96),
+            &artifact_action,
+            &artifact_rollback,
+        )
+        .map_err(|error| format!("production artifact.download rollback: {error}"))?;
+    if root.join("m13/download.html").exists() {
+        return Err("artifact rollback did not restore absent state".into());
+    }
+
     let clipboard_scope = AuthorityScope::new("device.clipboard.write")
         .map_err(|error| format!("clipboard authority scope: {error:?}"))?;
     let mut clipboard_descriptor = CapabilityDescriptor::new(
@@ -3013,7 +3102,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
