@@ -254,6 +254,140 @@ struct AndroidWebFetchResult {
     body: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AndroidWebSearchItem {
+    title: String,
+    url: String,
+    description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AndroidWebSearchResult {
+    descriptor_url: String,
+    response_url: String,
+    items: Vec<AndroidWebSearchItem>,
+}
+
+struct AndroidWebSearchAdapter;
+
+impl CapabilityAdapter for AndroidWebSearchAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::WebSearch { query, max_results } = action else {
+            return Err("Android search adapter only supports web.search".into());
+        };
+        let result = android_web_search(query, *max_results)?;
+        let values = result
+            .items
+            .iter()
+            .map(|item| {
+                if item.description.is_empty() {
+                    format!("{} | {}", item.title, item.url)
+                } else {
+                    format!("{} | {} | {}", item.title, item.url, item.description)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified OpenSearch results: {}", values.len()),
+                value: ActionValue::TextList(values),
+                evidence: vec![
+                    "android-opensearch".into(),
+                    format!("descriptor:{}", result.descriptor_url),
+                    format!("response:{}", result.response_url),
+                    format!("results:{}", result.items.len()),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+fn android_web_search(query: &str, max_results: u16) -> Result<AndroidWebSearchResult, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android search platform thread: {error}"))?;
+    let jquery = env
+        .new_string(query)
+        .map_err(|error| format!("encode web.search query for Android: {error}"))?;
+    let jquery_object = JObject::from(jquery);
+    let max_results = i32::from(max_results);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdWebPlatform",
+            "search",
+            "(Ljava/lang/String;I)[B",
+            &[
+                JValue::Object(&jquery_object),
+                JValue::Int(max_results),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android OpenSearch platform boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android OpenSearch response: {error}"))?;
+    decode_android_web_search_result(&bytes)
+}
+
+fn decode_android_web_search_result(bytes: &[u8]) -> Result<AndroidWebSearchResult, String> {
+    let mut cursor = PlatformCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_WEB_PROTOCOL_VERSION {
+        return Err("unsupported Android web search protocol".into());
+    }
+    let success = cursor.u8()?;
+    if success == 0 {
+        return Err(format!("Android OpenSearch failed: {}", cursor.string()?));
+    }
+    if success != 1 {
+        return Err("invalid Android OpenSearch status".into());
+    }
+
+    let descriptor_url = cursor.string()?;
+    let response_url = cursor.string()?;
+    let count = usize::try_from(cursor.u32()?)
+        .map_err(|_| "OpenSearch result count does not fit usize".to_owned())?;
+    if descriptor_url.trim().is_empty()
+        || response_url.trim().is_empty()
+        || count == 0
+        || count > 20
+    {
+        return Err("invalid Android OpenSearch result metadata".into());
+    }
+
+    let mut items = Vec::with_capacity(count);
+    for _ in 0..count {
+        let title = cursor.string()?;
+        let url = cursor.string()?;
+        let description = cursor.string()?;
+        if title.trim().is_empty() || url.trim().is_empty() {
+            return Err("Android OpenSearch returned an empty title or URL".into());
+        }
+        items.push(AndroidWebSearchItem {
+            title,
+            url,
+            description,
+        });
+    }
+    if !cursor.finished() {
+        return Err("non-canonical Android OpenSearch response framing".into());
+    }
+    Ok(AndroidWebSearchResult {
+        descriptor_url,
+        response_url,
+        items,
+    })
+}
+
 struct AndroidWebFetchAdapter;
 
 impl CapabilityAdapter for AndroidWebFetchAdapter {
