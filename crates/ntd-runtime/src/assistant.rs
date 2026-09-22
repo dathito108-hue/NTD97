@@ -1384,6 +1384,27 @@ mod tests {
     }
 
     #[test]
+    fn ncs97_v01_active_checkpoint_remains_readable() {
+        let mut state = SovereignConversationState::new(identity());
+        let task = state
+            .begin_turn("model.test", 1, "legacy active", vec![9, 10], 4)
+            .expect("begin");
+        state.append_generated(task, 11, "x").expect("append");
+
+        let mut encoded = encode_conversation_checkpoint(&state).expect("encode v0.2");
+        assert_eq!(encoded.pop(), Some(0));
+        encoded[10..12].copy_from_slice(&1u16.to_le_bytes());
+        let payload_len = u64::try_from(encoded.len() - NCS97_HEADER_LEN).expect("payload");
+        encoded[16..24].copy_from_slice(&payload_len.to_le_bytes());
+
+        let restored = decode_conversation_checkpoint(&encoded).expect("decode v0.1");
+        let active = restored.active().expect("active");
+        assert_eq!(active.task_id, task);
+        assert_eq!(active.generated_text, "x");
+        assert!(active.action_fabric_checkpoint.is_none());
+    }
+
+    #[test]
     fn checkpoint_rejects_noncanonical_trailing_bytes() {
         let state = SovereignConversationState::new(identity());
         let mut encoded = encode_conversation_checkpoint(&state).expect("encode");
