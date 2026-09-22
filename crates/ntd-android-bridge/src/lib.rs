@@ -4,13 +4,15 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
+    io::{Read, Write},
+    net::SocketAddr,
     path::{Component, Path, PathBuf},
     ptr::null_mut,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock,
     },
+    time::Duration,
 };
 
 use jni::{
@@ -27,6 +29,10 @@ use ntd_mobile_shell::{
     decode_mobile_continuity_bundle, encode_mobile_continuity_bundle,
     restore_mobile_continuity_bundle, AvatarController, AvatarSurface, LipSyncState,
     MobileContinuityBundle, MobileContinuityState, WakeReason,
+};
+use ntd_pc_fabric::{
+    connect_paired_tcp, HandshakeEntropy, PairedIdentity, PairedPcAdapter, PairingRecord,
+    RemoteCapability, TcpFrameTransport,
 };
 use ntd_runtime::{
     choose_reasoning_budget, continue_verified_assistant_plan, decode_action_fabric_checkpoint,
@@ -78,6 +84,228 @@ struct NativeChatModel {
     tokenizer: LlamaSpmTokenizer,
     context_limit: usize,
     capability_root: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct PcPairProfile {
+    peer: String,
+    address: SocketAddr,
+    local_seed: [u8; 32],
+    remote_peer_id: [u8; 16],
+    remote_verify_key: [u8; 32],
+}
+
+fn valid_pc_peer_alias(peer: &str) -> bool {
+    !peer.is_empty()
+        && peer.len() <= 64
+        && peer
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn decode_fixed_hex<const N: usize>(value: &str) -> Result<[u8; N], String> {
+    if value.len() != N * 2 {
+        return Err("paired-PC hex field has invalid length".into());
+    }
+    let mut out = [0u8; N];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let high = (pair[0] as char)
+            .to_digit(16)
+            .ok_or_else(|| "paired-PC hex field is invalid".to_owned())?;
+        let low = (pair[1] as char)
+            .to_digit(16)
+            .ok_or_else(|| "paired-PC hex field is invalid".to_owned())?;
+        out[index] = u8::try_from((high << 4) | low)
+            .map_err(|_| "paired-PC hex field overflow".to_owned())?;
+    }
+    Ok(out)
+}
+
+fn profile_value<'a>(line: &'a str, key: &str) -> Result<&'a str, String> {
+    line.strip_prefix(key)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("paired-PC profile missing {key}"))
+}
+
+fn load_pc_pair_profile(root: &Path, expected_peer: &str) -> Result<PcPairProfile, String> {
+    if !valid_pc_peer_alias(expected_peer) {
+        return Err("paired-PC peer alias is invalid".into());
+    }
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize paired-PC capability root: {error}"))?;
+    let pairs = root.join("pc-pairs");
+    let pairs = fs::canonicalize(&pairs)
+        .map_err(|error| format!("paired-PC profile directory is unavailable: {error}"))?;
+    if !pairs.starts_with(&root) {
+        return Err("paired-PC profile directory escaped capability root".into());
+    }
+
+    let path = pairs.join(format!("{expected_peer}.pcp97"));
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| format!("paired-PC profile is unavailable: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 4096 {
+        return Err("paired-PC profile is not a bounded regular file".into());
+    }
+    let canonical = fs::canonicalize(&path)
+        .map_err(|error| format!("canonicalize paired-PC profile: {error}"))?;
+    if !canonical.starts_with(&pairs) {
+        return Err("paired-PC profile escaped profile directory".into());
+    }
+    let text = fs::read_to_string(&canonical)
+        .map_err(|error| format!("read paired-PC profile: {error}"))?;
+    let lines = text.lines().collect::<Vec<_>>();
+    if lines.len() != 7
+        || lines[0] != "NTD97_PC_PAIR_V1"
+        || lines[6] != "END"
+    {
+        return Err("paired-PC profile framing is invalid".into());
+    }
+
+    let peer = profile_value(lines[1], "peer=")?.to_owned();
+    if peer != expected_peer || !valid_pc_peer_alias(&peer) {
+        return Err("paired-PC profile peer alias mismatch".into());
+    }
+    let address = profile_value(lines[2], "address=")?
+        .parse::<SocketAddr>()
+        .map_err(|_| "paired-PC profile address is invalid".to_owned())?;
+    let local_seed = decode_fixed_hex::<32>(profile_value(lines[3], "local_seed=")?)?;
+    let remote_peer_id =
+        decode_fixed_hex::<16>(profile_value(lines[4], "remote_peer_id=")?)?;
+    let remote_verify_key =
+        decode_fixed_hex::<32>(profile_value(lines[5], "remote_verify_key=")?)?;
+    PairingRecord::from_public(remote_peer_id, remote_verify_key)
+        .map_err(|error| format!("paired-PC pinned identity is invalid: {error:?}"))?;
+
+    Ok(PcPairProfile {
+        peer,
+        address,
+        local_seed,
+        remote_peer_id,
+        remote_verify_key,
+    })
+}
+
+fn fresh_pc_handshake_entropy() -> Result<HandshakeEntropy, String> {
+    let mut seed = [0u8; 32];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut seed))
+        .map_err(|error| format!("read paired-PC handshake entropy: {error}"))?;
+    Ok(HandshakeEntropy::from_seed(seed))
+}
+
+fn expected_remote_pc_capability(
+    canonical: &str,
+) -> Option<(&'static str, SideEffectClass, &'static str)> {
+    match canonical {
+        "pc.observe" => Some(("pc.system.observe", SideEffectClass::ReadOnly, "pc.observe")),
+        "pc.execute" => Some(("pc.process.execute", SideEffectClass::ExternalWrite, "pc.execute")),
+        "pc.artifact.read" => Some((
+            "pc.artifact.read",
+            SideEffectClass::ReadOnly,
+            "pc.artifact.read",
+        )),
+        "pc.artifact.write" => Some((
+            "pc.artifact.write",
+            SideEffectClass::ExternalWrite,
+            "pc.artifact.write",
+        )),
+        _ => None,
+    }
+}
+
+fn remote_pc_capability_matches(
+    capability: &RemoteCapability,
+    id: &str,
+    side_effect: SideEffectClass,
+    scope: &str,
+) -> bool {
+    capability.id == id
+        && capability.version == 1
+        && capability.side_effect == side_effect
+        && capability.verification_required
+        && !capability.rollback_supported
+        && !capability.resumable
+        && capability.required_scopes == [scope.to_owned()]
+}
+
+struct AndroidPairedPcAdapter {
+    peer: String,
+    remote_capability: String,
+    inner: PairedPcAdapter<TcpFrameTransport>,
+}
+
+impl AndroidPairedPcAdapter {
+    fn connect(root: &Path, peer: &str, canonical_capability: &str) -> Result<Self, String> {
+        let profile = load_pc_pair_profile(root, peer)?;
+        let (remote_capability, expected_effect, expected_scope) =
+            expected_remote_pc_capability(canonical_capability)
+                .ok_or_else(|| "unsupported paired-PC capability".to_owned())?;
+        let local = PairedIdentity::from_seed(profile.local_seed);
+        let remote = PairingRecord::from_public(profile.remote_peer_id, profile.remote_verify_key)
+            .map_err(|error| format!("load paired-PC pinned identity: {error:?}"))?;
+        let (session, transport) = connect_paired_tcp(
+            profile.address,
+            local,
+            remote,
+            fresh_pc_handshake_entropy()?,
+            Duration::from_secs(5),
+        )
+        .map_err(|error| format!("establish authenticated PCF97 session: {error:?}"))?;
+        let mut inner = PairedPcAdapter::new(
+            profile.peer.clone(),
+            remote_capability,
+            1,
+            session,
+            transport,
+        )
+        .map_err(|error| format!("build paired-PC adapter: {error:?}"))?;
+        let capabilities = inner
+            .discover_capabilities()
+            .map_err(|error| format!("discover paired-PC capabilities: {error:?}"))?;
+        let advertised = capabilities
+            .iter()
+            .find(|capability| capability.id == remote_capability)
+            .ok_or_else(|| "paired PC did not advertise required capability".to_owned())?;
+        if !remote_pc_capability_matches(
+            advertised,
+            remote_capability,
+            expected_effect,
+            expected_scope,
+        ) {
+            return Err("paired-PC capability descriptor mismatch".into());
+        }
+        Ok(Self {
+            peer: profile.peer,
+            remote_capability: remote_capability.to_owned(),
+            inner,
+        })
+    }
+}
+
+impl CapabilityAdapter for AndroidPairedPcAdapter {
+    fn execute(
+        &mut self,
+        action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        match self.inner.execute(action_id, action)? {
+            AdapterResult::Completed {
+                mut output,
+                rollback_token,
+            } => {
+                output.evidence.push("pcf97-authenticated".into());
+                output.evidence.push(format!("peer:{}", self.peer));
+                output
+                    .evidence
+                    .push(format!("remote-capability:{}", self.remote_capability));
+                Ok(AdapterResult::Completed {
+                    output,
+                    rollback_token,
+                })
+            }
+            other => Ok(other),
+        }
+    }
 }
 
 struct NativeModelReasoningProbe<'a> {
