@@ -71,7 +71,11 @@ for REQUIRED in \
   web_private_block=ok \
   file_write=ok \
   file_read=ok \
-  file_rollback=ok
+  file_rollback=ok \
+  device_clipboard_authority_block=ok \
+  device_clipboard_write=ok \
+  app_launch_authority_block=ok \
+  app_launch=ok
 do
   printf '%s\n' "${REAL_MODEL_PROBE}" | grep -Fxq "${REQUIRED}"
 done

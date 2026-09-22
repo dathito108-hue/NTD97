@@ -1,0 +1,135 @@
+package ai.ntd97.mobile;
+
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
+import android.os.SystemClock;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
+
+final class NtdDeviceAppPlatform {
+    private static final byte PROTOCOL_VERSION = 1;
+    private static final int MAX_TEXT_BYTES = 64 * 1024;
+    private static final int CLIPBOARD_READBACK_ATTEMPTS = 10;
+    private static final long CLIPBOARD_READBACK_DELAY_MS = 25L;
+    private static final Pattern PACKAGE_NAME =
+            Pattern.compile("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+");
+
+    private static volatile Context appContext;
+
+    private NtdDeviceAppPlatform() {}
+
+    static void initialize(Context context) {
+        if (context != null) {
+            appContext = context.getApplicationContext();
+        }
+    }
+
+    static byte[] clipboardSet(String text) {
+        try {
+            Context context = requireContext();
+            if (text == null || text.isEmpty()) {
+                throw new IllegalArgumentException("clipboard text is empty");
+            }
+            byte[] encoded = text.getBytes(StandardCharsets.UTF_8);
+            if (encoded.length > MAX_TEXT_BYTES) {
+                throw new IllegalArgumentException("clipboard text exceeds size limit");
+            }
+
+            ClipboardManager clipboard =
+                    (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard == null) {
+                throw new IllegalStateException("clipboard service unavailable");
+            }
+
+            clipboard.setPrimaryClip(ClipData.newPlainText("NTD97", text));
+            String lastFailure = "clipboard write was not observed";
+            for (int attempt = 0; attempt < CLIPBOARD_READBACK_ATTEMPTS; attempt++) {
+                if (clipboard.hasPrimaryClip()) {
+                    ClipData clip = clipboard.getPrimaryClip();
+                    if (clip != null && clip.getItemCount() > 0) {
+                        CharSequence observed = clip.getItemAt(0).coerceToText(context);
+                        if (observed != null && text.contentEquals(observed)) {
+                            return encodeSuccess("clipboard-set:" + encoded.length);
+                        }
+                        lastFailure = "clipboard read-back mismatch";
+                    } else {
+                        lastFailure = "clipboard read-back unavailable";
+                    }
+                }
+                if (attempt + 1 < CLIPBOARD_READBACK_ATTEMPTS) {
+                    SystemClock.sleep(CLIPBOARD_READBACK_DELAY_MS);
+                }
+            }
+            throw new IllegalStateException(lastFailure);
+        } catch (Exception error) {
+            return encodeError(safeMessage(error));
+        }
+    }
+
+    static byte[] launchApp(String packageName) {
+        try {
+            Context context = requireContext();
+            if (packageName == null || !PACKAGE_NAME.matcher(packageName).matches()) {
+                throw new IllegalArgumentException("invalid package name");
+            }
+
+            Intent launch = context.getPackageManager().getLaunchIntentForPackage(packageName);
+            if (launch == null) {
+                throw new IllegalArgumentException("package has no visible launch activity");
+            }
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            launch.setPackage(packageName);
+            context.startActivity(launch);
+            return encodeSuccess("app-launch:" + packageName);
+        } catch (Exception error) {
+            return encodeError(safeMessage(error));
+        }
+    }
+
+    private static Context requireContext() {
+        Context context = appContext;
+        if (context == null) {
+            throw new IllegalStateException("Android app context is not initialized");
+        }
+        return context;
+    }
+
+    private static byte[] encodeSuccess(String receipt) {
+        byte[] bytes = receipt.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer
+                .allocate(1 + 1 + 4 + bytes.length)
+                .order(ByteOrder.LITTLE_ENDIAN);
+        buffer.put(PROTOCOL_VERSION);
+        buffer.put((byte) 1);
+        putBytes(buffer, bytes);
+        return buffer.array();
+    }
+
+    private static byte[] encodeError(String message) {
+        byte[] bytes = message.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer
+                .allocate(1 + 1 + 4 + bytes.length)
+                .order(ByteOrder.LITTLE_ENDIAN);
+        buffer.put(PROTOCOL_VERSION);
+        buffer.put((byte) 0);
+        putBytes(buffer, bytes);
+        return buffer.array();
+    }
+
+    private static String safeMessage(Throwable error) {
+        String message = error.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? error.getClass().getSimpleName()
+                : message;
+    }
+
+    private static void putBytes(ByteBuffer buffer, byte[] bytes) {
+        buffer.putInt(bytes.length);
+        buffer.put(bytes);
+    }
+}

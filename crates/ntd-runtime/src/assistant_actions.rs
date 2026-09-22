@@ -157,6 +157,43 @@ fn parse_action_line(
         "device.observe" => TypedAction::DeviceObserve {
             surface: payload.to_owned(),
         },
+        "device.interact" => {
+            let mut parts = payload.splitn(3, '\t');
+            let surface = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let operation = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let argument = parts.next().map(str::to_owned);
+            if surface.trim().is_empty()
+                || operation.trim().is_empty()
+                || surface != surface.trim()
+                || operation != operation.trim()
+                || argument.as_ref().is_some_and(|value| value.is_empty())
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::DeviceInteract {
+                surface: surface.to_owned(),
+                operation: operation.to_owned(),
+                argument,
+            }
+        }
+        "app.action" => {
+            let mut parts = payload.splitn(3, '\t');
+            let app = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let action = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let action_payload = parts.next().unwrap_or_default();
+            if app.trim().is_empty()
+                || action.trim().is_empty()
+                || app != app.trim()
+                || action != action.trim()
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::AppAction {
+                app: app.to_owned(),
+                action: action.to_owned(),
+                payload: action_payload.as_bytes().to_vec(),
+            }
+        }
         "pc.observe" => {
             let (peer, surface) = payload
                 .split_once('\t')
@@ -180,10 +217,10 @@ fn parse_action_line(
         .map_err(|_| AssistantPlanError::InvalidPayload)?;
 
     let capability_id = CapabilityId(capability.to_owned());
-    let side_effect = if capability == "file.write" {
-        SideEffectClass::Reversible
-    } else {
-        SideEffectClass::ReadOnly
+    let side_effect = match capability {
+        "file.write" => SideEffectClass::Reversible,
+        "device.interact" | "app.action" => SideEffectClass::ExternalWrite,
+        _ => SideEffectClass::ReadOnly,
     };
     let node = ActionNode {
         id,
@@ -494,6 +531,40 @@ END",
             Some(&TypedAction::FileWrite {
                 path: "notes/status.txt".into(),
                 bytes: b"hello world".to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn device_and_app_interactions_are_external_writes() {
+        let parsed = parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|device.interact|clipboard\tset_text\tNTD97\n2|app.action|ai.ntd97.mobile\tlaunch\nEND",
+        )
+        .expect("plan");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+
+        assert_eq!(plan.graph.actions.len(), 2);
+        assert!(plan
+            .graph
+            .actions
+            .iter()
+            .all(|node| node.side_effect == SideEffectClass::ExternalWrite));
+        assert_eq!(
+            plan.payloads.get(&1),
+            Some(&TypedAction::DeviceInteract {
+                surface: "clipboard".into(),
+                operation: "set_text".into(),
+                argument: Some("NTD97".into()),
+            })
+        );
+        assert_eq!(
+            plan.payloads.get(&2),
+            Some(&TypedAction::AppAction {
+                app: "ai.ntd97.mobile".into(),
+                action: "launch".into(),
+                payload: Vec::new(),
             })
         );
     }
