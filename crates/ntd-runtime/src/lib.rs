@@ -32,7 +32,8 @@ pub use assistant::{
     NCS97_MAGIC, NCS97_MAJOR, NCS97_MINOR,
 };
 pub use assistant_actions::{
-    build_verified_answer_prompt, collect_verified_action_evidence,
+    build_compact_verified_answer_prompt, build_verified_answer_prompt,
+    collect_verified_action_evidence,
     execute_verified_assistant_plan, parse_native_action_plan, AssistantActionPlan,
     AssistantActionRunError, AssistantPlanDecision, AssistantPlanError, VerifiedActionEvidence,
     VerifiedActionEvidenceError, VerifiedAssistantActionRun, NATIVE_ACTION_DIRECT,
