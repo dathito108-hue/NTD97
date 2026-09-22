@@ -99,7 +99,7 @@ public final class NtdRealModelProbeActivity extends Activity {
             return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
-        long requestId = host.submitChat("Once upon a time", 4);
+        long requestId = host.submitChat("Once upon a time", 1);
         if (requestId < 0) {
             return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
@@ -131,13 +131,25 @@ public final class NtdRealModelProbeActivity extends Activity {
         boolean restoreOk = false;
         boolean storeOk = false;
         boolean memoryOk = false;
+        int checkpointMemoryItems = 0;
+        int checkpointBudget = 0;
+        int checkpointIterations = 0;
+        int checkpointFirstKind = 0;
+        int checkpointBytes = 0;
+        long restoredRequestId = -1L;
+        int restoredBudget = 0;
+        int restoredIterations = 0;
+        int restoredMemory = 0;
+        int restoredStatus = 0;
         NtdConversationStore store = new NtdConversationStore(this);
         try {
             if (checkpointRequest >= 0) {
-                int memoryItems = host.chatRecalledMemoryItems(checkpointRequest);
-                int checkpointBudget = host.chatReasoningBudget(checkpointRequest);
-                int checkpointIterations = host.chatReasoningIterations(checkpointRequest);
-                memoryOk = memoryItems > 0 && checkpointBudget >= 1 && checkpointBudget <= 4;
+                checkpointMemoryItems = host.chatRecalledMemoryItems(checkpointRequest);
+                checkpointBudget = host.chatReasoningBudget(checkpointRequest);
+                checkpointIterations = host.chatReasoningIterations(checkpointRequest);
+                memoryOk = checkpointMemoryItems > 0
+                        && checkpointBudget >= 1
+                        && checkpointBudget <= 4;
                 reasoningLoopOk = reasoningLoopOk
                         && checkpointIterations == expectedReasoningIterations(checkpointBudget);
                 actionPlannerOk = actionPlannerOk
@@ -145,7 +157,9 @@ public final class NtdRealModelProbeActivity extends Activity {
                 actionSafetyOk = actionSafetyOk
                         && actionPlannerInvariantHolds(host, checkpointRequest);
                 NtdRuntimeHost.ChatEvent first = host.nextChatEvent(checkpointRequest);
+                checkpointFirstKind = first.kind;
                 byte[] checkpoint = host.chatCheckpoint();
+                checkpointBytes = checkpoint.length;
                 if (first.kind == NtdRuntimeHost.ChatEvent.TOKEN && checkpoint.length > 0) {
                     store.write(checkpoint);
                     byte[] persisted = store.read();
@@ -153,6 +167,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                     long restoredRequest = storeOk
                             ? host.restoreChatCheckpoint(persisted)
                             : -1L;
+                    restoredRequestId = restoredRequest;
                     if (restoredRequest > 0) {
                         boolean restoredComplete = false;
                         for (int attempt = 0; attempt < 8; attempt++) {
@@ -163,11 +178,12 @@ public final class NtdRealModelProbeActivity extends Activity {
                             restoredComplete = event.kind == NtdRuntimeHost.ChatEvent.COMPLETE;
                             break;
                         }
-                        int restoredBudget = host.chatReasoningBudget(restoredRequest);
-                        int restoredIterations = host.chatReasoningIterations(restoredRequest);
-                        int restoredMemory = host.chatRecalledMemoryItems(restoredRequest);
+                        restoredBudget = host.chatReasoningBudget(restoredRequest);
+                        restoredIterations = host.chatReasoningIterations(restoredRequest);
+                        restoredMemory = host.chatRecalledMemoryItems(restoredRequest);
+                        restoredStatus = host.chatStatus(restoredRequest);
                         restoreOk = restoredComplete
-                                && host.chatStatus(restoredRequest) == 2
+                                && restoredStatus == 2
                                 && restoredBudget >= 1
                                 && restoredBudget <= 4
                                 && restoredIterations == expectedReasoningIterations(restoredBudget)
@@ -239,6 +255,17 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "governed_token_count=" + governedTokens + "\n"
                 + "governed_terminal_kind=" + governedTerminalKind + "\n"
                 + "governed_final_status=" + governedFinalStatus + "\n"
+                + "checkpoint_request_id=" + checkpointRequest + "\n"
+                + "checkpoint_memory_items=" + checkpointMemoryItems + "\n"
+                + "checkpoint_budget=" + checkpointBudget + "\n"
+                + "checkpoint_iterations=" + checkpointIterations + "\n"
+                + "checkpoint_first_kind=" + checkpointFirstKind + "\n"
+                + "checkpoint_bytes=" + checkpointBytes + "\n"
+                + "restored_request_id=" + restoredRequestId + "\n"
+                + "restored_budget=" + restoredBudget + "\n"
+                + "restored_iterations=" + restoredIterations + "\n"
+                + "restored_memory_items=" + restoredMemory + "\n"
+                + "restored_status=" + restoredStatus + "\n"
                 + "chat_memory=" + (memoryOk ? "ok" : "failed") + "\n"
                 + "chat_restore=" + (restoreOk ? "ok" : "failed") + "\n"
                 + "chat_store=" + (storeOk ? "ok" : "failed") + "\n"
