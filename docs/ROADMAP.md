@@ -496,12 +496,18 @@ Current implementation:
 - provider responses are parsed at the Android boundary, mapped into bounded canonical `title + public HTTPS URL + snippet` items, deduplicated by URL and stripped of raw provider JSON before crossing into native cognition;
 - search endpoint evidence exposes only the HTTPS source host rather than the configured path/query so endpoint tokens are not copied into ActionFabric evidence;
 - Rust decodes the normalized search protocol into `ActionValue::TextList`, binds result count and a canonical SHA-256 digest into evidence and independently rejects malformed item framing, over-limit result counts or digest mismatch;
-- emulator acceptance persists/reloads a field mapping, proves unconfigured search still fails closed, performs a real mapped JSON search, requires at least one normalized result and verifies provider endpoint path/query do not leak into evidence.
+- emulator acceptance persists/reloads a field mapping, proves unconfigured search still fails closed, performs a real mapped JSON search, requires at least one normalized result and verifies provider endpoint path/query do not leak into evidence;
+- browser session maturation preserves the last verifier-approved public-HTTPS URL in app-private preferences and supports an explicit read-only `browser.observe session` / `resume browser` path; interaction never auto-replays after in-memory WebView loss and fails closed until the persisted URL is re-observed;
+- browser selectors now use `querySelectorAll` and require exactly one DOM match, so missing and ambiguous targets fail closed rather than silently choosing the first element;
+- `browser.interact` keeps the same canonical action type and ExternalWrite authority but now supports `navigate`, `submit`, `click` and `set_value`; navigation remains public-HTTPS-only, submit requires an exact FORM selector and set_value requires post-event DOM read-back of the exact value;
+- every browser observe/interaction receipt binds `operation + target + value` with SHA-256 and the native verifier recomputes that binding; set_value evidence carries only the value hash, not the entered value itself;
+- browser persistence does not serialize DOM state or enable DOM storage; file/content access, mixed content, geolocation, multiple windows and third-party cookies remain disabled;
+- emulator acceptance proves ambiguous-selector rejection, interaction failure after in-memory session loss, explicit persisted-session resume, receipt-verified navigation and real HTTPS form value read-back.
 
 Still required before M13 completion:
 
 - WebSearch provider discovery/presets and credential-header handling beyond the generic endpoint + field-mapping configuration foundation;
-- broader browser session persistence/navigation/form semantics beyond the initial fail-closed observe/click/set-value foundation;
+- representative-phone/browser-engine acceptance for persisted-session reload, redirects, cookies/authenticated sessions and complex form/navigation edge cases beyond the app-owned WebView foundation;
 - successful SAF read/write acceptance on representative physical phones/providers, including grant revocation/reselection and provider-specific edge cases;
 - representative-phone process-death acceptance for resumable upload and SAF provider state, including retryable network loss after the durable TAF97 checkpoint;
 - representative-phone accessibility acceptance against third-party apps, including user enable/disable/revocation, package transitions and OEM accessibility-service behavior beyond the initial exact-view-id click/set_text foundation;
