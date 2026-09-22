@@ -4,6 +4,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    path::{Component, Path, PathBuf},
     ptr::null_mut,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -12,9 +13,9 @@ use std::{
 };
 
 use jni::{
-    objects::{JByteArray, JClass, JString},
+    objects::{JByteArray, JClass, JString, JValue},
     sys::{jboolean, jbyteArray, jint, jlong},
-    JNIEnv,
+    JNIEnv, JavaVM,
 };
 use ntd_assimilation::{
     activate_thin_generative_capsule, verify_native_package_with_shards, AssetKind,
@@ -31,7 +32,7 @@ use ntd_runtime::{
     execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
     parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
     ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
-    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, CapabilityAdapter,
+    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope, CapabilityAdapter,
     CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
     CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
     GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
@@ -56,6 +57,11 @@ const CHAT_STATUS_COMPLETE: i32 = 2;
 const CHAT_STATUS_CANCELLED: i32 = 3;
 const CHAT_STATUS_FAILED: i32 = 4;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
+const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
+const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
+
+static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
+
 
 struct NativeChatModel {
     asset_id: String,
