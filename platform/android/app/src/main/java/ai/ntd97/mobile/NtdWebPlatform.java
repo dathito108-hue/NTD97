@@ -419,7 +419,11 @@ final class NtdWebPlatform {
             if (!object.has(segment) || object.isNull(segment)) {
                 throw new IOException("search mapping field is missing");
             }
-            current = object.get(segment);
+            try {
+                current = object.get(segment);
+            } catch (org.json.JSONException error) {
+                throw new IOException("search mapping field could not be read", error);
+            }
         }
         return current;
     }
