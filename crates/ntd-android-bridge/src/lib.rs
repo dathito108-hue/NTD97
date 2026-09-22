@@ -2506,9 +2506,7 @@ fn governed_explicit_action_plan(
         let path = trimmed
             .get("read granted file ".len()..)
             .and_then(granted_command_path);
-        path.map(|path| {
-            format!("{NATIVE_ACTION_PROTOCOL_V1}\n1|file.grant.read|{path}\nEND")
-        })
+        path.map(|path| format!("{NATIVE_ACTION_PROTOCOL_V1}\n1|file.grant.read|{path}\nEND"))
     } else if lower.starts_with("write granted file ") {
         let rest = trimmed
             .get("write granted file ".len()..)
@@ -2585,10 +2583,9 @@ fn external_write_approval(
             .get(&node.id)
             .ok_or_else(|| "external-write action payload is missing".to_owned())?;
         match (node.capability.0.as_str(), action) {
-            (
-                "artifact.upload",
-                TypedAction::ArtifactUpload { url, path },
-            ) if !url.trim().is_empty() && !path.trim().is_empty() => {
+            ("artifact.upload", TypedAction::ArtifactUpload { url, path })
+                if !url.trim().is_empty() && !path.trim().is_empty() =>
+            {
                 capabilities.insert("artifact.upload".to_owned());
                 rationales.push(format!(
                     "upload app-private artifact {path} to {url} using idempotent HTTPS PUT"
@@ -4585,7 +4582,10 @@ fn production_capability_probe(
     grant_read_descriptor
         .normalize()
         .map_err(|error| format!("normalize file.grant.read descriptor: {error:?}"))?;
-    if AuthorityGrant::new().permits(&grant_read_descriptor).is_ok() {
+    if AuthorityGrant::new()
+        .permits(&grant_read_descriptor)
+        .is_ok()
+    {
         return Err("user-granted file read was not denied without runtime scope".into());
     }
     AuthorityGrant::new()
@@ -4623,7 +4623,9 @@ fn production_capability_probe(
         .permits(&grant_write_descriptor)
         .is_ok()
     {
-        return Err("user-granted file write was not denied without external-write authority".into());
+        return Err(
+            "user-granted file write was not denied without external-write authority".into(),
+        );
     }
     let mut grant_write_authority = AuthorityGrant::new().with_scope(grant_write_scope);
     grant_write_authority.allow_external_write = true;
@@ -4725,9 +4727,7 @@ fn production_capability_probe(
     let ActionValue::Fields(upload_fields) = &upload_output.value else {
         return Err("artifact upload output did not contain field evidence".into());
     };
-    if upload_fields.get("sha256")
-        != Some(&digest_hex(&sha256(&upload_source)))
-    {
+    if upload_fields.get("sha256") != Some(&digest_hex(&sha256(&upload_source))) {
         return Err("artifact upload receipt hash does not match source bytes".into());
     }
     file.rollback(
@@ -5202,11 +5202,10 @@ mod tests {
             })
         );
 
-        let write = governed_explicit_action_plan(
-            "write granted file shared/notes/write.txt to sovereign",
-        )
-        .expect("write plan")
-        .expect("write action");
+        let write =
+            governed_explicit_action_plan("write granted file shared/notes/write.txt to sovereign")
+                .expect("write plan")
+                .expect("write action");
         assert_eq!(
             write.payloads.get(&1),
             Some(&TypedAction::FileWrite {
