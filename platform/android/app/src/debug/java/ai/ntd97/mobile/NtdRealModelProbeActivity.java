@@ -44,6 +44,9 @@ public final class NtdRealModelProbeActivity extends Activity {
             if (result.isEmpty()) {
                 result = "android_real_model=failed\nerror=empty native result\n";
             }
+            result = result + new String(
+                    NtdNativeRuntimeHost.runWebCapabilityProbe(),
+                    StandardCharsets.UTF_8);
             result = result + runChatApiProbe();
         } catch (Exception error) {
             String message = error.getMessage();
