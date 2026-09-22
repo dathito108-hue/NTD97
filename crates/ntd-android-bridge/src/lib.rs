@@ -5284,13 +5284,18 @@ mod tests {
         };
         let grant_output = ActionOutput {
             summary: "granted write".into(),
-            value: ActionValue::None,
+            value: ActionValue::Fields(BTreeMap::from([
+                ("grant".into(), "shared".into()),
+                ("path".into(), "notes/out.txt".into()),
+                ("bytes".into(), "5".into()),
+                ("receipt".into(), "grant-write:shared:notes/out.txt:5:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824".into()),
+            ])),
             evidence: vec![
                 "android-user-granted-file".into(),
                 "grant:shared".into(),
                 "path:notes/out.txt".into(),
                 "operation:write".into(),
-                "receipt:grant-write:shared:notes/out.txt:5:abcd".into(),
+                "receipt:grant-write:shared:notes/out.txt:5:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824".into(),
             ],
         };
         assert_eq!(
