@@ -63,7 +63,6 @@ const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
-
 struct NativeChatModel {
     asset_id: String,
     version: u32,
@@ -287,9 +286,9 @@ impl CapabilityAdapter for AndroidWebFetchAdapter {
 }
 
 fn android_https_fetch(url: &str) -> Result<AndroidWebFetchResult, String> {
-    let vm = JAVA_VM
-        .get()
-        .ok_or_else(|| "Android JavaVM is not attached to the native capability runtime".to_owned())?;
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
     let mut env = vm
         .attach_current_thread()
         .map_err(|error| format!("attach Android platform thread: {error}"))?;
@@ -381,7 +380,9 @@ impl AndroidScopedFileAdapter {
                         .file_type()
                         .is_symlink()
                 {
-                    return Err("symbolic links are not allowed in app-private capability paths".into());
+                    return Err(
+                        "symbolic links are not allowed in app-private capability paths".into(),
+                    );
                 }
             }
         }
@@ -551,15 +552,27 @@ impl ActionVerifier for AndroidProductionVerifier {
                 .iter()
                 .any(|item| item == "android-resource-snapshot"),
             ("web.fetch", TypedAction::WebFetch { .. }) => {
-                output.evidence.iter().any(|item| item == "android-https-fetch")
-                    && output.evidence.iter().any(|item| item.starts_with("status:2"))
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-https-fetch")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("status:2"))
             }
             ("file.read", TypedAction::FileRead { .. }) => {
-                output.evidence.iter().any(|item| item == "android-app-private-file")
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-app-private-file")
                     && output.evidence.iter().any(|item| item == "operation:read")
             }
             ("file.write", TypedAction::FileWrite { .. }) => {
-                output.evidence.iter().any(|item| item == "android-app-private-file")
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-app-private-file")
                     && output.evidence.iter().any(|item| item == "operation:write")
             }
             _ => false,
@@ -1461,7 +1474,8 @@ fn execute_android_verified_actions(
             _ => unreachable!("unsupported capabilities rejected above"),
         }
         .map_err(|error| format!("build Android capability descriptor: {error:?}"))?;
-        descriptor.normalize()
+        descriptor
+            .normalize()
             .map_err(|error| format!("normalize Android capability descriptor: {error:?}"))?;
         registry
             .register(descriptor)
@@ -2381,8 +2395,7 @@ fn production_capability_probe(capability_root: &str) -> Result<String, String> 
         .execute(ntd_runtime::ActionId(90), &web_action)
         .map_err(|error| format!("production web.fetch probe: {error}"))?;
     let AdapterResult::Completed {
-        output: web_output,
-        ..
+        output: web_output, ..
     } = web_result
     else {
         return Err("production web.fetch probe did not complete".into());
