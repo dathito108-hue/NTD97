@@ -664,7 +664,6 @@ impl CapabilityAdapter for AndroidScopedFileAdapter {
     }
 }
 
-
 #[derive(Debug, Clone)]
 struct AndroidArtifactDownloadAdapter {
     file: AndroidScopedFileAdapter,
@@ -738,8 +737,7 @@ impl AndroidArtifactDownloadAdapter {
         expected_hash: &[u8; 32],
     ) -> Result<(usize, [u8; 32]), String> {
         let stage = self.stage_path(action_id)?;
-        let bytes = fs::read(&stage)
-            .map_err(|error| format!("read staged artifact: {error}"))?;
+        let bytes = fs::read(&stage).map_err(|error| format!("read staged artifact: {error}"))?;
         let digest = sha256(&bytes);
         if &digest != expected_hash {
             return Err("staged artifact hash mismatch".into());
@@ -757,8 +755,7 @@ impl AndroidArtifactDownloadAdapter {
             return Err("artifact target escaped capability root".into());
         }
 
-        fs::rename(&stage, &target)
-            .map_err(|error| format!("commit staged artifact: {error}"))?;
+        fs::rename(&stage, &target).map_err(|error| format!("commit staged artifact: {error}"))?;
         fs::File::open(&canonical_parent)
             .and_then(|directory| directory.sync_all())
             .map_err(|error| format!("sync artifact directory: {error}"))?;
@@ -774,8 +771,7 @@ fn encode_artifact_resume_token(
     let rollback_len =
         u32::try_from(rollback.len()).map_err(|_| "artifact rollback token overflow".to_owned())?;
     let url = final_url.as_bytes();
-    let url_len =
-        u32::try_from(url.len()).map_err(|_| "artifact final URL overflow".to_owned())?;
+    let url_len = u32::try_from(url.len()).map_err(|_| "artifact final URL overflow".to_owned())?;
     let mut out = Vec::with_capacity(1 + 32 + 4 + rollback.len() + 4 + url.len());
     out.push(1);
     out.extend_from_slice(digest);
@@ -786,9 +782,7 @@ fn encode_artifact_resume_token(
     Ok(out)
 }
 
-fn decode_artifact_resume_token(
-    token: &[u8],
-) -> Result<([u8; 32], Vec<u8>, String), String> {
+fn decode_artifact_resume_token(token: &[u8]) -> Result<([u8; 32], Vec<u8>, String), String> {
     if token.len() < 1 + 32 + 4 + 4 || token[0] != 1 {
         return Err("invalid artifact resume token".into());
     }
@@ -819,7 +813,11 @@ fn decode_artifact_resume_token(
     }
     let final_url = String::from_utf8(token[url_len_end..url_end].to_vec())
         .map_err(|_| "artifact resume URL is not UTF-8".to_owned())?;
-    Ok((digest, token[rollback_start..rollback_end].to_vec(), final_url))
+    Ok((
+        digest,
+        token[rollback_start..rollback_end].to_vec(),
+        final_url,
+    ))
 }
 
 impl CapabilityAdapter for AndroidArtifactDownloadAdapter {
@@ -855,8 +853,7 @@ impl CapabilityAdapter for AndroidArtifactDownloadAdapter {
         let TypedAction::ArtifactDownload { path, .. } = action else {
             return Err("Android artifact adapter received wrong resume action".into());
         };
-        let (expected_hash, rollback, final_url) =
-            decode_artifact_resume_token(resume_token)?;
+        let (expected_hash, rollback, final_url) = decode_artifact_resume_token(resume_token)?;
         let (size, digest) = self.commit_staging(action_id, path, &expected_hash)?;
         Ok(AdapterResult::Completed {
             output: ActionOutput {
@@ -928,7 +925,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                     .iter()
                     .any(|item| item == "android-app-private-file")
                     && output.evidence.iter().any(|item| item == "operation:write")
-            },
+            }
             ("artifact.download", TypedAction::ArtifactDownload { .. }) => {
                 output
                     .evidence
@@ -1872,7 +1869,7 @@ fn execute_android_verified_actions(
                     );
                 }
                 descriptor
-            },
+            }
             "artifact.download" => {
                 let mut descriptor = CapabilityDescriptor::new(
                     CapabilityId("artifact.download".into()),
