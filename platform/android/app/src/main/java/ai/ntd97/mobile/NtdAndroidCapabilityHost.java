@@ -65,15 +65,14 @@ final class NtdAndroidCapabilityHost {
                 return retryable(actionId, "HTTP status " + status);
             }
 
+            String finalUrl = connection.getURL().toString();
+            String contentType = connection.getContentType();
             byte[] body;
             try (InputStream input = connection.getInputStream()) {
                 body = readBounded(input, MAX_BODY_BYTES);
             } finally {
                 connection.disconnect();
             }
-
-            String finalUrl = connection.getURL().toString();
-            String contentType = connection.getContentType();
             return completed(
                     actionId,
                     "verified Android HTTP fetch",
