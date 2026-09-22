@@ -3,8 +3,8 @@
 mod adapter;
 mod agent;
 mod artifact;
-mod crypto;
 mod connector;
+mod crypto;
 mod transport;
 mod wire;
 
@@ -16,13 +16,13 @@ pub use agent::{
 pub use artifact::{
     ArtifactAssembler, ArtifactChunk, ArtifactDescriptor, ArtifactSender, DEFAULT_ARTIFACT_CHUNK,
 };
-pub use crypto::{
-    ClientHandshake, ClientHello, HandshakeEntropy, PairedIdentity, PairingRecord, SecureSession,
-    ServerHello, SessionRole,
-};
 pub use connector::{
     accept_paired_tcp, connect_paired_tcp, decode_client_hello, decode_server_hello,
     encode_client_hello, encode_server_hello,
+};
+pub use crypto::{
+    ClientHandshake, ClientHello, HandshakeEntropy, PairedIdentity, PairingRecord, SecureSession,
+    ServerHello, SessionRole,
 };
 pub use transport::{
     read_length_prefixed_frame, write_length_prefixed_frame, TcpFrameTransport,
