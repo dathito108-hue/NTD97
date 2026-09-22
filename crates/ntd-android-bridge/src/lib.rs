@@ -5264,12 +5264,13 @@ fn production_capability_probe(
         return Err("production browser.interact receipt verification failed".into());
     }
 
-    let pc_profile_root = capability_root.join("pc-pairs");
+    let capability_root_path = Path::new(capability_root);
+    let pc_profile_root = capability_root_path.join("pc-pairs");
     if pc_profile_root.exists() {
         fs::remove_dir_all(&pc_profile_root)
             .map_err(|error| format!("clear paired-PC probe profiles: {error}"))?;
     }
-    if load_pc_pair_profile(capability_root, "workstation").is_ok() {
+    if load_pc_pair_profile(capability_root_path, "workstation").is_ok() {
         return Err("unpaired PC profile did not fail closed".into());
     }
 
