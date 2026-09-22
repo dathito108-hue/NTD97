@@ -3020,6 +3020,94 @@ mod tests {
     }
 
     #[test]
+    fn external_write_capabilities_require_scope_and_explicit_write_authority() {
+        let clipboard_scope = AuthorityScope::new("device.clipboard.write").expect("scope");
+        let mut clipboard = CapabilityDescriptor::new(
+            CapabilityId("device.interact".into()),
+            1,
+            CapabilityDomain::Device,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("descriptor");
+        clipboard.required_scopes.push(clipboard_scope.clone());
+        clipboard.normalize().expect("normalize");
+
+        assert!(AuthorityGrant::new().permits(&clipboard).is_err());
+        let scoped_without_write = AuthorityGrant::new().with_scope(clipboard_scope.clone());
+        assert!(scoped_without_write.permits(&clipboard).is_err());
+        let mut allowed = AuthorityGrant::new().with_scope(clipboard_scope);
+        allowed.allow_external_write = true;
+        assert!(allowed.permits(&clipboard).is_ok());
+
+        let app_scope = AuthorityScope::new("app.launch").expect("scope");
+        let mut app = CapabilityDescriptor::new(
+            CapabilityId("app.action".into()),
+            1,
+            CapabilityDomain::App,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("descriptor");
+        app.required_scopes.push(app_scope.clone());
+        app.normalize().expect("normalize");
+
+        assert!(AuthorityGrant::new().permits(&app).is_err());
+        let mut app_allowed = AuthorityGrant::new().with_scope(app_scope);
+        app_allowed.allow_external_write = true;
+        assert!(app_allowed.permits(&app).is_ok());
+    }
+
+    #[test]
+    fn production_verifier_requires_device_and_app_receipts() {
+        let mut verifier = AndroidProductionVerifier;
+        let device_descriptor = CapabilityDescriptor::new(
+            CapabilityId("device.interact".into()),
+            1,
+            CapabilityDomain::Device,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("device descriptor");
+        let device_action = TypedAction::DeviceInteract {
+            surface: "clipboard".into(),
+            operation: "set_text".into(),
+            argument: Some("NTD97".into()),
+        };
+        let accepted_device = ActionOutput {
+            summary: "clipboard written".into(),
+            value: ActionValue::None,
+            evidence: vec![
+                "android-clipboard-write".into(),
+                "operation:set_text".into(),
+            ],
+        };
+        assert_eq!(
+            verifier.verify(&device_descriptor, &device_action, &accepted_device),
+            ActionVerification::Accept
+        );
+
+        let app_descriptor = CapabilityDescriptor::new(
+            CapabilityId("app.action".into()),
+            1,
+            CapabilityDomain::App,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("app descriptor");
+        let app_action = TypedAction::AppAction {
+            app: "ai.ntd97.mobile".into(),
+            action: "launch".into(),
+            payload: Vec::new(),
+        };
+        let rejected_app = ActionOutput {
+            summary: "launch claimed".into(),
+            value: ActionValue::None,
+            evidence: vec!["operation:launch".into()],
+        };
+        assert!(matches!(
+            verifier.verify(&app_descriptor, &app_action, &rejected_app),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
+    #[test]
     fn device_adapter_scopes_verified_fields_to_selected_surface() {
         let snapshot = ResourceSnapshot {
             available_ram_bytes: 123,
