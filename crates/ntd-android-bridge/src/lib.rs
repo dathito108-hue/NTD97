@@ -2822,6 +2822,87 @@ fn governed_explicit_action_plan(
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|artifact.upload|{url}\t{path}\nEND"
         ))
+    } else if lower.starts_with("observe pc ") {
+        let rest = trimmed
+            .get("observe pc ".len()..)
+            .ok_or_else(|| "paired-PC observe command boundary failed".to_owned())?;
+        let Some((peer, surface)) = rest.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_pc_peer_alias(peer)
+            || surface.trim().is_empty()
+            || surface != surface.trim()
+            || surface
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.observe|{peer}\t{surface}\nEND"
+        ))
+    } else if lower.starts_with("execute pc ") {
+        let rest = trimmed
+            .get("execute pc ".len()..)
+            .ok_or_else(|| "paired-PC execute command boundary failed".to_owned())?;
+        let Some((peer, program)) = rest.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_pc_peer_alias(peer)
+            || program.trim().is_empty()
+            || program != program.trim()
+            || program
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t' | '\u{1f}' | ' '))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.execute|{peer}\t{program}\t\t\nEND"
+        ))
+    } else if lower.starts_with("read pc file ") {
+        let rest = trimmed
+            .get("read pc file ".len()..)
+            .ok_or_else(|| "paired-PC artifact read command boundary failed".to_owned())?;
+        let Some((peer, path)) = rest.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_pc_peer_alias(peer)
+            || path.trim().is_empty()
+            || path != path.trim()
+            || path
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.artifact.read|{peer}\t{path}\nEND"
+        ))
+    } else if lower.starts_with("write pc file ") {
+        let rest = trimmed
+            .get("write pc file ".len()..)
+            .ok_or_else(|| "paired-PC artifact write command boundary failed".to_owned())?;
+        let Some((target, text)) = rest.split_once(" to ") else {
+            return Ok(None);
+        };
+        let Some((peer, path)) = target.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_pc_peer_alias(peer)
+            || path.trim().is_empty()
+            || path != path.trim()
+            || text.is_empty()
+            || path
+                .chars()
+                .chain(text.chars())
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.artifact.write|{peer}\t{path}\t{text}\nEND"
+        ))
     } else if lower.starts_with("set clipboard to ") {
         let value = trimmed
             .get("set clipboard to ".len()..)
@@ -2935,6 +3016,35 @@ fn external_write_approval(
             ) if action == "launch" && payload.is_empty() && !app.trim().is_empty() => {
                 capabilities.insert("app.action".to_owned());
                 rationales.push(format!("launch Android app package {app}"));
+            }
+            (
+                "pc.execute",
+                TypedAction::PcExecute {
+                    peer,
+                    program,
+                    args,
+                    working_dir,
+                },
+            ) if valid_pc_peer_alias(peer) && !program.trim().is_empty() => {
+                capabilities.insert("pc.execute".to_owned());
+                rationales.push(format!(
+                    "execute paired-PC program {program} on {peer} with {} typed arguments{}",
+                    args.len(),
+                    working_dir
+                        .as_ref()
+                        .map(|dir| format!(" in {dir}"))
+                        .unwrap_or_default()
+                ));
+            }
+            (
+                "pc.artifact.write",
+                TypedAction::PcArtifactWrite { peer, path, bytes },
+            ) if valid_pc_peer_alias(peer) && !path.trim().is_empty() && !bytes.is_empty() => {
+                capabilities.insert("pc.artifact.write".to_owned());
+                rationales.push(format!(
+                    "write {} bytes to paired-PC artifact {path} on {peer}",
+                    bytes.len()
+                ));
             }
             _ => return Err("unsupported external-write action requested".into()),
         }
