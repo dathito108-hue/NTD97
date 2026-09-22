@@ -60,6 +60,7 @@ const CHAT_STATUS_FAILED: i32 = 4;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
 const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
 const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
+const PLATFORM_DEVICE_APP_PROTOCOL_VERSION: u8 = 1;
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
@@ -343,6 +344,133 @@ fn decode_android_web_fetch_result(bytes: &[u8]) -> Result<AndroidWebFetchResult
     })
 }
 
+fn android_platform_receipt(method: &str, value: &str) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android platform thread: {error}"))?;
+    let jvalue = env
+        .new_string(value)
+        .map_err(|error| format!("encode Android platform action: {error}"))?;
+    let jvalue_object = JObject::from(jvalue);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdDeviceAppPlatform",
+            method,
+            "(Ljava/lang/String;)[B",
+            &[JValue::Object(&jvalue_object)],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android device/app platform boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android device/app response: {error}"))?;
+    decode_android_platform_receipt(&bytes)
+}
+
+fn decode_android_platform_receipt(bytes: &[u8]) -> Result<String, String> {
+    let mut cursor = PlatformCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_DEVICE_APP_PROTOCOL_VERSION {
+        return Err("unsupported Android device/app platform protocol".into());
+    }
+    let success = cursor.u8()?;
+    let message = cursor.string()?;
+    if !cursor.finished() {
+        return Err("invalid Android device/app response framing".into());
+    }
+    match success {
+        1 if !message.trim().is_empty() => Ok(message),
+        0 => Err(format!("Android device/app action failed: {message}")),
+        _ => Err("invalid Android device/app platform status".into()),
+    }
+}
+
+struct AndroidDeviceInteractAdapter;
+
+impl CapabilityAdapter for AndroidDeviceInteractAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::DeviceInteract {
+            surface,
+            operation,
+            argument,
+        } = action
+        else {
+            return Err("Android device interaction adapter received wrong action".into());
+        };
+        if surface != "clipboard" || operation != "set_text" {
+            return Err("unsupported Android device interaction".into());
+        }
+        let text = argument
+            .as_deref()
+            .ok_or_else(|| "clipboard set_text requires an argument".to_owned())?;
+        let receipt = android_platform_receipt("clipboardSet", text)?;
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: "verified Android clipboard text write".into(),
+                value: ActionValue::Fields(BTreeMap::from([
+                    ("surface".into(), "clipboard".into()),
+                    ("operation".into(), "set_text".into()),
+                    ("receipt".into(), receipt.clone()),
+                ])),
+                evidence: vec![
+                    "android-clipboard-write".into(),
+                    "operation:set_text".into(),
+                    receipt,
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+struct AndroidAppActionAdapter;
+
+impl CapabilityAdapter for AndroidAppActionAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::AppAction {
+            app,
+            action,
+            payload,
+        } = action
+        else {
+            return Err("Android app adapter received wrong action".into());
+        };
+        if action != "launch" || !payload.is_empty() {
+            return Err("unsupported Android app action".into());
+        }
+        let receipt = android_platform_receipt("launchApp", app)?;
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified Android app launch: {app}"),
+                value: ActionValue::Fields(BTreeMap::from([
+                    ("package".into(), app.clone()),
+                    ("operation".into(), "launch".into()),
+                    ("receipt".into(), receipt.clone()),
+                ])),
+                evidence: vec![
+                    "android-app-launch".into(),
+                    "operation:launch".into(),
+                    receipt,
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 struct AndroidScopedFileAdapter {
     root: PathBuf,
@@ -574,6 +702,36 @@ impl ActionVerifier for AndroidProductionVerifier {
                     .iter()
                     .any(|item| item == "android-app-private-file")
                     && output.evidence.iter().any(|item| item == "operation:write")
+            }
+            (
+                "device.interact",
+                TypedAction::DeviceInteract {
+                    surface,
+                    operation,
+                    ..
+                },
+            ) => {
+                surface == "clipboard"
+                    && operation == "set_text"
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-clipboard-write")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "operation:set_text")
+            }
+            ("app.action", TypedAction::AppAction { action, .. }) => {
+                action == "launch"
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-app-launch")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "operation:launch")
             }
             _ => false,
         };
