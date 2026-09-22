@@ -1931,13 +1931,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .iter()
                         .any(|item| item.starts_with("status:2"))
             }
-            (
-                "web.search",
-                TypedAction::WebSearch {
-                    max_results,
-                    ..
-                },
-            ) => {
+            ("web.search", TypedAction::WebSearch { max_results, .. }) => {
                 let ActionValue::TextList(items) = &output.value else {
                     return ActionVerification::Reject {
                         reason: "normalized WebSearch output is not a text list".into(),
@@ -1968,14 +1962,8 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .evidence
                         .iter()
                         .any(|item| item.starts_with("status:2"))
-                    && output
-                        .evidence
-                        .iter()
-                        .any(|item| item == &expected_count)
-                    && output
-                        .evidence
-                        .iter()
-                        .any(|item| item == &expected_hash)
+                    && output.evidence.iter().any(|item| item == &expected_count)
+                    && output.evidence.iter().any(|item| item == &expected_hash)
                     && output.evidence.iter().any(|item| {
                         item.strip_prefix("source:")
                             .is_some_and(|source| source.starts_with("https://"))
@@ -5633,9 +5621,7 @@ fn production_capability_probe(
         return Err("production web.search normalized result set is invalid".into());
     }
     if search_output.evidence.iter().any(|item| {
-        item.contains("?q=")
-            || item.contains("per_page=")
-            || item.contains("search/repositories")
+        item.contains("?q=") || item.contains("per_page=") || item.contains("search/repositories")
     }) {
         return Err("production web.search leaked endpoint path/query into evidence".into());
     }
@@ -6729,9 +6715,7 @@ mod tests {
         assert_eq!(decoded.source, "https://api.example.com");
         assert_eq!(decoded.items.len(), 1);
 
-        let items = vec![
-            "NTD97 result\nhttps://example.com/result\nnormalized snippet".to_owned(),
-        ];
+        let items = vec!["NTD97 result\nhttps://example.com/result\nnormalized snippet".to_owned()];
         let hash = digest_hex(&normalized_search_value_hash(&items).expect("hash"));
         let output = ActionOutput {
             summary: "verified normalized search".into(),
