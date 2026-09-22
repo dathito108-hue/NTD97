@@ -38,6 +38,7 @@ public interface NtdRuntimeHost {
         public static final int CANCELLED = 3;
         public static final int ERROR = 4;
         public static final int APPROVAL_REQUIRED = 5;
+        public static final int ACTION_CHECKPOINTED = 6;
 
         public final int kind;
         public final int tokenId;
