@@ -307,10 +307,7 @@ fn parse_action_line(
     let capability_id = CapabilityId(capability.to_owned());
     let side_effect = match capability {
         "file.write" | "artifact.download" => SideEffectClass::Reversible,
-        "artifact.upload"
-        | "file.grant.write"
-        | "browser.interact"
-        | "device.interact"
+        "artifact.upload" | "file.grant.write" | "browser.interact" | "device.interact"
         | "app.action" => SideEffectClass::ExternalWrite,
         _ => SideEffectClass::ReadOnly,
     };
