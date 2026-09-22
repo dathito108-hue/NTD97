@@ -25,7 +25,9 @@ public final class MainActivity extends Activity {
     public static final String EXTRA_OPEN_APPROVAL = "open_approval";
     private static final int NOTIFICATION_PERMISSION_REQUEST = 97;
     private static final int MICROPHONE_PERMISSION_REQUEST = 98;
+    private static final int STORAGE_TREE_REQUEST = 99;
     private static final int CHAT_MAX_NEW_TOKENS = 64;
+    private static final String DEFAULT_STORAGE_GRANT = "shared";
 
     private NtdAvatarGLSurfaceView avatarView;
     private TextView statusView;
@@ -139,6 +141,16 @@ public final class MainActivity extends Activity {
                         0,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         1.0f));
+
+        Button storageGrant = new Button(this);
+        storageGrant.setText("Grant storage");
+        storageGrant.setOnClickListener(view -> requestStorageGrant());
+        actionRow.addView(
+                storageGrant,
+                new LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1.0f));
         controls.addView(actionRow);
 
         if (BuildConfig.DEBUG) {
@@ -198,6 +210,28 @@ public final class MainActivity extends Activity {
         chatExecutor.shutdownNow();
         audioController.close();
         super.onDestroy();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != STORAGE_TREE_REQUEST) {
+            return;
+        }
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            statusView.setText("Storage grant cancelled");
+            return;
+        }
+        Uri tree = data.getData();
+        boolean persisted = NtdStorageGrantPlatform.persistGrant(
+                this,
+                tree,
+                DEFAULT_STORAGE_GRANT,
+                data.getFlags());
+        statusView.setText(
+                persisted
+                        ? "Storage grant saved as " + DEFAULT_STORAGE_GRANT
+                        : "Storage grant could not be persisted");
     }
 
     @Override
@@ -493,6 +527,12 @@ public final class MainActivity extends Activity {
                 this,
                 getPackageName() + ".NtdPhysicalEvidenceActivity");
         startActivity(validation);
+    }
+
+    private void requestStorageGrant() {
+        startActivityForResult(
+                NtdStorageGrantPlatform.buildGrantIntent(),
+                STORAGE_TREE_REQUEST);
     }
 
     private void openOverlay() {

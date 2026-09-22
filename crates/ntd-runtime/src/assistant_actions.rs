@@ -147,6 +147,22 @@ fn parse_action_line(
                 path: path.to_owned(),
             }
         }
+        "artifact.upload" => {
+            let (url, path) = payload
+                .split_once('\t')
+                .ok_or(AssistantPlanError::InvalidPayload)?;
+            if url.trim().is_empty()
+                || path.trim().is_empty()
+                || url != url.trim()
+                || path != path.trim()
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::ArtifactUpload {
+                url: url.to_owned(),
+                path: path.to_owned(),
+            }
+        }
         "browser.observe" => TypedAction::BrowserObserve {
             target: payload.to_owned(),
         },
@@ -172,6 +188,22 @@ fn parse_action_line(
         "file.read" => TypedAction::FileRead {
             path: payload.to_owned(),
         },
+        "file.grant.read" => {
+            let (alias, path) = payload
+                .split_once('\t')
+                .ok_or(AssistantPlanError::InvalidPayload)?;
+            if alias.trim().is_empty()
+                || path.trim().is_empty()
+                || alias != alias.trim()
+                || path != path.trim()
+                || path.contains('\t')
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::FileRead {
+                path: format!("{alias}\t{path}"),
+            }
+        }
         "file.write" => {
             let (path, text) = payload
                 .split_once('\t')
@@ -186,6 +218,27 @@ fn parse_action_line(
             }
             TypedAction::FileWrite {
                 path: path.to_owned(),
+                bytes: text.as_bytes().to_vec(),
+            }
+        }
+        "file.grant.write" => {
+            let mut parts = payload.splitn(3, '\t');
+            let alias = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let path = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let text = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            if alias.trim().is_empty()
+                || path.trim().is_empty()
+                || alias != alias.trim()
+                || path != path.trim()
+                || text.is_empty()
+                || text.contains('\r')
+                || text.contains('\n')
+                || text.contains('\t')
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::FileWrite {
+                path: format!("{alias}\t{path}"),
                 bytes: text.as_bytes().to_vec(),
             }
         }
@@ -254,7 +307,8 @@ fn parse_action_line(
     let capability_id = CapabilityId(capability.to_owned());
     let side_effect = match capability {
         "file.write" | "artifact.download" => SideEffectClass::Reversible,
-        "browser.interact" | "device.interact" | "app.action" => SideEffectClass::ExternalWrite,
+        "artifact.upload" | "file.grant.write" | "browser.interact" | "device.interact"
+        | "app.action" => SideEffectClass::ExternalWrite,
         _ => SideEffectClass::ReadOnly,
     };
     let node = ActionNode {
@@ -642,6 +696,47 @@ END",
                 app: "ai.ntd97.mobile".into(),
                 action: "launch".into(),
                 payload: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn granted_storage_and_upload_keep_canonical_side_effects() {
+        let parsed = parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|file.grant.read|shared\tnotes/read.txt\n2|file.grant.write|shared\tnotes/write.txt\thello\n3|artifact.upload|https://example.com/upload\tartifacts/report.bin\nEND",
+        )
+        .expect("plan");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+
+        assert_eq!(plan.graph.actions[0].side_effect, SideEffectClass::ReadOnly);
+        assert_eq!(
+            plan.graph.actions[1].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+        assert_eq!(
+            plan.graph.actions[2].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+        assert_eq!(
+            plan.payloads.get(&1),
+            Some(&TypedAction::FileRead {
+                path: "shared\tnotes/read.txt".into(),
+            })
+        );
+        assert_eq!(
+            plan.payloads.get(&2),
+            Some(&TypedAction::FileWrite {
+                path: "shared\tnotes/write.txt".into(),
+                bytes: b"hello".to_vec(),
+            })
+        );
+        assert_eq!(
+            plan.payloads.get(&3),
+            Some(&TypedAction::ArtifactUpload {
+                url: "https://example.com/upload".into(),
+                path: "artifacts/report.bin".into(),
             })
         );
     }

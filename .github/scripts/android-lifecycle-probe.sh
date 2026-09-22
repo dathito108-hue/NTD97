@@ -86,9 +86,17 @@ for REQUIRED in \
   file_write=ok \
   file_read=ok \
   file_rollback=ok \
+  storage_grant_runtime_scope=ok \
+  storage_grant_missing_block=ok \
+  storage_grant_write_authority_block=ok \
+  storage_grant_write_missing_block=ok \
   artifact_download_suspend=ok \
   artifact_download_resume=ok \
   artifact_download_rollback=ok \
+  artifact_upload_authority_block=ok \
+  artifact_upload_suspend=ok \
+  artifact_upload_resume=ok \
+  artifact_upload_receipt=ok \
   device_clipboard_authority_block=ok \
   device_clipboard_write=ok \
   app_launch_authority_block=ok \

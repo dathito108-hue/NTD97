@@ -64,6 +64,7 @@ const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
 const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
 const PLATFORM_BROWSER_PROTOCOL_VERSION: u8 = 1;
 const PLATFORM_DEVICE_APP_PROTOCOL_VERSION: u8 = 1;
+const PLATFORM_STORAGE_GRANT_PROTOCOL_VERSION: u8 = 1;
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
@@ -378,6 +379,49 @@ fn android_https_fetch(url: &str) -> Result<AndroidWebFetchResult, String> {
     let bytes = env
         .convert_byte_array(&encoded)
         .map_err(|error| format!("decode Android HTTPS platform response: {error}"))?;
+    decode_android_web_fetch_result(&bytes)
+}
+
+fn android_https_put(
+    url: &str,
+    body: &[u8],
+    digest: &[u8; 32],
+) -> Result<AndroidWebFetchResult, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android upload thread: {error}"))?;
+    let jurl = env
+        .new_string(url)
+        .map_err(|error| format!("encode artifact.upload URL for Android: {error}"))?;
+    let jbody = env
+        .byte_array_from_slice(body)
+        .map_err(|error| format!("encode artifact.upload body for Android: {error}"))?;
+    let jdigest = env
+        .new_string(digest_hex(digest))
+        .map_err(|error| format!("encode artifact.upload digest for Android: {error}"))?;
+    let jurl_object = JObject::from(jurl);
+    let jbody_object = JObject::from(jbody);
+    let jdigest_object = JObject::from(jdigest);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdWebPlatform",
+            "put",
+            "(Ljava/lang/String;[BLjava/lang/String;)[B",
+            &[
+                JValue::Object(&jurl_object),
+                JValue::Object(&jbody_object),
+                JValue::Object(&jdigest_object),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android HTTPS upload boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android HTTPS upload response: {error}"))?;
     decode_android_web_fetch_result(&bytes)
 }
 
@@ -712,6 +756,149 @@ impl CapabilityAdapter for AndroidAppActionAdapter {
             },
             rollback_token: None,
         })
+    }
+}
+
+fn decode_android_storage_grant_result(bytes: &[u8]) -> Result<String, String> {
+    let mut cursor = PlatformCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_STORAGE_GRANT_PROTOCOL_VERSION {
+        return Err("unsupported Android storage grant protocol".into());
+    }
+    let success = cursor.u8()?;
+    let message = cursor.string()?;
+    if !cursor.finished() || message.len() > MAX_PLATFORM_TEXT_BYTES {
+        return Err("invalid Android storage grant response framing".into());
+    }
+    match success {
+        1 => Ok(message),
+        0 => Err(format!("Android storage grant action failed: {message}")),
+        _ => Err("invalid Android storage grant platform status".into()),
+    }
+}
+
+fn android_granted_file_read(path: &str) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android storage thread: {error}"))?;
+    let jpath = env
+        .new_string(path)
+        .map_err(|error| format!("encode granted file path: {error}"))?;
+    let jpath_object = JObject::from(jpath);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdStorageGrantPlatform",
+            "read",
+            "(Ljava/lang/String;)[B",
+            &[JValue::Object(&jpath_object)],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android granted file read: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android granted file read: {error}"))?;
+    decode_android_storage_grant_result(&bytes)
+}
+
+fn android_granted_file_write(path: &str, body: &[u8]) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android storage thread: {error}"))?;
+    let jpath = env
+        .new_string(path)
+        .map_err(|error| format!("encode granted file path: {error}"))?;
+    let jbody = env
+        .byte_array_from_slice(body)
+        .map_err(|error| format!("encode granted file bytes: {error}"))?;
+    let jpath_object = JObject::from(jpath);
+    let jbody_object = JObject::from(jbody);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdStorageGrantPlatform",
+            "write",
+            "(Ljava/lang/String;[B)[B",
+            &[JValue::Object(&jpath_object), JValue::Object(&jbody_object)],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android granted file write: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android granted file write: {error}"))?;
+    decode_android_storage_grant_result(&bytes)
+}
+
+fn granted_file_parts(path: &str) -> Result<(&str, &str), String> {
+    let (alias, relative) = path
+        .split_once('\t')
+        .ok_or_else(|| "granted file path must contain alias and relative path".to_owned())?;
+    if alias.trim().is_empty()
+        || relative.trim().is_empty()
+        || alias != alias.trim()
+        || relative != relative.trim()
+    {
+        return Err("invalid granted file path".into());
+    }
+    Ok((alias, relative))
+}
+
+struct AndroidUserGrantedFileAdapter;
+
+impl CapabilityAdapter for AndroidUserGrantedFileAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        match action {
+            TypedAction::FileRead { path } => {
+                let (alias, relative) = granted_file_parts(path)?;
+                let text = android_granted_file_read(path)?;
+                Ok(AdapterResult::Completed {
+                    output: ActionOutput {
+                        summary: format!("verified user-granted file read: {alias}/{relative}"),
+                        value: ActionValue::Text(text),
+                        evidence: vec![
+                            "android-user-granted-file".into(),
+                            format!("grant:{alias}"),
+                            format!("path:{relative}"),
+                            "operation:read".into(),
+                        ],
+                    },
+                    rollback_token: None,
+                })
+            }
+            TypedAction::FileWrite { path, bytes } => {
+                let (alias, relative) = granted_file_parts(path)?;
+                let receipt = android_granted_file_write(path, bytes)?;
+                Ok(AdapterResult::Completed {
+                    output: ActionOutput {
+                        summary: format!("verified user-granted file write: {alias}/{relative}"),
+                        value: ActionValue::Fields(BTreeMap::from([
+                            ("grant".into(), alias.to_owned()),
+                            ("path".into(), relative.to_owned()),
+                            ("bytes".into(), bytes.len().to_string()),
+                            ("receipt".into(), receipt.clone()),
+                        ])),
+                        evidence: vec![
+                            "android-user-granted-file".into(),
+                            format!("grant:{alias}"),
+                            format!("path:{relative}"),
+                            "operation:write".into(),
+                            format!("receipt:{receipt}"),
+                        ],
+                    },
+                    rollback_token: None,
+                })
+            }
+            _ => Err("Android user-granted file adapter received wrong action".into()),
+        }
     }
 }
 
@@ -1131,6 +1318,102 @@ impl CapabilityAdapter for AndroidArtifactDownloadAdapter {
     }
 }
 
+#[derive(Debug, Clone)]
+struct AndroidArtifactUploadAdapter {
+    file: AndroidScopedFileAdapter,
+}
+
+impl AndroidArtifactUploadAdapter {
+    fn new(root: PathBuf) -> Result<Self, String> {
+        Ok(Self {
+            file: AndroidScopedFileAdapter::new(root)?,
+        })
+    }
+
+    fn source_bytes(&self, relative: &str) -> Result<Vec<u8>, String> {
+        let target = self.file.scoped_path(relative)?;
+        let bytes = fs::read(&target).map_err(|error| format!("read upload source: {error}"))?;
+        if bytes.is_empty() || bytes.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("upload source is empty or exceeds native limit".into());
+        }
+        Ok(bytes)
+    }
+}
+
+impl CapabilityAdapter for AndroidArtifactUploadAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::ArtifactUpload { path, .. } = action else {
+            return Err("Android artifact upload adapter received wrong action".into());
+        };
+        let bytes = self.source_bytes(path)?;
+        let digest = sha256(&bytes);
+        let mut resume_token = Vec::with_capacity(33);
+        resume_token.push(1);
+        resume_token.extend_from_slice(&digest);
+        Ok(AdapterResult::Suspended {
+            resume_token,
+            note: "artifact upload source hashed and ready for idempotent PUT".into(),
+        })
+    }
+
+    fn resume(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+        resume_token: &[u8],
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::ArtifactUpload { url, path } = action else {
+            return Err("Android artifact upload adapter received wrong resume action".into());
+        };
+        if resume_token.len() != 33 || resume_token[0] != 1 {
+            return Err("invalid artifact upload resume token".into());
+        }
+        let mut expected = [0u8; 32];
+        expected.copy_from_slice(&resume_token[1..]);
+        let bytes = self.source_bytes(path)?;
+        let digest = sha256(&bytes);
+        if digest != expected {
+            return Err("artifact upload source changed after suspension".into());
+        }
+
+        let result = match android_https_put(url, &bytes, &digest) {
+            Ok(result) => result,
+            Err(reason) => {
+                return Ok(AdapterResult::Retryable {
+                    reason,
+                    resume_token: Some(resume_token.to_vec()),
+                })
+            }
+        };
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified idempotent artifact upload: {path}"),
+                value: ActionValue::Fields(BTreeMap::from([
+                    ("path".into(), path.clone()),
+                    ("bytes".into(), bytes.len().to_string()),
+                    ("sha256".into(), digest_hex(&digest)),
+                    ("url".into(), result.final_url.clone()),
+                    ("status".into(), result.status.to_string()),
+                ])),
+                evidence: vec![
+                    "android-artifact-upload".into(),
+                    "transport:https-put".into(),
+                    format!("status:{}", result.status),
+                    format!("sha256:{}", digest_hex(&digest)),
+                    format!("bytes:{}", bytes.len()),
+                    format!("url:{}", result.final_url),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 struct AndroidProductionVerifier;
 
@@ -1209,6 +1492,61 @@ impl ActionVerifier for AndroidProductionVerifier {
                     .any(|item| item == "android-app-private-file")
                     && output.evidence.iter().any(|item| item == "operation:write")
             }
+            ("file.grant.read", TypedAction::FileRead { path }) => {
+                let path_matches = granted_file_parts(path)
+                    .map(|(alias, relative)| {
+                        output
+                            .evidence
+                            .iter()
+                            .any(|item| item.strip_prefix("grant:") == Some(alias))
+                            && output
+                                .evidence
+                                .iter()
+                                .any(|item| item.strip_prefix("path:") == Some(relative))
+                    })
+                    .unwrap_or(false);
+                path_matches
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-user-granted-file")
+                    && output.evidence.iter().any(|item| item == "operation:read")
+            }
+            ("file.grant.write", TypedAction::FileWrite { path, bytes }) => {
+                let digest = digest_hex(&sha256(bytes));
+                let receipt_suffix = format!(":{}:{digest}", bytes.len());
+                let path_matches = granted_file_parts(path)
+                    .map(|(alias, relative)| {
+                        output
+                            .evidence
+                            .iter()
+                            .any(|item| item.strip_prefix("grant:") == Some(alias))
+                            && output
+                                .evidence
+                                .iter()
+                                .any(|item| item.strip_prefix("path:") == Some(relative))
+                    })
+                    .unwrap_or(false);
+                path_matches
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-user-granted-file")
+                    && output.evidence.iter().any(|item| item == "operation:write")
+                    && output
+                        .evidence
+                        .iter()
+                        .filter_map(|item| item.strip_prefix("receipt:grant-write:"))
+                        .any(|receipt| receipt.ends_with(&receipt_suffix))
+                    && matches!(
+                        &output.value,
+                        ActionValue::Fields(fields)
+                            if fields.get("bytes") == Some(&bytes.len().to_string())
+                                && fields
+                                    .get("receipt")
+                                    .is_some_and(|receipt| receipt.ends_with(&receipt_suffix))
+                    )
+            }
             ("artifact.download", TypedAction::ArtifactDownload { .. }) => {
                 output
                     .evidence
@@ -1222,6 +1560,48 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .evidence
                         .iter()
                         .any(|item| item.starts_with("sha256:"))
+            }
+            ("artifact.upload", TypedAction::ArtifactUpload { url, .. }) => {
+                let fields = match &output.value {
+                    ActionValue::Fields(fields) => Some(fields),
+                    _ => None,
+                };
+                let field_url = fields.and_then(|fields| fields.get("url"));
+                let field_status = fields.and_then(|fields| fields.get("status"));
+                let field_hash = fields.and_then(|fields| fields.get("sha256"));
+                let field_bytes = fields.and_then(|fields| fields.get("bytes"));
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-artifact-upload")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "transport:https-put")
+                    && field_url == Some(url)
+                    && field_status.is_some_and(|status| status.starts_with('2'))
+                    && field_hash.is_some_and(|hash| hash.len() == 64)
+                    && field_bytes
+                        .and_then(|bytes| bytes.parse::<usize>().ok())
+                        .is_some_and(|bytes| bytes > 0 && bytes <= MAX_PLATFORM_TEXT_BYTES)
+                    && output.evidence.iter().any(|item| {
+                        field_status.is_some_and(|status| {
+                            item.strip_prefix("status:") == Some(status.as_str())
+                        })
+                    })
+                    && output.evidence.iter().any(|item| {
+                        field_hash
+                            .is_some_and(|hash| item.strip_prefix("sha256:") == Some(hash.as_str()))
+                    })
+                    && output.evidence.iter().any(|item| {
+                        field_bytes.is_some_and(|bytes| {
+                            item.strip_prefix("bytes:") == Some(bytes.as_str())
+                        })
+                    })
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("url:") == Some(url.as_str()))
             }
             (
                 "device.interact",
@@ -2089,6 +2469,22 @@ fn run_constrained_device_planner(
     })
 }
 
+fn granted_command_path(value: &str) -> Option<String> {
+    let (alias, relative) = value.split_once('/')?;
+    if alias.trim().is_empty()
+        || relative.trim().is_empty()
+        || alias != alias.trim()
+        || relative != relative.trim()
+        || alias
+            .chars()
+            .chain(relative.chars())
+            .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+    {
+        return None;
+    }
+    Some(format!("{alias}\t{relative}"))
+}
+
 fn governed_explicit_action_plan(
     user_message: &str,
 ) -> Result<Option<AssistantActionPlan>, String> {
@@ -2136,6 +2532,31 @@ fn governed_explicit_action_plan(
         }
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tclick\nEND"
+        ))
+    } else if lower.starts_with("read granted file ") {
+        let path = trimmed
+            .get("read granted file ".len()..)
+            .and_then(granted_command_path);
+        path.map(|path| format!("{NATIVE_ACTION_PROTOCOL_V1}\n1|file.grant.read|{path}\nEND"))
+    } else if lower.starts_with("write granted file ") {
+        let rest = trimmed
+            .get("write granted file ".len()..)
+            .ok_or_else(|| "granted file write command boundary failed".to_owned())?;
+        let Some((path, text)) = rest.split_once(" to ") else {
+            return Ok(None);
+        };
+        let Some(path) = granted_command_path(path) else {
+            return Ok(None);
+        };
+        if text.is_empty()
+            || text
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|file.grant.write|{path}\t{text}\nEND"
         ))
     } else if lower.starts_with("set clipboard to ") {
         let value = trimmed
@@ -2192,12 +2613,32 @@ fn external_write_approval(
             .payloads
             .get(&node.id)
             .ok_or_else(|| "external-write action payload is missing".to_owned())?;
-        match action {
-            TypedAction::BrowserInteract {
-                target,
-                operation,
-                value,
-            } if (operation == "click" && value.is_none())
+        match (node.capability.0.as_str(), action) {
+            ("artifact.upload", TypedAction::ArtifactUpload { url, path })
+                if !url.trim().is_empty() && !path.trim().is_empty() =>
+            {
+                capabilities.insert("artifact.upload".to_owned());
+                rationales.push(format!(
+                    "upload app-private artifact {path} to {url} using idempotent HTTPS PUT"
+                ));
+            }
+            ("file.grant.write", TypedAction::FileWrite { path, bytes })
+                if !path.trim().is_empty() && !bytes.is_empty() =>
+            {
+                capabilities.insert("file.grant.write".to_owned());
+                rationales.push(format!(
+                    "write {} bytes to user-granted Android storage",
+                    bytes.len()
+                ));
+            }
+            (
+                "browser.interact",
+                TypedAction::BrowserInteract {
+                    target,
+                    operation,
+                    value,
+                },
+            ) if (operation == "click" && value.is_none())
                 || (operation == "set_value"
                     && value.as_ref().is_some_and(|value| !value.is_empty())) =>
             {
@@ -2206,22 +2647,28 @@ fn external_write_approval(
                     "interact with the controlled browser using {operation} on selector {target}"
                 ));
             }
-            TypedAction::DeviceInteract {
-                surface,
-                operation,
-                argument,
-            } if surface == "clipboard"
+            (
+                "device.interact",
+                TypedAction::DeviceInteract {
+                    surface,
+                    operation,
+                    argument,
+                },
+            ) if surface == "clipboard"
                 && operation == "set_text"
                 && argument.as_ref().is_some_and(|value| !value.is_empty()) =>
             {
                 capabilities.insert("device.interact".to_owned());
                 rationales.push("write text to the Android clipboard".to_owned());
             }
-            TypedAction::AppAction {
-                app,
-                action,
-                payload,
-            } if action == "launch" && payload.is_empty() && !app.trim().is_empty() => {
+            (
+                "app.action",
+                TypedAction::AppAction {
+                    app,
+                    action,
+                    payload,
+                },
+            ) if action == "launch" && payload.is_empty() && !app.trim().is_empty() => {
                 capabilities.insert("app.action".to_owned());
                 rationales.push(format!("launch Android app package {app}"));
             }
@@ -2268,7 +2715,10 @@ fn execute_android_verified_actions(
         "browser.interact",
         "file.read",
         "file.write",
+        "file.grant.read",
+        "file.grant.write",
         "artifact.download",
+        "artifact.upload",
         "device.interact",
         "app.action",
     ];
@@ -2377,6 +2827,36 @@ fn execute_android_verified_actions(
                 }
                 descriptor
             }
+            "file.grant.read" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("file.grant.read".into()),
+                    1,
+                    CapabilityDomain::File,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.user_grant.read")
+                            .map_err(|error| format!("granted file read scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "file.grant.write" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("file.grant.write".into()),
+                    1,
+                    CapabilityDomain::File,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.user_grant.write")
+                            .map_err(|error| format!("granted file write scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
             "file.write" => {
                 let mut descriptor = CapabilityDescriptor::new(
                     CapabilityId("file.write".into()),
@@ -2406,6 +2886,26 @@ fn execute_android_verified_actions(
                     descriptor.required_scopes.push(
                         AuthorityScope::new("network.read")
                             .map_err(|error| format!("network scope: {error:?}"))?,
+                    );
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.app_private")
+                            .map_err(|error| format!("file scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "artifact.upload" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("artifact.upload".into()),
+                    1,
+                    CapabilityDomain::Web,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.resumable = true;
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("network.write")
+                            .map_err(|error| format!("network write scope: {error:?}"))?,
                     );
                     descriptor.required_scopes.push(
                         AuthorityScope::new("file.app_private")
@@ -2492,6 +2992,22 @@ fn execute_android_verified_actions(
             )
             .map_err(|error| format!("register Android browser interaction adapter: {error:?}"))?;
     }
+    if fabric_capabilities.contains("file.grant.read") {
+        fabric
+            .register_adapter(
+                CapabilityId("file.grant.read".into()),
+                AndroidUserGrantedFileAdapter,
+            )
+            .map_err(|error| format!("register user-granted file.read adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("file.grant.write") {
+        fabric
+            .register_adapter(
+                CapabilityId("file.grant.write".into()),
+                AndroidUserGrantedFileAdapter,
+            )
+            .map_err(|error| format!("register user-granted file.write adapter: {error:?}"))?;
+    }
     if fabric_capabilities.contains("file.read") || fabric_capabilities.contains("file.write") {
         let adapter = AndroidScopedFileAdapter::new(model.capability_root.clone())?;
         if fabric_capabilities.contains("file.read") {
@@ -2512,6 +3028,14 @@ fn execute_android_verified_actions(
                 AndroidArtifactDownloadAdapter::new(model.capability_root.clone())?,
             )
             .map_err(|error| format!("register artifact download adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("artifact.upload") {
+        fabric
+            .register_adapter(
+                CapabilityId("artifact.upload".into()),
+                AndroidArtifactUploadAdapter::new(model.capability_root.clone())?,
+            )
+            .map_err(|error| format!("register artifact upload adapter: {error:?}"))?;
     }
     if fabric_capabilities.contains("device.interact") {
         fabric
@@ -2542,6 +3066,12 @@ fn execute_android_verified_actions(
                 .map_err(|error| format!("browser observe authority scope: {error:?}"))?,
         );
     }
+    if fabric_capabilities.contains("file.grant.read") {
+        authority = authority.with_scope(
+            AuthorityScope::new("file.user_grant.read")
+                .map_err(|error| format!("granted file read authority scope: {error:?}"))?,
+        );
+    }
     if action_plan
         .graph
         .actions
@@ -2552,6 +3082,18 @@ fn execute_android_verified_actions(
             return Err("external-write action requires explicit chat approval".into());
         }
         authority.allow_external_write = true;
+        if fabric_capabilities.contains("artifact.upload") {
+            authority = authority.with_scope(
+                AuthorityScope::new("network.write")
+                    .map_err(|error| format!("network write authority scope: {error:?}"))?,
+            );
+        }
+        if fabric_capabilities.contains("file.grant.write") {
+            authority = authority.with_scope(
+                AuthorityScope::new("file.user_grant.write")
+                    .map_err(|error| format!("granted file write authority scope: {error:?}"))?,
+            );
+        }
         if fabric_capabilities.contains("browser.interact") {
             authority = authority.with_scope(
                 AuthorityScope::new("browser.interact")
@@ -4056,6 +4598,176 @@ fn production_capability_probe(
         return Err("artifact rollback did not restore absent state".into());
     }
 
+    let grant_read_scope = AuthorityScope::new("file.user_grant.read")
+        .map_err(|error| format!("granted file read scope: {error:?}"))?;
+    let mut grant_read_descriptor = CapabilityDescriptor::new(
+        CapabilityId("file.grant.read".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("file.grant.read descriptor: {error:?}"))?;
+    grant_read_descriptor
+        .required_scopes
+        .push(grant_read_scope.clone());
+    grant_read_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize file.grant.read descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .permits(&grant_read_descriptor)
+        .is_ok()
+    {
+        return Err("user-granted file read was not denied without runtime scope".into());
+    }
+    AuthorityGrant::new()
+        .with_scope(grant_read_scope)
+        .permits(&grant_read_descriptor)
+        .map_err(|error| format!("user-granted read runtime scope rejected: {error:?}"))?;
+    let grant_read_action = TypedAction::FileRead {
+        path: "shared\tprobe.txt".into(),
+    };
+    let mut user_granted_file = AndroidUserGrantedFileAdapter;
+    if user_granted_file
+        .execute(ntd_runtime::ActionId(101), &grant_read_action)
+        .is_ok()
+    {
+        return Err("missing persisted SAF grant did not fail closed".into());
+    }
+
+    let grant_write_scope = AuthorityScope::new("file.user_grant.write")
+        .map_err(|error| format!("granted file write scope: {error:?}"))?;
+    let mut grant_write_descriptor = CapabilityDescriptor::new(
+        CapabilityId("file.grant.write".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("file.grant.write descriptor: {error:?}"))?;
+    grant_write_descriptor
+        .required_scopes
+        .push(grant_write_scope.clone());
+    grant_write_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize file.grant.write descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(grant_write_scope.clone())
+        .permits(&grant_write_descriptor)
+        .is_ok()
+    {
+        return Err(
+            "user-granted file write was not denied without external-write authority".into(),
+        );
+    }
+    let mut grant_write_authority = AuthorityGrant::new().with_scope(grant_write_scope);
+    grant_write_authority.allow_external_write = true;
+    grant_write_authority
+        .permits(&grant_write_descriptor)
+        .map_err(|error| format!("user-granted write runtime authority rejected: {error:?}"))?;
+    let grant_write_action = TypedAction::FileWrite {
+        path: "shared\tprobe.txt".into(),
+        bytes: b"NTD97-GRANT-PROBE".to_vec(),
+    };
+    if user_granted_file
+        .execute(ntd_runtime::ActionId(104), &grant_write_action)
+        .is_ok()
+    {
+        return Err("missing persisted SAF write grant did not fail closed".into());
+    }
+
+    let upload_relative = "m13/upload.bin";
+    let upload_source = b"NTD97-M13-VERIFIED-UPLOAD".to_vec();
+    let upload_write = TypedAction::FileWrite {
+        path: upload_relative.into(),
+        bytes: upload_source.clone(),
+    };
+    let upload_source_result = file
+        .execute(ntd_runtime::ActionId(102), &upload_write)
+        .map_err(|error| format!("prepare artifact upload source: {error}"))?;
+    let AdapterResult::Completed {
+        rollback_token: Some(upload_source_rollback),
+        ..
+    } = upload_source_result
+    else {
+        return Err("artifact upload source preparation lacked rollback token".into());
+    };
+
+    let upload_action = TypedAction::ArtifactUpload {
+        url: "https://httpbin.org/put".into(),
+        path: upload_relative.into(),
+    };
+    let mut upload_descriptor = CapabilityDescriptor::new(
+        CapabilityId("artifact.upload".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("artifact.upload descriptor: {error:?}"))?;
+    upload_descriptor.resumable = true;
+    let upload_network_scope = AuthorityScope::new("network.write")
+        .map_err(|error| format!("upload network authority scope: {error:?}"))?;
+    let upload_file_scope = AuthorityScope::new("file.app_private")
+        .map_err(|error| format!("upload file authority scope: {error:?}"))?;
+    upload_descriptor
+        .required_scopes
+        .extend([upload_network_scope.clone(), upload_file_scope.clone()]);
+    upload_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize artifact.upload descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(upload_network_scope.clone())
+        .with_scope(upload_file_scope.clone())
+        .permits(&upload_descriptor)
+        .is_ok()
+    {
+        return Err("artifact upload was not denied without external-write authority".into());
+    }
+    let mut upload_authority = AuthorityGrant::new()
+        .with_scope(upload_network_scope)
+        .with_scope(upload_file_scope);
+    upload_authority.allow_external_write = true;
+    upload_authority
+        .permits(&upload_descriptor)
+        .map_err(|error| format!("artifact upload explicit authority rejected: {error:?}"))?;
+
+    let mut upload = AndroidArtifactUploadAdapter::new(root.clone())?;
+    let upload_stage = upload
+        .execute(ntd_runtime::ActionId(103), &upload_action)
+        .map_err(|error| format!("production artifact.upload stage probe: {error}"))?;
+    let AdapterResult::Suspended {
+        resume_token: upload_resume,
+        ..
+    } = upload_stage
+    else {
+        return Err("production artifact.upload did not suspend before network write".into());
+    };
+    let upload_completed = upload
+        .resume(ntd_runtime::ActionId(103), &upload_action, &upload_resume)
+        .map_err(|error| format!("production artifact.upload resume probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: upload_output,
+        ..
+    } = upload_completed
+    else {
+        return Err("production artifact.upload resume did not complete".into());
+    };
+    if verifier.verify(&upload_descriptor, &upload_action, &upload_output)
+        != ActionVerification::Accept
+    {
+        return Err("production artifact.upload evidence verification failed".into());
+    }
+    let ActionValue::Fields(upload_fields) = &upload_output.value else {
+        return Err("artifact upload output did not contain field evidence".into());
+    };
+    if upload_fields.get("sha256") != Some(&digest_hex(&sha256(&upload_source))) {
+        return Err("artifact upload receipt hash does not match source bytes".into());
+    }
+    file.rollback(
+        ntd_runtime::ActionId(102),
+        &upload_write,
+        &upload_source_rollback,
+    )
+    .map_err(|error| format!("artifact upload source rollback: {error}"))?;
+
     let clipboard_scope = AuthorityScope::new("device.clipboard.write")
         .map_err(|error| format!("clipboard authority scope: {error:?}"))?;
     let mut clipboard_descriptor = CapabilityDescriptor::new(
@@ -4146,7 +4858,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
@@ -4505,6 +5217,149 @@ mod tests {
         };
         assert!(matches!(
             verifier.verify(&descriptor, action, &rejected),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
+    #[test]
+    fn governed_storage_and_upload_commands_materialize_canonical_actions() {
+        let read = governed_explicit_action_plan("read granted file shared/notes/read.txt")
+            .expect("read plan")
+            .expect("read action");
+        assert_eq!(
+            read.payloads.get(&1),
+            Some(&TypedAction::FileRead {
+                path: "shared\tnotes/read.txt".into(),
+            })
+        );
+
+        let write =
+            governed_explicit_action_plan("write granted file shared/notes/write.txt to sovereign")
+                .expect("write plan")
+                .expect("write action");
+        assert_eq!(
+            write.payloads.get(&1),
+            Some(&TypedAction::FileWrite {
+                path: "shared\tnotes/write.txt".into(),
+                bytes: b"sovereign".to_vec(),
+            })
+        );
+        assert_eq!(
+            write.graph.actions[0].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+        let write_approval = external_write_approval(&write)
+            .expect("write approval")
+            .expect("write approval required");
+        assert_eq!(write_approval.0, "file.grant.write");
+
+        let upload = match parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|artifact.upload|https://example.com/upload\tartifacts/report.bin\nEND",
+        )
+        .expect("upload protocol")
+        {
+            AssistantPlanDecision::Actions(plan) => plan,
+            AssistantPlanDecision::Direct => panic!("expected upload action plan"),
+        };
+        let upload_approval = external_write_approval(&upload)
+            .expect("upload approval")
+            .expect("upload approval required");
+        assert_eq!(upload_approval.0, "artifact.upload");
+        assert!(upload_approval.1.contains("idempotent HTTPS PUT"));
+    }
+
+    #[test]
+    fn production_verifier_requires_storage_and_upload_receipts() {
+        let mut verifier = AndroidProductionVerifier;
+        let grant_descriptor = CapabilityDescriptor::new(
+            CapabilityId("file.grant.write".into()),
+            1,
+            CapabilityDomain::File,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("grant descriptor");
+        let grant_action = TypedAction::FileWrite {
+            path: "shared\tnotes/out.txt".into(),
+            bytes: b"hello".to_vec(),
+        };
+        let grant_output = ActionOutput {
+            summary: "granted write".into(),
+            value: ActionValue::Fields(BTreeMap::from([
+                ("grant".into(), "shared".into()),
+                ("path".into(), "notes/out.txt".into()),
+                ("bytes".into(), "5".into()),
+                ("receipt".into(), "grant-write:shared:notes/out.txt:5:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824".into()),
+            ])),
+            evidence: vec![
+                "android-user-granted-file".into(),
+                "grant:shared".into(),
+                "path:notes/out.txt".into(),
+                "operation:write".into(),
+                "receipt:grant-write:shared:notes/out.txt:5:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824".into(),
+            ],
+        };
+        assert_eq!(
+            verifier.verify(&grant_descriptor, &grant_action, &grant_output),
+            ActionVerification::Accept
+        );
+
+        let upload_descriptor = CapabilityDescriptor::new(
+            CapabilityId("artifact.upload".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("upload descriptor");
+        let upload_action = TypedAction::ArtifactUpload {
+            url: "https://example.com/upload".into(),
+            path: "artifacts/report.bin".into(),
+        };
+        let upload_output = ActionOutput {
+            summary: "uploaded".into(),
+            value: ActionValue::Fields(BTreeMap::from([
+                ("url".into(), "https://example.com/upload".into()),
+                ("status".into(), "200".into()),
+                (
+                    "sha256".into(),
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+                ),
+                ("bytes".into(), "5".into()),
+            ])),
+            evidence: vec![
+                "android-artifact-upload".into(),
+                "transport:https-put".into(),
+                "status:200".into(),
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+                "bytes:5".into(),
+                "url:https://example.com/upload".into(),
+            ],
+        };
+        assert_eq!(
+            verifier.verify(&upload_descriptor, &upload_action, &upload_output),
+            ActionVerification::Accept
+        );
+
+        let missing_hash = ActionOutput {
+            summary: "uploaded".into(),
+            value: ActionValue::Fields(BTreeMap::from([
+                ("url".into(), "https://example.com/upload".into()),
+                ("status".into(), "200".into()),
+                (
+                    "sha256".into(),
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+                ),
+                ("bytes".into(), "5".into()),
+            ])),
+            evidence: vec![
+                "android-artifact-upload".into(),
+                "transport:https-put".into(),
+                "status:200".into(),
+                "bytes:5".into(),
+                "url:https://example.com/upload".into(),
+            ],
+        };
+        assert!(matches!(
+            verifier.verify(&upload_descriptor, &upload_action, &missing_hash),
             ActionVerification::Reject { .. }
         ));
     }

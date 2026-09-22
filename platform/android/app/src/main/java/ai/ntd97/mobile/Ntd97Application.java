@@ -12,6 +12,7 @@ public final class Ntd97Application extends Application {
         NtdNotificationController.ensureChannels(this);
         NtdWebPlatform.initialize(this);
         NtdBrowserPlatform.initialize(this);
+        NtdStorageGrantPlatform.initialize(this);
         NtdRuntimeBootstrap.attachFirstLocalProvider(this);
     }
 

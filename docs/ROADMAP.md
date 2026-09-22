@@ -461,15 +461,21 @@ Current implementation:
 - interrupted `approved-executing` state restores as `reconfirm` rather than replaying an external write automatically;
 - Android chat UI checkpoints pending approvals, separates chat Approve/Deny from continuity approval, resumes verified synthesis after approval and cancels denied tasks without side effects;
 - emulator acceptance proves clipboard state is unchanged before approval and after deny, pending approval survives NCS97 restore, and approved execution produces verified action evidence before generation resumes;
-- emulator acceptance now also requires unconfigured WebSearch to fail closed, a real runtime-configured WebSearch HTTPS boundary, public browser observation, private-target rejection, default browser-interaction authority denial and a receipt-verified approved browser interaction.
+- emulator acceptance now also requires unconfigured WebSearch to fail closed, a real runtime-configured WebSearch HTTPS boundary, public browser observation, private-target rejection, default browser-interaction authority denial and a receipt-verified approved browser interaction;
+- Android Storage Access Framework support now persists explicit user-selected tree grants under app-private aliases, validates persisted OS read/write permission on every use and rejects traversal, ambiguous provider children, revoked grants, oversized files and unverified writes;
+- `file.grant.read` reuses canonical `TypedAction::FileRead` under a dedicated `file.user_grant.read` authority scope; `file.grant.write` reuses `TypedAction::FileWrite` but is classified as `ExternalWrite`, requires `file.user_grant.write` plus chat approval and accepts output only after platform read-back verification and a SHA-256 receipt;
+- Android UI exposes an explicit Storage Access Framework tree picker and persists the selected tree as the `shared` grant; no broad storage permission or raw absolute-path authority is introduced;
+- `artifact.upload` is now a first-class Web-domain `ExternalWrite` action persisted in TAF97 0.4, with `network.write + file.app_private` scopes, hash-locked resume state and an idempotent HTTPS PUT platform boundary that rejects redirects and private/local destinations;
+- upload execution suspends before the network write, verifies that the local source hash is unchanged on resume, preserves the same resume token for retryable transport failures and commits only a 2xx HTTPS receipt carrying source SHA-256, byte count and final URL;
+- emulator acceptance requires storage-grant runtime-scope denial, missing-grant fail-closed behavior, granted-write ExternalWrite denial, upload approval denial, pre-write suspension, verified resume and matching upload receipt hash.
 
 Still required before M13 completion:
 
 - user-facing WebSearch endpoint configuration/discovery and provider-result normalization beyond the provider-independent runtime boundary;
 - broader browser session persistence/navigation/form semantics beyond the initial fail-closed observe/click/set-value foundation;
-- broader Android storage surfaces through explicit platform/user grants;
-- connect production app/device external-write adapters to the canonical chat approval/suspend/resume flow; accessibility-assisted interaction remains fail-closed until its explicit-authority adapter is implemented;
-- verified upload handling and broader resumable network transitions beyond bounded artifact downloads;
+- successful SAF read/write acceptance on representative physical phones/providers, including grant revocation/reselection and provider-specific edge cases;
+- persist/restore the production ActionFabric itself through chat/task continuity so resumable upload can survive process death and resume without exposing a shortcut that cannot yet preserve its fabric checkpoint;
+- accessibility-assisted app interaction remains fail-closed until its explicit-authority adapter is implemented;
 - paired-PC integration into the same production mixed TaskGraph;
 - real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
 
