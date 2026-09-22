@@ -4630,6 +4630,16 @@ fn production_capability_probe(
     grant_write_authority
         .permits(&grant_write_descriptor)
         .map_err(|error| format!("user-granted write runtime authority rejected: {error:?}"))?;
+    let grant_write_action = TypedAction::FileWrite {
+        path: "shared\tprobe.txt".into(),
+        bytes: b"NTD97-GRANT-PROBE".to_vec(),
+    };
+    if user_granted_file
+        .execute(ntd_runtime::ActionId(104), &grant_write_action)
+        .is_ok()
+    {
+        return Err("missing persisted SAF write grant did not fail closed".into());
+    }
 
     let upload_relative = "m13/upload.bin";
     let upload_source = b"NTD97-M13-VERIFIED-UPLOAD".to_vec();
@@ -4817,7 +4827,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
