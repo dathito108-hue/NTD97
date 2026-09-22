@@ -1197,7 +1197,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                     && output
                         .evidence
                         .iter()
-                        .any(|item| item == &format!("operation:{operation}"))
+                        .any(|item| item.strip_prefix("operation:") == Some(operation.as_str()))
                     && output
                         .evidence
                         .iter()
