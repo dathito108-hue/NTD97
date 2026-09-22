@@ -3873,19 +3873,19 @@ fn production_capability_probe(
     browser_interact_descriptor
         .normalize()
         .map_err(|error| format!("normalize browser.interact descriptor: {error:?}"))?;
+    let browser_interact_network_scope = AuthorityScope::new("network.read")
+        .map_err(|error| format!("browser interaction network scope: {error:?}"))?;
     if AuthorityGrant::new()
+        .with_scope(browser_interact_network_scope.clone())
         .with_scope(browser_interact_scope.clone())
         .permits(&browser_interact_descriptor)
         .is_ok()
     {
         return Err("browser interaction was not denied without external-write authority".into());
     }
-    let mut browser_interact_authority =
-        AuthorityGrant::new().with_scope(browser_interact_scope);
-    browser_interact_authority = browser_interact_authority.with_scope(
-        AuthorityScope::new("network.read")
-            .map_err(|error| format!("browser interaction network scope: {error:?}"))?,
-    );
+    let mut browser_interact_authority = AuthorityGrant::new()
+        .with_scope(browser_interact_network_scope)
+        .with_scope(browser_interact_scope);
     browser_interact_authority.allow_external_write = true;
     browser_interact_authority
         .permits(&browser_interact_descriptor)
