@@ -185,9 +185,25 @@ fn parse_action_line(
                 value,
             }
         }
-        "file.read" | "file.grant.read" => TypedAction::FileRead {
+        "file.read" => TypedAction::FileRead {
             path: payload.to_owned(),
         },
+        "file.grant.read" => {
+            let (alias, path) = payload
+                .split_once('\t')
+                .ok_or(AssistantPlanError::InvalidPayload)?;
+            if alias.trim().is_empty()
+                || path.trim().is_empty()
+                || alias != alias.trim()
+                || path != path.trim()
+                || path.contains('\t')
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::FileRead {
+                path: format!("{alias}\t{path}"),
+            }
+        }
         "file.write" => {
             let (path, text) = payload
                 .split_once('\t')
@@ -217,6 +233,7 @@ fn parse_action_line(
                 || text.is_empty()
                 || text.contains('\r')
                 || text.contains('\n')
+                || text.contains('\t')
             {
                 return Err(AssistantPlanError::InvalidPayload);
             }
