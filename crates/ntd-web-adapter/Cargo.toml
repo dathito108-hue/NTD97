@@ -1,0 +1,15 @@
+[package]
+name = "ntd-web-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ntd-capsule = { path = "../ntd-capsule" }
+ntd-runtime = { path = "../ntd-runtime" }
+ureq = { version = "=2.12.1", default-features = false, features = ["tls"] }
+url = "=2.5.4"
+
+[lints.clippy]
+all = "warn"
