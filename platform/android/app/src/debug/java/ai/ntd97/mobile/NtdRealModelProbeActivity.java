@@ -20,6 +20,7 @@ public final class NtdRealModelProbeActivity extends Activity {
 
     private String pendingResult;
     private boolean productionProbeStarted;
+    private String externalApprovalDiagnostic = "not-run";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -250,7 +251,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_reasoning_loop=" + (reasoningLoopOk ? "ok" : "failed") + "\n"
                 + "chat_action_planner=" + (actionPlannerOk ? "ok" : "failed") + "\n"
                 + "chat_action_safety=" + (actionSafetyOk ? "ok" : "failed") + "\n"
-                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"                + "chat_external_approval=" + (externalApprovalOk ? "ok" : "failed") + "\n"
+                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"                + "chat_external_approval=" + (externalApprovalOk ? "ok" : "failed") + "\n"                + "chat_external_approval_detail=" + externalApprovalDiagnostic + "\n"
                 + "governed_request_id=" + governedRequest + "\n"
                 + "governed_planner_status=" + governedPlannerStatus + "\n"
                 + "governed_action_count=" + governedActionCount + "\n"
@@ -282,39 +283,77 @@ public final class NtdRealModelProbeActivity extends Activity {
 
         long deniedRequest = host.submitChat("set clipboard to NTD97-M13-CHAT", 4);
         if (deniedRequest < 0) {
+            externalApprovalDiagnostic = "denied-submit:" + safeDiagnostic(host.chatLastError());
             return false;
         }
         NtdRuntimeHost.ChatEvent pending = host.nextChatEvent(deniedRequest);
-        if (pending.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED
-                || NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+        if (pending.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+            externalApprovalDiagnostic = "denied-event-kind:" + pending.kind;
+            return false;
+        }
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+            externalApprovalDiagnostic = "denied-side-effect-before-approval";
             return false;
         }
 
         byte[] checkpoint = host.chatCheckpoint();
         if (checkpoint.length == 0) {
+            externalApprovalDiagnostic = "denied-checkpoint-empty";
             return false;
         }
         long restored = host.restoreChatCheckpoint(checkpoint);
-        if (restored <= 0
-                || host.nextChatEvent(restored).kind
-                        != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED
-                || !host.resolveChatApproval(restored, false)
-                || host.chatStatus(restored) != 3
-                || NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+        if (restored <= 0) {
+            externalApprovalDiagnostic = "denied-restore:" + safeDiagnostic(host.chatLastError());
+            return false;
+        }
+        NtdRuntimeHost.ChatEvent restoredPending = host.nextChatEvent(restored);
+        if (restoredPending.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+            externalApprovalDiagnostic = "denied-restored-event-kind:" + restoredPending.kind;
+            return false;
+        }
+        if (!host.resolveChatApproval(restored, false)) {
+            externalApprovalDiagnostic = "denied-resolve:" + safeDiagnostic(host.chatLastError());
+            return false;
+        }
+        if (host.chatStatus(restored) != 3) {
+            externalApprovalDiagnostic = "denied-status:" + host.chatStatus(restored);
+            return false;
+        }
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+            externalApprovalDiagnostic = "denied-side-effect-after-denial";
             return false;
         }
 
         long approvedRequest = host.submitChat("set clipboard to NTD97-M13-CHAT", 4);
-        if (approvedRequest < 0
-                || host.nextChatEvent(approvedRequest).kind
-                        != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED
-                || !host.resolveChatApproval(approvedRequest, true)) {
+        if (approvedRequest < 0) {
+            externalApprovalDiagnostic = "approved-submit:" + safeDiagnostic(host.chatLastError());
             return false;
         }
-        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites + 1
-                || !NtdDeviceAppPlatform.lastSuccessfulClipboardTextEquals("NTD97-M13-CHAT")
-                || !host.chatVerifiedSynthesisReady(approvedRequest)
-                || host.chatVerifiedActionCount(approvedRequest) <= 0) {
+        NtdRuntimeHost.ChatEvent approvedPending = host.nextChatEvent(approvedRequest);
+        if (approvedPending.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+            externalApprovalDiagnostic = "approved-event-kind:" + approvedPending.kind;
+            return false;
+        }
+        if (!host.resolveChatApproval(approvedRequest, true)) {
+            externalApprovalDiagnostic = "approved-resolve:" + safeDiagnostic(host.chatLastError());
+            return false;
+        }
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites + 1) {
+            externalApprovalDiagnostic = "approved-write-count:"
+                    + NtdDeviceAppPlatform.successfulClipboardWrites();
+            return false;
+        }
+        if (!NtdDeviceAppPlatform.lastSuccessfulClipboardTextEquals("NTD97-M13-CHAT")) {
+            externalApprovalDiagnostic = "approved-clipboard-readback";
+            return false;
+        }
+        if (!host.chatVerifiedSynthesisReady(approvedRequest)) {
+            externalApprovalDiagnostic = "approved-synthesis-not-ready";
+            return false;
+        }
+        if (host.chatVerifiedActionCount(approvedRequest) <= 0) {
+            externalApprovalDiagnostic = "approved-verified-count:"
+                    + host.chatVerifiedActionCount(approvedRequest);
             return false;
         }
 
@@ -323,10 +362,23 @@ public final class NtdRealModelProbeActivity extends Activity {
             if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
                 continue;
             }
-            return event.kind == NtdRuntimeHost.ChatEvent.COMPLETE
+            boolean ok = event.kind == NtdRuntimeHost.ChatEvent.COMPLETE
                     && host.chatStatus(approvedRequest) == 2;
+            externalApprovalDiagnostic = ok
+                    ? "ok"
+                    : "approved-terminal-kind:" + event.kind
+                            + ":status:" + host.chatStatus(approvedRequest);
+            return ok;
         }
+        externalApprovalDiagnostic = "approved-terminal-timeout";
         return false;
+    }
+
+    private String safeDiagnostic(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return "none";
+        }
+        return value.replace('\n', ' ').replace('\r', ' ');
     }
 
     private boolean actionPlannerStatusKnown(NtdRuntimeHost host, long requestId) {
