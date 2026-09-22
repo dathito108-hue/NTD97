@@ -187,6 +187,16 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
                 : new String(transcript, StandardCharsets.UTF_8);
     }
 
+    String webFetchProbe(String url, String expectedSha256) {
+        if (!chatReady() || url == null || expectedSha256 == null) {
+            return "web_fetch=failed\nerror=native chat model unavailable\n";
+        }
+        byte[] result = nativeWebFetchProbe(url, expectedSha256);
+        return result == null
+                ? "web_fetch=failed\nerror=empty native result\n"
+                : new String(result, StandardCharsets.UTF_8);
+    }
+
     @Override
     public void acceptMicrophonePcm(short[] samples, int sampleRateHz) {
         if (samples == null || samples.length == 0) {
@@ -374,6 +384,10 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static native long nativeRestoreChatCheckpoint(byte[] checkpoint);
 
     private static native byte[] nativeChatTranscript();
+
+    private static native byte[] nativeWebFetchProbe(
+            String url,
+            String expectedSha256);
 
     private static native byte[] nativeRealModelProbe(
             String capsulePath,
