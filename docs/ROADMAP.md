@@ -461,7 +461,7 @@ Current implementation:
 - interrupted `approved-executing` state restores as `reconfirm` rather than replaying an external write automatically;
 - Android chat UI checkpoints pending approvals, separates chat Approve/Deny from continuity approval, resumes verified synthesis after approval and cancels denied tasks without side effects;
 - emulator acceptance proves clipboard state is unchanged before approval and after deny, pending approval survives NCS97 restore, and approved execution produces verified action evidence before generation resumes;
-- emulator acceptance now also requires a real runtime-configured WebSearch HTTPS boundary, public browser observation, private-target rejection, default browser-interaction authority denial and a receipt-verified approved browser interaction.
+- emulator acceptance now also requires unconfigured WebSearch to fail closed, a real runtime-configured WebSearch HTTPS boundary, public browser observation, private-target rejection, default browser-interaction authority denial and a receipt-verified approved browser interaction.
 
 Still required before M13 completion:
 
