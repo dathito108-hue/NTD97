@@ -168,6 +168,11 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     }
 
     @Override
+    public int chatMemoryRecordCount(long requestId) {
+        return nativeChatMemoryRecordCount(requestId);
+    }
+
+    @Override
     public int chatReasoningIterations(long requestId) {
         return nativeChatReasoningIterations(requestId);
     }
@@ -389,6 +394,8 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static native int nativeChatReasoningBudget(long requestId);
 
     private static native int nativeChatRecalledMemoryItems(long requestId);
+
+    private static native int nativeChatMemoryRecordCount(long requestId);
 
     private static native int nativeChatReasoningIterations(long requestId);
 
