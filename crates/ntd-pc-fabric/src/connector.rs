@@ -134,11 +134,11 @@ fn encode_handshake(tag: u8, payload: &[u8]) -> Result<Vec<u8>, PcFabricError> {
     Ok(out)
 }
 
-fn decode_handshake<'a>(
-    bytes: &'a [u8],
+fn decode_handshake(
+    bytes: &[u8],
     expected_tag: u8,
     expected_payload_len: usize,
-) -> Result<&'a [u8], PcFabricError> {
+) -> Result<&[u8], PcFabricError> {
     if bytes.len() < HANDSHAKE_HEADER_LEN || bytes[..6] != HANDSHAKE_MAGIC {
         return Err(PcFabricError::InvalidHandshake);
     }
@@ -175,7 +175,7 @@ fn read_handshake_frame(stream: &mut TcpStream) -> Result<Vec<u8>, PcFabricError
     let mut length = [0u8; 4];
     stream.read_exact(&mut length)?;
     let len = usize::try_from(u32::from_le_bytes(length)).map_err(|_| PcFabricError::Overflow)?;
-    if len < HANDSHAKE_HEADER_LEN || len > 4096 {
+    if !(HANDSHAKE_HEADER_LEN..=4096).contains(&len) {
         return Err(PcFabricError::InvalidHandshake);
     }
     let mut bytes = vec![0u8; len];
