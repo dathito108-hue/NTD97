@@ -431,10 +431,7 @@ impl CapabilityAdapter for AndroidBrowserObserveAdapter {
             output: ActionOutput {
                 summary: "verified Android browser observation".into(),
                 value: ActionValue::Text(observation),
-                evidence: vec![
-                    "android-webview-browser".into(),
-                    "operation:observe".into(),
-                ],
+                evidence: vec!["android-webview-browser".into(), "operation:observe".into()],
             },
             rollback_token: None,
         })
@@ -463,9 +460,7 @@ impl CapabilityAdapter for AndroidBrowserInteractAdapter {
         if operation == "click" && value.is_some() {
             return Err("browser click must not carry a value".into());
         }
-        if operation == "set_value"
-            && !value.as_ref().is_some_and(|value| !value.is_empty())
-        {
+        if operation == "set_value" && !value.as_ref().is_some_and(|value| !value.is_empty()) {
             return Err("browser set_value requires a value".into());
         }
 
@@ -1185,10 +1180,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .iter()
                         .any(|item| item == "operation:observe")
             }
-            (
-                "browser.interact",
-                TypedAction::BrowserInteract { operation, .. },
-            ) => {
+            ("browser.interact", TypedAction::BrowserInteract { operation, .. }) => {
                 (operation == "click" || operation == "set_value")
                     && output
                         .evidence
@@ -4509,10 +4501,7 @@ mod tests {
         let rejected = ActionOutput {
             summary: "browser click claimed".into(),
             value: ActionValue::None,
-            evidence: vec![
-                "android-webview-browser".into(),
-                "operation:click".into(),
-            ],
+            evidence: vec!["android-webview-browser".into(), "operation:click".into()],
         };
         assert!(matches!(
             verifier.verify(&descriptor, action, &rejected),
