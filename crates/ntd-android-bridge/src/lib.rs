@@ -889,6 +889,101 @@ fn android_platform_receipt(method: &str, value: &str) -> Result<String, String>
     decode_android_platform_receipt(&bytes)
 }
 
+fn android_accessibility_receipt(
+    app: &str,
+    operation: &str,
+    payload: &str,
+) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android accessibility thread: {error}"))?;
+    let japp = env
+        .new_string(app)
+        .map_err(|error| format!("encode accessibility package: {error}"))?;
+    let joperation = env
+        .new_string(operation)
+        .map_err(|error| format!("encode accessibility operation: {error}"))?;
+    let jpayload = env
+        .new_string(payload)
+        .map_err(|error| format!("encode accessibility payload: {error}"))?;
+    let japp_object = JObject::from(japp);
+    let joperation_object = JObject::from(joperation);
+    let jpayload_object = JObject::from(jpayload);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdDeviceAppPlatform",
+            "accessibilityInteract",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)[B",
+            &[
+                JValue::Object(&japp_object),
+                JValue::Object(&joperation_object),
+                JValue::Object(&jpayload_object),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android accessibility boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android accessibility response: {error}"))?;
+    decode_android_platform_receipt(&bytes)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AccessibilityActionSpec {
+    selector_kind: String,
+    selector_value: String,
+    text_bytes: Option<usize>,
+}
+
+fn parse_accessibility_action(
+    operation: &str,
+    payload: &[u8],
+) -> Result<AccessibilityActionSpec, String> {
+    let payload = std::str::from_utf8(payload)
+        .map_err(|_| "accessibility payload is not UTF-8".to_owned())?;
+    if payload.is_empty()
+        || payload.len() > MAX_PLATFORM_TEXT_BYTES
+        || payload
+            .chars()
+            .any(|ch| matches!(ch, '\r' | '\n' | '|'))
+    {
+        return Err("accessibility payload is invalid".into());
+    }
+    let parts = payload.split('\t').collect::<Vec<_>>();
+    match operation {
+        "accessibility.click"
+            if parts.len() == 2
+                && parts[0] == "view_id"
+                && !parts[1].is_empty()
+                && parts[1].len() <= 4096 =>
+        {
+            Ok(AccessibilityActionSpec {
+                selector_kind: parts[0].to_owned(),
+                selector_value: parts[1].to_owned(),
+                text_bytes: None,
+            })
+        }
+        "accessibility.set_text"
+            if parts.len() == 3
+                && parts[0] == "view_id"
+                && !parts[1].is_empty()
+                && parts[1].len() <= 4096
+                && !parts[2].is_empty() =>
+        {
+            Ok(AccessibilityActionSpec {
+                selector_kind: parts[0].to_owned(),
+                selector_value: parts[1].to_owned(),
+                text_bytes: Some(parts[2].len()),
+            })
+        }
+        _ => Err("unsupported or malformed accessibility action".into()),
+    }
+}
+
 fn decode_android_platform_receipt(bytes: &[u8]) -> Result<String, String> {
     let mut cursor = PlatformCursor::new(bytes);
     if cursor.u8()? != PLATFORM_DEVICE_APP_PROTOCOL_VERSION {
@@ -964,22 +1059,49 @@ impl CapabilityAdapter for AndroidAppActionAdapter {
         else {
             return Err("Android app adapter received wrong action".into());
         };
-        if action != "launch" || !payload.is_empty() {
-            return Err("unsupported Android app action".into());
+
+        if action == "launch" && payload.is_empty() {
+            let receipt = android_platform_receipt("launchApp", app)?;
+            return Ok(AdapterResult::Completed {
+                output: ActionOutput {
+                    summary: format!("verified Android app launch: {app}"),
+                    value: ActionValue::Fields(BTreeMap::from([
+                        ("package".into(), app.clone()),
+                        ("operation".into(), "launch".into()),
+                        ("receipt".into(), receipt.clone()),
+                    ])),
+                    evidence: vec![
+                        "android-app-launch".into(),
+                        "operation:launch".into(),
+                        receipt,
+                    ],
+                },
+                rollback_token: None,
+            });
         }
-        let receipt = android_platform_receipt("launchApp", app)?;
+
+        let spec = parse_accessibility_action(action, payload)?;
+        let payload_text = std::str::from_utf8(payload)
+            .map_err(|_| "accessibility payload is not UTF-8".to_owned())?;
+        let receipt = android_accessibility_receipt(app, action, payload_text)?;
+        let mut fields = BTreeMap::from([
+            ("package".into(), app.clone()),
+            ("operation".into(), action.clone()),
+            ("selector_kind".into(), spec.selector_kind),
+            ("selector".into(), spec.selector_value),
+            ("receipt".into(), receipt.clone()),
+        ]);
+        if let Some(text_bytes) = spec.text_bytes {
+            fields.insert("text_bytes".into(), text_bytes.to_string());
+        }
 
         Ok(AdapterResult::Completed {
             output: ActionOutput {
-                summary: format!("verified Android app launch: {app}"),
-                value: ActionValue::Fields(BTreeMap::from([
-                    ("package".into(), app.clone()),
-                    ("operation".into(), "launch".into()),
-                    ("receipt".into(), receipt.clone()),
-                ])),
+                summary: format!("verified Android accessibility interaction: {action} on {app}"),
+                value: ActionValue::Fields(fields),
                 evidence: vec![
-                    "android-app-launch".into(),
-                    "operation:launch".into(),
+                    "android-accessibility-interaction".into(),
+                    format!("operation:{action}"),
                     receipt,
                 ],
             },
