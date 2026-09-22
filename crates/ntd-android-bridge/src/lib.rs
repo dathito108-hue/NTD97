@@ -225,7 +225,8 @@ fn remote_pc_capability_matches(
         && capability.verification_required
         && !capability.rollback_supported
         && !capability.resumable
-        && capability.required_scopes == [scope.to_owned()]
+        && capability.required_scopes.len() == 1
+        && capability.required_scopes[0] == scope
 }
 
 struct AndroidPairedPcAdapter {
@@ -2911,7 +2912,7 @@ fn governed_explicit_action_plan(
             return Ok(None);
         }
         Some(format!(
-            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.execute|{peer}\t{program}\t\t\nEND"
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.execute|{peer}\t{program}\nEND"
         ))
     } else if lower.starts_with("read pc file ") {
         let rest = trimmed
