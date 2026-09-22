@@ -941,7 +941,7 @@ fn run_constrained_device_planner(
     .map_err(|error| format!("build constrained planner generator: {error:?}"))?;
 
     let mut best: Option<(&str, f32)> = None;
-    for surface in surfaces {
+    for &surface in surfaces {
         let candidate_tokens = model
             .tokenizer
             .encode(surface, false)
@@ -957,7 +957,11 @@ fn run_constrained_device_planner(
         if !score.is_finite() {
             return Ok(NativeActionPlanningOutcome::Invalid);
         }
-        if best.is_none_or(|(_, best_score)| score > best_score) {
+        let replace = match best {
+            None => true,
+            Some((_, best_score)) => score > best_score,
+        };
+        if replace {
             best = Some((surface, score));
         }
     }
