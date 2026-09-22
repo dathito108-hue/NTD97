@@ -3751,6 +3751,170 @@ fn production_capability_probe(
         return Err("private-network web.fetch was not rejected".into());
     }
 
+    let search_action = TypedAction::WebSearch {
+        query: "NTD97 sovereign mobile intelligence".into(),
+        max_results: 5,
+    };
+    let mut search_descriptor = CapabilityDescriptor::new(
+        CapabilityId("web.search".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("web.search descriptor: {error:?}"))?;
+    let search_network_scope = AuthorityScope::new("network.read")
+        .map_err(|error| format!("web.search network scope: {error:?}"))?;
+    search_descriptor
+        .required_scopes
+        .push(search_network_scope.clone());
+    search_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize web.search descriptor: {error:?}"))?;
+    if AuthorityGrant::new().permits(&search_descriptor).is_ok() {
+        return Err("web.search was not denied without network authority".into());
+    }
+    AuthorityGrant::new()
+        .with_scope(search_network_scope)
+        .permits(&search_descriptor)
+        .map_err(|error| format!("web.search explicit authority rejected: {error:?}"))?;
+    let mut search = AndroidWebSearchAdapter;
+    let search_result = search
+        .execute(ntd_runtime::ActionId(97), &search_action)
+        .map_err(|error| format!("production web.search probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: search_output,
+        ..
+    } = search_result
+    else {
+        return Err("production web.search probe did not complete".into());
+    };
+    if verifier.verify(&search_descriptor, &search_action, &search_output)
+        != ActionVerification::Accept
+    {
+        return Err("production web.search evidence verification failed".into());
+    }
+
+    let browser_observe_action = TypedAction::BrowserObserve {
+        target: "https://example.com/".into(),
+    };
+    let mut browser_observe_descriptor = CapabilityDescriptor::new(
+        CapabilityId("browser.observe".into()),
+        1,
+        CapabilityDomain::Browser,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("browser.observe descriptor: {error:?}"))?;
+    let browser_network_scope = AuthorityScope::new("network.read")
+        .map_err(|error| format!("browser network scope: {error:?}"))?;
+    let browser_observe_scope = AuthorityScope::new("browser.observe")
+        .map_err(|error| format!("browser observe scope: {error:?}"))?;
+    browser_observe_descriptor
+        .required_scopes
+        .extend([browser_network_scope.clone(), browser_observe_scope.clone()]);
+    browser_observe_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize browser.observe descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(browser_network_scope.clone())
+        .permits(&browser_observe_descriptor)
+        .is_ok()
+    {
+        return Err("browser observe was not denied without browser scope".into());
+    }
+    AuthorityGrant::new()
+        .with_scope(browser_network_scope.clone())
+        .with_scope(browser_observe_scope)
+        .permits(&browser_observe_descriptor)
+        .map_err(|error| format!("browser observe explicit authority rejected: {error:?}"))?;
+    let mut browser_observe = AndroidBrowserObserveAdapter;
+    let browser_observe_result = browser_observe
+        .execute(ntd_runtime::ActionId(98), &browser_observe_action)
+        .map_err(|error| format!("production browser.observe probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_observe_output,
+        ..
+    } = browser_observe_result
+    else {
+        return Err("production browser.observe probe did not complete".into());
+    };
+    if verifier.verify(
+        &browser_observe_descriptor,
+        &browser_observe_action,
+        &browser_observe_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.observe evidence verification failed".into());
+    }
+
+    let browser_private_blocked = browser_observe
+        .execute(
+            ntd_runtime::ActionId(99),
+            &TypedAction::BrowserObserve {
+                target: "https://127.0.0.1/".into(),
+            },
+        )
+        .is_err();
+    if !browser_private_blocked {
+        return Err("private-network browser target was not rejected".into());
+    }
+
+    let browser_interact_scope = AuthorityScope::new("browser.interact")
+        .map_err(|error| format!("browser interaction scope: {error:?}"))?;
+    let mut browser_interact_descriptor = CapabilityDescriptor::new(
+        CapabilityId("browser.interact".into()),
+        1,
+        CapabilityDomain::Browser,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("browser.interact descriptor: {error:?}"))?;
+    browser_interact_descriptor
+        .required_scopes
+        .extend([browser_network_scope, browser_interact_scope.clone()]);
+    browser_interact_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize browser.interact descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(browser_interact_scope.clone())
+        .permits(&browser_interact_descriptor)
+        .is_ok()
+    {
+        return Err("browser interaction was not denied without external-write authority".into());
+    }
+    let mut browser_interact_authority =
+        AuthorityGrant::new().with_scope(browser_interact_scope);
+    browser_interact_authority = browser_interact_authority.with_scope(
+        AuthorityScope::new("network.read")
+            .map_err(|error| format!("browser interaction network scope: {error:?}"))?,
+    );
+    browser_interact_authority.allow_external_write = true;
+    browser_interact_authority
+        .permits(&browser_interact_descriptor)
+        .map_err(|error| format!("browser interaction explicit authority rejected: {error:?}"))?;
+    let browser_interact_action = TypedAction::BrowserInteract {
+        target: "a".into(),
+        operation: "click".into(),
+        value: None,
+    };
+    let mut browser_interact = AndroidBrowserInteractAdapter;
+    let browser_interact_result = browser_interact
+        .execute(ntd_runtime::ActionId(100), &browser_interact_action)
+        .map_err(|error| format!("production browser.interact probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_interact_output,
+        ..
+    } = browser_interact_result
+    else {
+        return Err("production browser.interact probe did not complete".into());
+    };
+    if verifier.verify(
+        &browser_interact_descriptor,
+        &browser_interact_action,
+        &browser_interact_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.interact receipt verification failed".into());
+    }
+
     let relative = "m13/probe.txt";
     let write_action = TypedAction::FileWrite {
         path: relative.into(),
@@ -3990,7 +4154,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
