@@ -1868,6 +1868,59 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .iter()
                         .any(|item| item == "operation:launch")
             }
+            ("pc.observe", TypedAction::PcObserve { peer, .. }) => {
+                output.evidence.iter().any(|item| item == "pcf97-authenticated")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("peer:") == Some(peer.as_str()))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "remote-capability:pc.system.observe")
+            }
+            ("pc.execute", TypedAction::PcExecute { peer, .. }) => {
+                output.evidence.iter().any(|item| item == "pcf97-authenticated")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("peer:") == Some(peer.as_str()))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "remote-capability:pc.process.execute")
+            }
+            ("pc.artifact.read", TypedAction::PcArtifactRead { peer, .. }) => {
+                output.evidence.iter().any(|item| item == "pcf97-authenticated")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("peer:") == Some(peer.as_str()))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "remote-capability:pc.artifact.read")
+                    && matches!(&output.value, ActionValue::Bytes(_))
+            }
+            (
+                "pc.artifact.write",
+                TypedAction::PcArtifactWrite { peer, bytes, .. },
+            ) => {
+                output.evidence.iter().any(|item| item == "pcf97-authenticated")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("peer:") == Some(peer.as_str()))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "remote-capability:pc.artifact.write")
+                    && matches!(
+                        &output.value,
+                        ActionValue::Fields(fields)
+                            if fields.get("bytes") == Some(&bytes.len().to_string())
+                    )
+            }
             _ => false,
         };
         if !trusted || output.summary.trim().is_empty() {
