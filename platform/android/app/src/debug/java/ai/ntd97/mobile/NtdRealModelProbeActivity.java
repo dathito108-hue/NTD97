@@ -151,29 +151,37 @@ public final class NtdRealModelProbeActivity extends Activity {
         long governedRequest =
                 host.submitChat("What is my current battery status?", 4);
         boolean governedE2eOk = false;
+        int governedPlannerStatus = 0;
+        int governedActionCount = 0;
+        int governedVerifiedCount = 0;
+        boolean governedSynthesisReady = false;
+        boolean governedComplete = false;
+        int governedTokens = 0;
+        int governedTerminalKind = 0;
+        int governedFinalStatus = 0;
         if (governedRequest >= 0) {
-            int plannerStatus = host.chatActionPlannerStatus(governedRequest);
-            int actionCount = host.chatActionCount(governedRequest);
-            int verifiedCount = host.chatVerifiedActionCount(governedRequest);
-            boolean synthesisReady = host.chatVerifiedSynthesisReady(governedRequest);
-            boolean governedComplete = false;
-            int governedTokens = 0;
+            governedPlannerStatus = host.chatActionPlannerStatus(governedRequest);
+            governedActionCount = host.chatActionCount(governedRequest);
+            governedVerifiedCount = host.chatVerifiedActionCount(governedRequest);
+            governedSynthesisReady = host.chatVerifiedSynthesisReady(governedRequest);
             for (int attempt = 0; attempt < 8; attempt++) {
                 NtdRuntimeHost.ChatEvent event = host.nextChatEvent(governedRequest);
                 if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
                     governedTokens++;
                     continue;
                 }
+                governedTerminalKind = event.kind;
                 governedComplete = event.kind == NtdRuntimeHost.ChatEvent.COMPLETE;
                 break;
             }
-            governedE2eOk = plannerStatus == 2
-                    && actionCount > 0
-                    && verifiedCount == actionCount
-                    && synthesisReady
+            governedFinalStatus = host.chatStatus(governedRequest);
+            governedE2eOk = governedPlannerStatus == 2
+                    && governedActionCount > 0
+                    && governedVerifiedCount == governedActionCount
+                    && governedSynthesisReady
                     && governedComplete
                     && governedTokens > 0
-                    && host.chatStatus(governedRequest) == 2;
+                    && governedFinalStatus == 2;
         }
 
         long cancelRequest = host.submitChat("cancel this response", 8);
@@ -189,6 +197,14 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_action_planner=" + (actionPlannerOk ? "ok" : "failed") + "\n"
                 + "chat_action_safety=" + (actionSafetyOk ? "ok" : "failed") + "\n"
                 + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"
+                + "governed_request_id=" + governedRequest + "\n"
+                + "governed_planner_status=" + governedPlannerStatus + "\n"
+                + "governed_action_count=" + governedActionCount + "\n"
+                + "governed_verified_count=" + governedVerifiedCount + "\n"
+                + "governed_synthesis_ready=" + governedSynthesisReady + "\n"
+                + "governed_token_count=" + governedTokens + "\n"
+                + "governed_terminal_kind=" + governedTerminalKind + "\n"
+                + "governed_final_status=" + governedFinalStatus + "\n"
                 + "chat_memory=" + (memoryOk ? "ok" : "failed") + "\n"
                 + "chat_restore=" + (restoreOk ? "ok" : "failed") + "\n"
                 + "chat_store=" + (storeOk ? "ok" : "failed") + "\n"
