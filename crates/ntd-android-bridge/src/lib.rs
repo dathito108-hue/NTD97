@@ -3209,6 +3209,18 @@ fn chat_session_active(status: NativeChatSessionStatus) -> bool {
     )
 }
 
+fn recover_orphaned_chat_turn(
+    conversation: &mut SovereignConversationState,
+) -> Result<bool, String> {
+    let Some(task_id) = conversation.active().map(|active| active.task_id) else {
+        return Ok(false);
+    };
+    conversation
+        .cancel_turn(task_id, "recovered orphaned native chat turn before new request")
+        .map_err(|error| format!("cancel orphaned sovereign conversation turn: {error:?}"))?;
+    Ok(true)
+}
+
 fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String> {
     if max_new_tokens == 0 {
         return Err("max_new_tokens must be greater than zero".into());
@@ -3246,6 +3258,9 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
             .chat_model
             .clone()
             .ok_or_else(|| "no verified native chat model is loaded".to_owned())?;
+        if recover_orphaned_chat_turn(&mut guard.conversation)? {
+            guard.chat_session = None;
+        }
         guard.chat_submit_in_progress = true;
         (
             model,
@@ -7241,6 +7256,21 @@ mod tests {
                 resume_token: Some(vec![1, 2, 3]),
             })
         }
+    }
+
+    #[test]
+    fn orphaned_conversation_turn_is_paused_before_next_chat_request() {
+        let mut conversation =
+            SovereignConversationState::new(CognitiveIdentity(*b"NTD97-ASSISTANT1"));
+        let task = conversation
+            .begin_turn("model.test", 1, "orphaned", vec![1], 4)
+            .expect("begin turn");
+        assert_eq!(conversation.active().map(|active| active.task_id), Some(task));
+
+        assert!(recover_orphaned_chat_turn(&mut conversation).expect("recover"));
+        assert!(conversation.active().is_none());
+        assert!(conversation.prior_conversation_failure());
+        assert!(!recover_orphaned_chat_turn(&mut conversation).expect("idempotent"));
     }
 
     #[test]
