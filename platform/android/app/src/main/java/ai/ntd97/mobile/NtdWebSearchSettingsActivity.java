@@ -152,9 +152,14 @@ public final class NtdWebSearchSettingsActivity extends Activity {
         urlPath.setText(configuration.urlPath);
         snippetPath.setText(configuration.snippetPath);
         credentialHeader.setText(configuration.credentialHeaderName);
-        credentialValue.setText(configuration.credentialHeaderValue);
+        credentialValue.setText("");
+        credentialValue.setHint(configuration.hasCredential()
+                ? "Credential configured; leave blank to keep it"
+                : "Credential value (optional)");
         status.setText(configuration.configured()
-                ? "WebSearch configuration loaded"
+                ? (configuration.hasCredential()
+                        ? "WebSearch configuration loaded; credential remains hidden"
+                        : "WebSearch configuration loaded")
                 : "WebSearch is disabled until configured");
     }
 
@@ -198,8 +203,16 @@ public final class NtdWebSearchSettingsActivity extends Activity {
                 snippetPath.getText().toString(),
                 credentialHeader.getText().toString(),
                 credentialValue.getText().toString());
+        if (saved) {
+            credentialValue.setText("");
+            NtdWebPlatform.SearchConfiguration configuration =
+                    NtdWebPlatform.searchConfiguration();
+            credentialValue.setHint(configuration.hasCredential()
+                    ? "Credential configured; leave blank to keep it"
+                    : "Credential value (optional)");
+        }
         status.setText(saved
-                ? "WebSearch profile saved"
+                ? "WebSearch profile saved; stored credential is not displayed"
                 : "Invalid WebSearch mode, HTTPS endpoint, mapping, or credential header");
     }
 
