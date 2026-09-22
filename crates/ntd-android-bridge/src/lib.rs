@@ -486,6 +486,65 @@ struct AndroidWebFetchResult {
     body: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AndroidWebSearchItem {
+    title: String,
+    url: String,
+    snippet: String,
+}
+
+#[derive(Debug)]
+struct AndroidWebSearchResult {
+    status: u32,
+    source: String,
+    items: Vec<AndroidWebSearchItem>,
+}
+
+fn normalized_search_value_hash(items: &[String]) -> Result<[u8; 32], String> {
+    let count = u32::try_from(items.len())
+        .map_err(|_| "normalized search result count overflow".to_owned())?;
+    let mut canonical = Vec::new();
+    canonical.extend_from_slice(&count.to_le_bytes());
+    for item in items {
+        let bytes = item.as_bytes();
+        let len = u32::try_from(bytes.len())
+            .map_err(|_| "normalized search result length overflow".to_owned())?;
+        canonical.extend_from_slice(&len.to_le_bytes());
+        canonical.extend_from_slice(bytes);
+    }
+    Ok(sha256(&canonical))
+}
+
+fn normalized_search_item_valid(item: &str) -> bool {
+    if item.len() > 8192 || item.contains('\0') || item.contains('\r') {
+        return false;
+    }
+    let mut lines = item.split('\n');
+    let Some(title) = lines.next() else {
+        return false;
+    };
+    let Some(url) = lines.next() else {
+        return false;
+    };
+    let Some(_snippet) = lines.next() else {
+        return false;
+    };
+    if lines.next().is_some() || title.trim().is_empty() || title != title.trim() {
+        return false;
+    }
+    let Some(authority_and_path) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = authority_and_path
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    !authority.is_empty()
+        && !authority.contains('@')
+        && !authority.chars().any(char::is_whitespace)
+        && !url.chars().any(char::is_whitespace)
+}
+
 struct AndroidWebSearchAdapter;
 
 impl CapabilityAdapter for AndroidWebSearchAdapter {
@@ -498,21 +557,36 @@ impl CapabilityAdapter for AndroidWebSearchAdapter {
             return Err("Android web search adapter only supports web.search".into());
         };
         let result = android_web_search(query, *max_results)?;
-        let text = String::from_utf8(result.body)
-            .map_err(|_| "web.search response is not valid UTF-8 text".to_owned())?;
-        if text.len() > MAX_PLATFORM_TEXT_BYTES {
-            return Err("web.search text exceeds native evidence limit".into());
+        if result.items.len() > usize::from(*max_results) {
+            return Err("normalized web.search exceeded requested result limit".into());
         }
+
+        let items = result
+            .items
+            .iter()
+            .map(|item| format!("{}\n{}\n{}", item.title, item.url, item.snippet))
+            .collect::<Vec<_>>();
+        if items.iter().any(|item| !normalized_search_item_valid(item)) {
+            return Err("normalized web.search item framing is invalid".into());
+        }
+        let result_hash = digest_hex(&normalized_search_value_hash(&items)?);
 
         Ok(AdapterResult::Completed {
             output: ActionOutput {
-                summary: format!("verified HTTPS web search status {}", result.status),
-                value: ActionValue::Text(text),
+                summary: format!(
+                    "verified normalized HTTPS web search status {} with {} results",
+                    result.status,
+                    items.len()
+                ),
+                value: ActionValue::TextList(items),
                 evidence: vec![
                     "android-https-search".into(),
                     "provider-boundary:runtime-configured".into(),
+                    "normalization:field-map-v1".into(),
                     format!("status:{}", result.status),
-                    format!("url:{}", result.final_url),
+                    format!("source:{}", result.source),
+                    format!("results:{}", result.items.len()),
+                    format!("results-sha256:{result_hash}"),
                     format!("max-results:{max_results}"),
                 ],
             },
@@ -521,7 +595,7 @@ impl CapabilityAdapter for AndroidWebSearchAdapter {
     }
 }
 
-fn android_web_search(query: &str, max_results: u16) -> Result<AndroidWebFetchResult, String> {
+fn android_web_search(query: &str, max_results: u16) -> Result<AndroidWebSearchResult, String> {
     let vm = JAVA_VM.get().ok_or_else(|| {
         "Android JavaVM is not attached to the native capability runtime".to_owned()
     })?;
@@ -548,7 +622,76 @@ fn android_web_search(query: &str, max_results: u16) -> Result<AndroidWebFetchRe
     let bytes = env
         .convert_byte_array(&encoded)
         .map_err(|error| format!("decode Android WebSearch platform response: {error}"))?;
-    decode_android_web_fetch_result(&bytes)
+    decode_android_web_search_result(&bytes)
+}
+
+fn decode_android_web_search_result(bytes: &[u8]) -> Result<AndroidWebSearchResult, String> {
+    let mut cursor = PlatformCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_WEB_PROTOCOL_VERSION {
+        return Err("unsupported Android WebSearch platform protocol".into());
+    }
+    let success = cursor.u8()?;
+    if success == 0 {
+        return Err(format!("Android WebSearch failed: {}", cursor.string()?));
+    }
+    if success != 1 {
+        return Err("invalid Android WebSearch platform status".into());
+    }
+
+    let status = cursor.u32()?;
+    if !(200..300).contains(&status) {
+        return Err(format!("Android WebSearch returned status {status}"));
+    }
+    let source = cursor.string()?;
+    if !source.starts_with("https://")
+        || source.len() > 512
+        || source.contains('?')
+        || source.contains('#')
+        || source.contains('@')
+    {
+        return Err("Android WebSearch source evidence is invalid".into());
+    }
+    let count = usize::try_from(cursor.u32()?)
+        .map_err(|_| "Android WebSearch result count overflow".to_owned())?;
+    if count > 20 {
+        return Err("Android WebSearch result count exceeds platform limit".into());
+    }
+
+    let mut items = Vec::with_capacity(count);
+    let mut total = 0usize;
+    for _ in 0..count {
+        let title = cursor.string()?;
+        let url = cursor.string()?;
+        let snippet = cursor.string()?;
+        total = total
+            .checked_add(title.len())
+            .and_then(|value| value.checked_add(url.len()))
+            .and_then(|value| value.checked_add(snippet.len()))
+            .ok_or_else(|| "Android WebSearch normalized result size overflow".to_owned())?;
+        if title.is_empty()
+            || title.len() > 512
+            || url.len() > 4096
+            || snippet.len() > 4096
+            || title.contains(['\n', '\r', '\t'])
+            || url.contains(['\n', '\r', '\t'])
+            || snippet.contains(['\n', '\r', '\t'])
+        {
+            return Err("Android WebSearch normalized item is invalid".into());
+        }
+        items.push(AndroidWebSearchItem {
+            title,
+            url,
+            snippet,
+        });
+    }
+    if total > MAX_PLATFORM_TEXT_BYTES || !cursor.finished() {
+        return Err("invalid Android WebSearch response framing".into());
+    }
+    Ok(AndroidWebSearchResult {
+        status,
+        source,
+        items,
+    })
 }
 
 struct AndroidWebFetchAdapter;
@@ -1788,11 +1931,31 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .iter()
                         .any(|item| item.starts_with("status:2"))
             }
-            ("web.search", TypedAction::WebSearch { .. }) => {
-                output
-                    .evidence
-                    .iter()
-                    .any(|item| item == "android-https-search")
+            (
+                "web.search",
+                TypedAction::WebSearch {
+                    max_results,
+                    ..
+                },
+            ) => {
+                let ActionValue::TextList(items) = &output.value else {
+                    return ActionVerification::Reject {
+                        reason: "normalized WebSearch output is not a text list".into(),
+                    };
+                };
+                let Ok(hash) = normalized_search_value_hash(items) else {
+                    return ActionVerification::Reject {
+                        reason: "normalized WebSearch output hash failed".into(),
+                    };
+                };
+                let expected_hash = format!("results-sha256:{}", digest_hex(&hash));
+                let expected_count = format!("results:{}", items.len());
+                items.len() <= usize::from(*max_results)
+                    && items.iter().all(|item| normalized_search_item_valid(item))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-https-search")
                     && output
                         .evidence
                         .iter()
@@ -1800,7 +1963,23 @@ impl ActionVerifier for AndroidProductionVerifier {
                     && output
                         .evidence
                         .iter()
+                        .any(|item| item == "normalization:field-map-v1")
+                    && output
+                        .evidence
+                        .iter()
                         .any(|item| item.starts_with("status:2"))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == &expected_count)
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == &expected_hash)
+                    && output.evidence.iter().any(|item| {
+                        item.strip_prefix("source:")
+                            .is_some_and(|source| source.starts_with("https://"))
+                    })
             }
             ("browser.observe", TypedAction::BrowserObserve { .. }) => {
                 output
