@@ -2259,18 +2259,80 @@ impl ActionVerifier for AndroidProductionVerifier {
                             .is_some_and(|source| source.starts_with("https://"))
                     })
             }
-            ("browser.observe", TypedAction::BrowserObserve { .. }) => {
-                output
-                    .evidence
-                    .iter()
-                    .any(|item| item == "android-webview-browser")
+            ("browser.observe", TypedAction::BrowserObserve { target }) => {
+                let ActionValue::Text(platform) = &output.value else {
+                    return ActionVerification::Reject {
+                        reason: "browser observe output is not platform text".into(),
+                    };
+                };
+                let Ok(receipt) = browser_receipt(platform) else {
+                    return ActionVerification::Reject {
+                        reason: "browser observe output lacks receipt".into(),
+                    };
+                };
+                browser_receipt_matches(&receipt, "observe", target, None)
+                    && browser_platform_field(platform, "operation") == Some("observe")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-webview-browser")
                     && output
                         .evidence
                         .iter()
                         .any(|item| item == "operation:observe")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == &format!("receipt:{receipt}"))
             }
-            ("browser.interact", TypedAction::BrowserInteract { operation, .. }) => {
-                (operation == "click" || operation == "set_value")
+            (
+                "browser.interact",
+                TypedAction::BrowserInteract {
+                    target,
+                    operation,
+                    value,
+                },
+            ) => {
+                let semantics_valid = match operation.as_str() {
+                    "click" | "submit" | "navigate" => value.is_none(),
+                    "set_value" => value.as_ref().is_some_and(|value| !value.is_empty()),
+                    _ => false,
+                };
+                let ActionValue::Fields(fields) = &output.value else {
+                    return ActionVerification::Reject {
+                        reason: "browser interaction output is not fields".into(),
+                    };
+                };
+                let Some(receipt) = fields.get("receipt") else {
+                    return ActionVerification::Reject {
+                        reason: "browser interaction output lacks receipt".into(),
+                    };
+                };
+                let Some(platform) = fields.get("platform") else {
+                    return ActionVerification::Reject {
+                        reason: "browser interaction output lacks platform result".into(),
+                    };
+                };
+                let value_hash_valid = if operation == "set_value" {
+                    value.as_ref().is_some_and(|value| {
+                        browser_platform_field(platform, "value_sha256")
+                            == Some(digest_hex(&sha256(value.as_bytes())).as_str())
+                    })
+                } else {
+                    true
+                };
+                semantics_valid
+                    && browser_receipt_matches(
+                        receipt,
+                        operation,
+                        target,
+                        value.as_deref(),
+                    )
+                    && browser_platform_field(platform, "operation")
+                        == Some(operation.as_str())
+                    && value_hash_valid
+                    && fields.get("operation") == Some(operation)
+                    && fields.get("target") == Some(target)
                     && output
                         .evidence
                         .iter()
@@ -2282,7 +2344,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                     && output
                         .evidence
                         .iter()
-                        .any(|item| item.starts_with("receipt:android-webview:"))
+                        .any(|item| item == &format!("receipt:{receipt}"))
             }
             ("file.read", TypedAction::FileRead { .. }) => {
                 output
