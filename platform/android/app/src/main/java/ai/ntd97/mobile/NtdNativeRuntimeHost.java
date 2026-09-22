@@ -76,6 +76,16 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
         return utf8Result(result);
     }
 
+    static String describePcPair(Context context, String peer) {
+        if (!ensureLoaded()) {
+            return "ERROR:native library unavailable";
+        }
+        byte[] result = nativeDescribePcPairProfile(
+                pcCapabilityRoot(context).getAbsolutePath(),
+                peer == null ? "" : peer.trim());
+        return utf8Result(result);
+    }
+
     static String revokePcPair(Context context, String peer) {
         if (!ensureLoaded()) {
             return "ERROR:native library unavailable";
@@ -461,6 +471,10 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
             String address,
             String remotePeerId,
             String remoteVerifyKey);
+
+    private static native byte[] nativeDescribePcPairProfile(
+            String capabilityRoot,
+            String peer);
 
     private static native byte[] nativeRevokePcPairProfile(
             String capabilityRoot,
