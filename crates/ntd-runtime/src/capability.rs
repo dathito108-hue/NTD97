@@ -172,6 +172,10 @@ pub enum TypedAction {
     WebFetch {
         url: String,
     },
+    ArtifactDownload {
+        url: String,
+        path: String,
+    },
     BrowserObserve {
         target: String,
     },
@@ -228,7 +232,9 @@ pub enum TypedAction {
 impl TypedAction {
     pub fn domain(&self) -> CapabilityDomain {
         match self {
-            Self::WebSearch { .. } | Self::WebFetch { .. } => CapabilityDomain::Web,
+            Self::WebSearch { .. } | Self::WebFetch { .. } | Self::ArtifactDownload { .. } => {
+                CapabilityDomain::Web
+            },
             Self::BrowserObserve { .. } | Self::BrowserInteract { .. } => CapabilityDomain::Browser,
             Self::FileRead { .. } | Self::FileWrite { .. } => CapabilityDomain::File,
             Self::DeviceObserve { .. } | Self::DeviceInteract { .. } => CapabilityDomain::Device,
@@ -250,6 +256,10 @@ impl TypedAction {
                 }
             }
             Self::WebFetch { url } => nonempty(url)?,
+            Self::ArtifactDownload { url, path } => {
+                nonempty(url)?;
+                nonempty(path)?;
+            },
             Self::BrowserObserve { target } => nonempty(target)?,
             Self::BrowserInteract {
                 target, operation, ..
