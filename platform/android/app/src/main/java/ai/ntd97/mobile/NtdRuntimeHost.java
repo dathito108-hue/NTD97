@@ -93,6 +93,10 @@ public interface NtdRuntimeHost {
         return 0;
     }
 
+    default int chatMemoryRecordCount(long requestId) {
+        return 0;
+    }
+
     default int chatReasoningIterations(long requestId) {
         return 0;
     }
