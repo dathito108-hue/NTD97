@@ -229,10 +229,11 @@ impl ActionVerifier for AndroidPlatformVerifier {
             };
         }
 
-        let payload = match &output.value {
-            ActionValue::Bytes(bytes) => bytes.as_slice(),
-            ActionValue::Text(text) => text.as_bytes(),
-            ActionValue::None if matches!(action, TypedAction::FileWrite { .. }) => &[],
+        let payload = match (action, &output.value) {
+            (TypedAction::WebFetch { .. } | TypedAction::FileRead { .. }, ActionValue::Bytes(bytes)) => {
+                bytes.as_slice()
+            }
+            (TypedAction::FileWrite { bytes, .. }, ActionValue::None) => bytes.as_slice(),
             _ => {
                 return ActionVerification::Reject {
                     reason: "platform output has unexpected value type".into(),
