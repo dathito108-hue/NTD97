@@ -3539,6 +3539,60 @@ fn governed_explicit_action_plan(
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.observe|{target}\nEND"
         ))
+    } else if lower == "resume browser" {
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.observe|session\nEND"
+        ))
+    } else if lower.starts_with("browser navigate ") {
+        let target = trimmed
+            .get("browser navigate ".len()..)
+            .ok_or_else(|| "browser navigation command boundary failed".to_owned())?;
+        if target.trim().is_empty()
+            || target != target.trim()
+            || target
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tnavigate\nEND"
+        ))
+    } else if lower.starts_with("browser submit ") {
+        let target = trimmed
+            .get("browser submit ".len()..)
+            .ok_or_else(|| "browser submit command boundary failed".to_owned())?;
+        if target.trim().is_empty()
+            || target != target.trim()
+            || target
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tsubmit\nEND"
+        ))
+    } else if lower.starts_with("browser set ") {
+        let rest = trimmed
+            .get("browser set ".len()..)
+            .ok_or_else(|| "browser set_value command boundary failed".to_owned())?;
+        let Some((target, value)) = rest.split_once(" to ") else {
+            return Ok(None);
+        };
+        if target.trim().is_empty()
+            || target != target.trim()
+            || value.is_empty()
+            || target
+                .chars()
+                .chain(value.chars())
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tset_value\t{value}\nEND"
+        ))
     } else if lower.starts_with("browser click ") {
         let target = trimmed
             .get("browser click ".len()..)
@@ -3807,13 +3861,19 @@ fn external_write_approval(
                     operation,
                     value,
                 },
-            ) if (operation == "click" && value.is_none())
+            ) if (matches!(operation.as_str(), "click" | "submit" | "navigate")
+                && value.is_none())
                 || (operation == "set_value"
                     && value.as_ref().is_some_and(|value| !value.is_empty())) =>
             {
                 capabilities.insert("browser.interact".to_owned());
+                let subject = if operation == "navigate" {
+                    "public HTTPS destination"
+                } else {
+                    "unique DOM selector"
+                };
                 rationales.push(format!(
-                    "interact with the controlled browser using {operation} on selector {target}"
+                    "interact with the controlled browser using {operation} on {subject} {target}"
                 ));
             }
             (
