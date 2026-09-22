@@ -296,6 +296,33 @@ public final class NtdRealModelProbeActivity extends Activity {
                     && governedFinalStatus == 2;
         }
 
+        long searchRequest = host.submitChat("search web for Android", 2);
+        boolean chatWebSearchOk = false;
+        if (searchRequest >= 0) {
+            int searchPlannerStatus = host.chatActionPlannerStatus(searchRequest);
+            int searchActionCount = host.chatActionCount(searchRequest);
+            int searchVerifiedCount = host.chatVerifiedActionCount(searchRequest);
+            boolean searchSynthesisReady = host.chatVerifiedSynthesisReady(searchRequest);
+            boolean searchComplete = false;
+            int searchTokens = 0;
+            for (int attempt = 0; attempt < 8; attempt++) {
+                NtdRuntimeHost.ChatEvent event = host.nextChatEvent(searchRequest);
+                if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+                    searchTokens++;
+                    continue;
+                }
+                searchComplete = event.kind == NtdRuntimeHost.ChatEvent.COMPLETE;
+                break;
+            }
+            chatWebSearchOk = searchPlannerStatus == 2
+                    && searchActionCount == 1
+                    && searchVerifiedCount == 1
+                    && searchSynthesisReady
+                    && searchComplete
+                    && searchTokens > 0
+                    && host.chatStatus(searchRequest) == 2;
+        }
+
         boolean externalApprovalOk = runExternalApprovalProbe(host);
 
         long cancelRequest = host.submitChat("cancel this response", 8);
@@ -310,7 +337,9 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_reasoning_loop=" + (reasoningLoopOk ? "ok" : "failed") + "\n"
                 + "chat_action_planner=" + (actionPlannerOk ? "ok" : "failed") + "\n"
                 + "chat_action_safety=" + (actionSafetyOk ? "ok" : "failed") + "\n"
-                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"                + "chat_external_approval=" + (externalApprovalOk ? "ok" : "failed") + "\n"                + "chat_external_approval_detail=" + externalApprovalDiagnostic + "\n"
+                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"
+                + "chat_web_search=" + (chatWebSearchOk ? "ok" : "failed") + "\n"
+                + "chat_external_approval=" + (externalApprovalOk ? "ok" : "failed") + "\n"                + "chat_external_approval_detail=" + externalApprovalDiagnostic + "\n"
                 + "governed_request_id=" + governedRequest + "\n"
                 + "governed_planner_status=" + governedPlannerStatus + "\n"
                 + "governed_action_count=" + governedActionCount + "\n"
