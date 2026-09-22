@@ -6706,6 +6706,109 @@ mod tests {
     }
 
     #[test]
+    fn accessibility_commands_use_dedicated_scope_and_receipt_binding() {
+        let package = "ai.ntd97.mobile";
+        let view_id = "ai.ntd97.mobile:id/ntd_accessibility_probe_button";
+        let click = governed_explicit_action_plan(&format!(
+            "accessibility click {package} {view_id}"
+        ))
+        .expect("click plan")
+        .expect("click action");
+        assert_eq!(
+            click.payloads.get(&1),
+            Some(&TypedAction::AppAction {
+                app: package.into(),
+                action: "accessibility.click".into(),
+                payload: format!("view_id\t{view_id}").into_bytes(),
+            })
+        );
+        let click_scopes = app_action_scope_names(&click).expect("click scopes");
+        assert_eq!(
+            click_scopes,
+            std::collections::BTreeSet::from(["app.accessibility.interact"])
+        );
+        let approval = external_write_approval(&click)
+            .expect("approval policy")
+            .expect("approval required");
+        assert_eq!(approval.0, "app.action");
+        assert!(approval.1.contains("accessibility.click"));
+        assert!(!approval.1.contains("NTD97-accessibility"));
+
+        let set_text = governed_explicit_action_plan(&format!(
+            "accessibility set text {package} ai.ntd97.mobile:id/ntd_accessibility_probe_text to NTD97-accessibility"
+        ))
+        .expect("set text plan")
+        .expect("set text action");
+        let set_text_action = set_text.payloads.get(&1).expect("set text payload");
+        let TypedAction::AppAction {
+            action,
+            payload,
+            ..
+        } = set_text_action
+        else {
+            panic!("expected app action");
+        };
+        assert_eq!(action, "accessibility.set_text");
+        let spec = parse_accessibility_action(action, payload).expect("accessibility spec");
+        assert_eq!(spec.selector_kind, "view_id");
+        assert_eq!(
+            spec.selector_value,
+            "ai.ntd97.mobile:id/ntd_accessibility_probe_text"
+        );
+        assert_eq!(spec.text_bytes, Some("NTD97-accessibility".len()));
+
+        let launch = governed_explicit_action_plan("open app ai.ntd97.mobile")
+            .expect("launch plan")
+            .expect("launch action");
+        assert_eq!(
+            app_action_scope_names(&launch).expect("launch scopes"),
+            std::collections::BTreeSet::from(["app.launch"])
+        );
+
+        let descriptor = CapabilityDescriptor::new(
+            CapabilityId("app.action".into()),
+            1,
+            CapabilityDomain::App,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("descriptor");
+        let expected_receipt = format!(
+            "accessibility:{action}:{package}:{}",
+            digest_hex(&sha256(payload))
+        );
+        let output = ActionOutput {
+            summary: "verified accessibility".into(),
+            value: ActionValue::Fields(BTreeMap::from([
+                ("package".into(), package.into()),
+                ("operation".into(), action.clone()),
+                ("selector_kind".into(), spec.selector_kind.clone()),
+                ("selector".into(), spec.selector_value.clone()),
+                ("text_bytes".into(), spec.text_bytes.expect("text bytes").to_string()),
+                ("receipt".into(), expected_receipt.clone()),
+            ])),
+            evidence: vec![
+                "android-accessibility-interaction".into(),
+                format!("operation:{action}"),
+                expected_receipt.clone(),
+            ],
+        };
+        let mut verifier = AndroidProductionVerifier;
+        assert_eq!(
+            verifier.verify(&descriptor, set_text_action, &output),
+            ActionVerification::Accept
+        );
+
+        let mut rejected = output;
+        rejected
+            .evidence
+            .retain(|item| item != &expected_receipt);
+        assert!(matches!(
+            verifier.verify(&descriptor, set_text_action, &rejected),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
+    #[test]
     fn governed_storage_and_upload_commands_materialize_canonical_actions() {
         let read = governed_explicit_action_plan("read granted file shared/notes/read.txt")
             .expect("read plan")
