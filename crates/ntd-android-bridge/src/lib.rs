@@ -7573,10 +7573,11 @@ mod tests {
         let ActionValue::Fields(fields) = &mut wrong_hash.value else {
             panic!("fields");
         };
-        fields
-            .get_mut("platform")
-            .expect("platform")
-            .push_str("\nvalue_sha256=00");
+        let platform = fields.get_mut("platform").expect("platform");
+        *platform = platform.replace(
+            &format!("value_sha256={value_hash}"),
+            &format!("value_sha256={}", "0".repeat(64)),
+        );
         assert!(matches!(
             verifier.verify(&descriptor, set_action, &wrong_hash),
             ActionVerification::Reject { .. }
