@@ -77,6 +77,7 @@ for REQUIRED in \
   chat_status=ok \
   web_fetch=ok \
   web_private_block=ok \
+  web_search_unconfigured_block=ok \
   web_search_boundary=ok \
   browser_observe=ok \
   browser_private_block=ok \
