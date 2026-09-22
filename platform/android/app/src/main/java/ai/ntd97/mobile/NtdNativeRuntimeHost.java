@@ -52,7 +52,9 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
                     .getBytes(StandardCharsets.UTF_8);
         }
         File root = new File(context.getFilesDir(), "ntd97-capability-probe");
-        byte[] result = nativeProductionCapabilityProbe(root.getAbsolutePath());
+        byte[] result = nativeProductionCapabilityProbe(
+                root.getAbsolutePath(),
+                context.getPackageName());
         return result == null ? new byte[0] : result;
     }
 
@@ -389,7 +391,9 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
 
     private static native byte[] nativeChatTranscript();
 
-    private static native byte[] nativeProductionCapabilityProbe(String capabilityRoot);
+    private static native byte[] nativeProductionCapabilityProbe(
+            String capabilityRoot,
+            String packageName);
 
     private static native byte[] nativeRealModelProbe(
             String capsulePath,
