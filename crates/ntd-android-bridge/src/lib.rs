@@ -811,7 +811,7 @@ impl CapabilityAdapter for AndroidWebSearchAdapter {
                 evidence: vec![
                     "android-https-search".into(),
                     "provider-boundary:runtime-configured".into(),
-                    "normalization:field-map-v1".into(),
+                    "normalization:canonical-items-v1".into(),
                     format!("status:{}", result.status),
                     format!("source:{}", result.source),
                     format!("results:{}", result.items.len()),
@@ -2271,7 +2271,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                     && output
                         .evidence
                         .iter()
-                        .any(|item| item == "normalization:field-map-v1")
+                        .any(|item| item == "normalization:canonical-items-v1")
                     && output
                         .evidence
                         .iter()
@@ -7433,7 +7433,7 @@ mod tests {
             evidence: vec![
                 "android-https-search".into(),
                 "provider-boundary:runtime-configured".into(),
-                "normalization:field-map-v1".into(),
+                "normalization:canonical-items-v1".into(),
                 "status:200".into(),
                 "source:https://api.example.com".into(),
                 "results:1".into(),

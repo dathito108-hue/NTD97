@@ -17,6 +17,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
@@ -282,6 +284,77 @@ public final class NtdRealModelProbeActivity extends Activity {
                 }
                 result = result + "web_search_unconfigured_block=ok\n";
 
+                boolean credentialConfigured = NtdWebPlatform.configureSearchProfile(
+                        this,
+                        NtdWebPlatform.SEARCH_MODE_JSON,
+                        "https://httpbin.org/anything?q={query}&n={count}",
+                        "",
+                        "items",
+                        "title",
+                        "url",
+                        "snippet",
+                        "X-NTD97-Probe",
+                        "NTD97-CREDENTIAL-PROBE");
+                if (!credentialConfigured) {
+                    throw new IOException("failed to configure WebSearch credential probe");
+                }
+                NtdWebPlatform.initialize(this);
+                NtdWebPlatform.SearchConfiguration credentialConfiguration =
+                        NtdWebPlatform.searchConfiguration();
+                if (!credentialConfiguration.hasCredential()
+                        || !"X-NTD97-Probe".equals(credentialConfiguration.credentialHeaderName)
+                        || !NtdWebPlatform.probeSearchCredentialStorageForTest(
+                                this,
+                                "NTD97-CREDENTIAL-PROBE")
+                        || !NtdWebPlatform.probeSearchCredentialHeaderForTest()) {
+                    throw new IOException("WebSearch credential handling verification failed");
+                }
+                result = result + "web_search_credential_storage=ok\n";
+                if (!NtdWebPlatform.probeSearchCredentialPreserveForTest(
+                        this,
+                        "X-NTD97-Probe")
+                        || !NtdWebPlatform.probeSearchCredentialStorageForTest(
+                                this,
+                                "NTD97-CREDENTIAL-PROBE")
+                        || !NtdWebPlatform.probeSearchCredentialHeaderForTest()) {
+                    throw new IOException("WebSearch hidden credential preservation failed");
+                }
+                result = result + "web_search_credential_preserve=ok\n";
+                if (!NtdWebPlatform.probeCredentialCrossOriginRedirectBlockForTest()) {
+                    throw new IOException("credentialed WebSearch redirect did not fail closed");
+                }
+                result = result
+                        + "web_search_credential_header=ok\n"
+                        + "web_search_credential_redirect_block=ok\n";
+
+                boolean openSearchConfigured = NtdWebPlatform.configureSearchProfile(
+                        this,
+                        NtdWebPlatform.SEARCH_MODE_OPENSEARCH,
+                        "",
+                        "https://en.wikipedia.org/w/opensearch_desc.php",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "");
+                if (!openSearchConfigured) {
+                    throw new IOException("failed to configure OpenSearch discovery probe");
+                }
+                NtdWebPlatform.initialize(this);
+                NtdWebPlatform.SearchConfiguration openSearchConfiguration =
+                        NtdWebPlatform.searchConfiguration();
+                if (!NtdWebPlatform.SEARCH_MODE_OPENSEARCH.equals(openSearchConfiguration.mode)
+                        || openSearchConfiguration.hasCredential()
+                        || openSearchConfiguration.openSearchDescription.isEmpty()) {
+                    throw new IOException("OpenSearch profile did not persist/reload");
+                }
+                byte[] openSearchResult = NtdWebPlatform.search("OpenSearch", 3);
+                if (normalizedSearchResultCount(openSearchResult) <= 0) {
+                    throw new IOException("OpenSearch discovery returned no normalized result");
+                }
+                result = result + "web_search_opensearch=ok\n";
+
                 boolean searchConfigured = NtdWebPlatform.configureSearchProvider(
                         this,
                         "https://api.github.com/search/repositories?q={query}&per_page={count}",
@@ -296,6 +369,8 @@ public final class NtdRealModelProbeActivity extends Activity {
                 NtdWebPlatform.SearchConfiguration searchConfiguration =
                         NtdWebPlatform.searchConfiguration();
                 if (!searchConfiguration.configured()
+                        || !NtdWebPlatform.SEARCH_MODE_JSON.equals(searchConfiguration.mode)
+                        || searchConfiguration.hasCredential()
                         || !"items".equals(searchConfiguration.resultsPath)
                         || !"full_name".equals(searchConfiguration.titlePath)
                         || !"html_url".equals(searchConfiguration.urlPath)
@@ -329,6 +404,31 @@ public final class NtdRealModelProbeActivity extends Activity {
         }, "ntd97-production-capabilities");
         probeThread.setDaemon(true);
         probeThread.start();
+    }
+
+    private static int normalizedSearchResultCount(byte[] encoded) {
+        if (encoded == null || encoded.length < 14) {
+            return -1;
+        }
+        try {
+            ByteBuffer buffer = ByteBuffer.wrap(encoded).order(ByteOrder.LITTLE_ENDIAN);
+            if (buffer.get() != 1 || buffer.get() != 1) {
+                return -1;
+            }
+            int status = buffer.getInt();
+            if (status < 200 || status >= 300) {
+                return -1;
+            }
+            int sourceLength = buffer.getInt();
+            if (sourceLength < 0 || sourceLength > buffer.remaining() - 4) {
+                return -1;
+            }
+            buffer.position(buffer.position() + sourceLength);
+            int count = buffer.getInt();
+            return count >= 0 ? count : -1;
+        } catch (RuntimeException error) {
+            return -1;
+        }
     }
 
     private String runPairedPcProvisioningProbe() throws IOException {
