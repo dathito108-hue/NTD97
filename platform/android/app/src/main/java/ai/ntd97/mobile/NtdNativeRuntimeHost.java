@@ -159,6 +159,11 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     }
 
     @Override
+    public boolean chatVerifiedSynthesisReady(long requestId) {
+        return nativeChatVerifiedSynthesisReady(requestId);
+    }
+
+    @Override
     public byte[] chatCheckpoint() {
         byte[] checkpoint = nativeChatCheckpoint();
         return checkpoint == null ? new byte[0] : checkpoint;
@@ -358,6 +363,8 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static native int nativeChatActionCount(long requestId);
 
     private static native int nativeChatVerifiedActionCount(long requestId);
+
+    private static native boolean nativeChatVerifiedSynthesisReady(long requestId);
 
     private static native byte[] nativeChatCheckpoint();
 
