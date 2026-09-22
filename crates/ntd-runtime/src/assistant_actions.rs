@@ -13,6 +13,7 @@ use crate::{
 pub const NATIVE_ACTION_PROTOCOL_V1: &str = "NTD97_ACTIONS_V1";
 pub const NATIVE_ACTION_DIRECT: &str = "DIRECT";
 const MAX_ACTIONS: usize = 8;
+const COMPACT_VERIFIED_VALUE_MAX_CHARS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssistantActionPlan {
@@ -269,7 +270,7 @@ pub fn build_compact_verified_answer_prompt(
         out.push_str(&item.capability.0);
         if !item.value.trim().is_empty() && item.value != "none" {
             out.push(' ');
-            out.push_str(&item.value.replace('\n', " "));
+            out.push_str(&compact_verified_value(&item.value));
         } else {
             out.push(' ');
             out.push_str(item.summary.trim());
@@ -280,6 +281,20 @@ pub fn build_compact_verified_answer_prompt(
     out.push_str(user_message);
     out.push_str("\nAssistant:");
     Ok(out)
+}
+
+fn compact_verified_value(value: &str) -> String {
+    let flattened = value.replace(['\r', '\n'], " ");
+    let mut chars = flattened.chars();
+    let compact = chars
+        .by_ref()
+        .take(COMPACT_VERIFIED_VALUE_MAX_CHARS)
+        .collect::<String>();
+    if chars.next().is_some() {
+        format!("{compact}…")
+    } else {
+        compact
+    }
 }
 
 pub fn build_verified_answer_prompt(
@@ -601,6 +616,25 @@ Assistant:"
             .register_adapter(CapabilityId("device.observe".into()), DeviceAdapter)
             .expect("adapter");
         fabric
+    }
+
+    #[test]
+    fn compact_verified_prompt_bounds_large_fetched_values() {
+        let large = "x".repeat(COMPACT_VERIFIED_VALUE_MAX_CHARS + 64);
+        let evidence = vec![VerifiedActionEvidence {
+            node_id: 1,
+            capability: CapabilityId("web.fetch".into()),
+            summary: "HTTP 200 https://example.test".into(),
+            value: large.clone(),
+            evidence: vec!["sha256=test".into()],
+        }];
+
+        let prompt =
+            build_compact_verified_answer_prompt("summarize", &evidence).expect("compact prompt");
+
+        assert!(!prompt.contains(&large));
+        assert!(prompt.contains('…'));
+        assert!(prompt.len() < large.len());
     }
 
     #[test]
