@@ -89,6 +89,7 @@ for REQUIRED in \
   storage_grant_runtime_scope=ok \
   storage_grant_missing_block=ok \
   storage_grant_write_authority_block=ok \
+  storage_grant_write_missing_block=ok \
   artifact_download_suspend=ok \
   artifact_download_resume=ok \
   artifact_download_rollback=ok \
