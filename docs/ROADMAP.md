@@ -430,7 +430,13 @@ Current implementation:
 
 - production Android `web.fetch` adapter uses the OS HTTPS stack rather than a hosted AI/tool backend;
 - HTTPS boundary is GET-only, timeout-bounded and response-size-bounded, re-validates redirects, rejects user-info/non-443 endpoints and blocks loopback/link-local/site-local/multicast/IPv6-ULA destinations;
-- native ActionFabric retains ActionId, authority, verification and commit ownership while Java supplies only the Android HTTPS transport boundary;
+- provider-independent `web.search` reuses that hardened HTTPS transport through a runtime-configured endpoint template with canonical `{query}` and optional `{count}` placeholders; the sovereign/native core contains no search-provider SDK, provider hostname or hosted AI/tool dependency, and missing/invalid configuration fails closed;
+- search endpoint configuration is persisted only in Android app-private preferences and remains replaceable without changing `TypedAction::WebSearch`, `CapabilityDescriptor`, TaskGraph identity or verification semantics;
+- production `browser.observe` / `browser.interact` use an app-owned WebView platform boundary while ActionFabric remains the owner of typed actions, authority, verification and commit state;
+- browser navigation and subresource access are restricted to public HTTPS, TLS errors are cancelled, file/content access and mixed content are disabled, and private/local targets fail closed;
+- `browser.interact` supports only fixed `click` and `set_value` operations with no arbitrary JavaScript input; it is classified as `ExternalWrite`, requires the dedicated `browser.interact` authority scope plus explicit external-write approval, and must return a platform receipt before verifier acceptance;
+- browser session loss, unsupported operations, missing targets, invalid selectors/values, transport errors and untrusted receipts fail closed rather than synthesizing success;
+- native ActionFabric retains ActionId, authority, verification and commit ownership while Java supplies only the Android HTTPS/browser platform boundaries;
 - production `file.read` / `file.write` adapters are restricted to an app-private capability root, reject absolute/traversal/symlink paths and cap evidence/write size;
 - app-private file writes use sync + atomic rename and emit rollback tokens restoring the previous bytes or removing newly-created files;
 - native action protocol now represents `file.write` as a reversible side effect instead of a read-only action;
@@ -454,12 +460,13 @@ Current implementation:
 - explicit clipboard/app-launch actions are validated from canonical native action protocol, suspended before side effects, and only receive exact ExternalWrite authority after user approval;
 - interrupted `approved-executing` state restores as `reconfirm` rather than replaying an external write automatically;
 - Android chat UI checkpoints pending approvals, separates chat Approve/Deny from continuity approval, resumes verified synthesis after approval and cancels denied tasks without side effects;
-- emulator acceptance proves clipboard state is unchanged before approval and after deny, pending approval survives NCS97 restore, and approved execution produces verified action evidence before generation resumes.
+- emulator acceptance proves clipboard state is unchanged before approval and after deny, pending approval survives NCS97 restore, and approved execution produces verified action evidence before generation resumes;
+- emulator acceptance now also requires a real runtime-configured WebSearch HTTPS boundary, public browser observation, private-target rejection, default browser-interaction authority denial and a receipt-verified approved browser interaction.
 
 Still required before M13 completion:
 
-- provider-independent real WebSearch boundary;
-- browser observe/interact production adapter;
+- user-facing WebSearch endpoint configuration/discovery and provider-result normalization beyond the provider-independent runtime boundary;
+- broader browser session persistence/navigation/form semantics beyond the initial fail-closed observe/click/set-value foundation;
 - broader Android storage surfaces through explicit platform/user grants;
 - connect production app/device external-write adapters to the canonical chat approval/suspend/resume flow; accessibility-assisted interaction remains fail-closed until its explicit-authority adapter is implemented;
 - verified upload handling and broader resumable network transitions beyond bounded artifact downloads;
