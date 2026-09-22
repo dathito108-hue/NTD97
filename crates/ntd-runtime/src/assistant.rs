@@ -12,12 +12,13 @@ use crate::{
 
 pub const NCS97_MAGIC: [u8; 6] = *b"NCS97\0";
 pub const NCS97_MAJOR: u16 = 0;
-pub const NCS97_MINOR: u16 = 1;
+pub const NCS97_MINOR: u16 = 2;
 pub const NCS97_HEADER_LEN: usize = 24;
 
 const MAX_TURNS: usize = 4096;
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
 const MAX_TOKENS: usize = 1_000_000;
+const MAX_ACTION_FABRIC_CHECKPOINT_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveConversationTurn {
@@ -29,6 +30,7 @@ pub struct ActiveConversationTurn {
     pub generated_tokens: Vec<u32>,
     pub generated_text: String,
     pub max_new_tokens: usize,
+    pub action_fabric_checkpoint: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +165,7 @@ impl SovereignConversationState {
             generated_tokens: Vec::with_capacity(max_new_tokens.min(4096)),
             generated_text: String::new(),
             max_new_tokens,
+            action_fabric_checkpoint: None,
         });
         Ok(task_id)
     }
@@ -322,6 +325,46 @@ impl SovereignConversationState {
             .world
             .get(&key)
             .map(|fact| fact.value.as_str())
+    }
+
+    pub fn install_action_fabric_checkpoint(
+        &mut self,
+        task_id: u64,
+        checkpoint: Vec<u8>,
+    ) -> Result<(), ConversationStateError> {
+        if checkpoint.len() < crate::TAF97_HEADER_LEN
+            || checkpoint.len() > MAX_ACTION_FABRIC_CHECKPOINT_BYTES
+            || checkpoint.get(..crate::TAF97_MAGIC.len()) != Some(crate::TAF97_MAGIC.as_slice())
+        {
+            return Err(ConversationStateError::InvalidActiveTurn);
+        }
+        let active = self
+            .active
+            .as_mut()
+            .ok_or(ConversationStateError::MissingActiveTurn)?;
+        ensure_task(active.task_id, task_id)?;
+        active.action_fabric_checkpoint = Some(checkpoint);
+        Ok(())
+    }
+
+    pub fn clear_action_fabric_checkpoint(
+        &mut self,
+        task_id: u64,
+    ) -> Result<(), ConversationStateError> {
+        let active = self
+            .active
+            .as_mut()
+            .ok_or(ConversationStateError::MissingActiveTurn)?;
+        ensure_task(active.task_id, task_id)?;
+        active.action_fabric_checkpoint = None;
+        Ok(())
+    }
+
+    pub fn action_fabric_checkpoint_for_task(&self, task_id: u64) -> Option<&[u8]> {
+        let active = self.active.as_ref()?;
+        (active.task_id == task_id)
+            .then_some(active.action_fabric_checkpoint.as_deref())
+            .flatten()
     }
 
     pub fn record_chat_approval(
@@ -732,6 +775,13 @@ pub fn encode_conversation_checkpoint(
             push_tokens(&mut payload, &active.prompt_tokens)?;
             push_tokens(&mut payload, &active.generated_tokens)?;
             push_string(&mut payload, &active.generated_text)?;
+            match &active.action_fabric_checkpoint {
+                Some(checkpoint) => {
+                    push_u8(&mut payload, 1);
+                    push_bytes(&mut payload, checkpoint)?;
+                }
+                None => push_u8(&mut payload, 0),
+            }
         }
         None => push_u8(&mut payload, 0),
     }
@@ -820,6 +870,15 @@ pub fn decode_conversation_checkpoint(
             let prompt_tokens = cursor.tokens()?;
             let generated_tokens = cursor.tokens()?;
             let generated_text = cursor.string()?;
+            let action_fabric_checkpoint = if minor >= 2 {
+                match cursor.u8()? {
+                    0 => None,
+                    1 => Some(cursor.bytes(MAX_ACTION_FABRIC_CHECKPOINT_BYTES)?),
+                    _ => return Err(ConversationStateError::NonCanonicalEncoding),
+                }
+            } else {
+                None
+            };
             Some(ActiveConversationTurn {
                 task_id,
                 model_asset_id,
@@ -829,6 +888,7 @@ pub fn decode_conversation_checkpoint(
                 generated_tokens,
                 generated_text,
                 max_new_tokens,
+                action_fabric_checkpoint,
             })
         }
         _ => return Err(ConversationStateError::NonCanonicalEncoding),
@@ -879,6 +939,15 @@ fn validate_active(
         || active.generated_tokens.len() > active.max_new_tokens
         || active.generated_tokens.len() > MAX_TOKENS
         || active.generated_text.len() > MAX_TEXT_BYTES
+        || active
+            .action_fabric_checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| {
+                checkpoint.len() < crate::TAF97_HEADER_LEN
+                    || checkpoint.len() > MAX_ACTION_FABRIC_CHECKPOINT_BYTES
+                    || checkpoint.get(..crate::TAF97_MAGIC.len())
+                        != Some(crate::TAF97_MAGIC.as_slice())
+            })
         || active.max_new_tokens == 0
         || active.max_new_tokens > MAX_TOKENS
     {
@@ -922,6 +991,15 @@ fn push_string(out: &mut Vec<u8>, value: &str) -> Result<(), ConversationStateEr
     }
     push_u32(out, len_u32(value.len())?);
     out.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
+fn push_bytes(out: &mut Vec<u8>, value: &[u8]) -> Result<(), ConversationStateError> {
+    if value.len() > MAX_ACTION_FABRIC_CHECKPOINT_BYTES {
+        return Err(ConversationStateError::LimitExceeded);
+    }
+    push_u32(out, len_u32(value.len())?);
+    out.extend_from_slice(value);
     Ok(())
 }
 
@@ -1012,6 +1090,14 @@ impl<'a> Cursor<'a> {
             tokens.push(self.u32()?);
         }
         Ok(tokens)
+    }
+
+    fn bytes(&mut self, limit: usize) -> Result<Vec<u8>, ConversationStateError> {
+        let len = usize::try_from(self.u32()?).map_err(|_| ConversationStateError::Overflow)?;
+        if len > limit {
+            return Err(ConversationStateError::LimitExceeded);
+        }
+        Ok(self.take(len)?.to_vec())
     }
 
     fn is_finished(&self) -> bool {
@@ -1248,6 +1334,27 @@ mod tests {
                 "clipboard write requires explicit approval",
                 "pending"
             ))
+        );
+    }
+
+    #[test]
+    fn action_fabric_checkpoint_survives_ncs97_checkpoint() {
+        let mut state = SovereignConversationState::new(identity());
+        let task = state
+            .begin_turn("model.test", 1, "upload report", vec![1, 2], 8)
+            .expect("begin");
+        let mut taf97 = vec![0u8; crate::TAF97_HEADER_LEN];
+        taf97[..crate::TAF97_MAGIC.len()].copy_from_slice(&crate::TAF97_MAGIC);
+        state
+            .install_action_fabric_checkpoint(task, taf97.clone())
+            .expect("install action checkpoint");
+
+        let encoded = encode_conversation_checkpoint(&state).expect("encode");
+        let restored = decode_conversation_checkpoint(&encoded).expect("decode");
+
+        assert_eq!(
+            restored.action_fabric_checkpoint_for_task(task),
+            Some(taf97.as_slice())
         );
     }
 
