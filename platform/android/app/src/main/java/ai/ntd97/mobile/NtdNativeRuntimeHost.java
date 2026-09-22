@@ -2,6 +2,8 @@ package ai.ntd97.mobile;
 
 import android.content.Context;
 
+import java.io.File;
+
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -96,6 +98,7 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
                     1,
                     model.capsule.getAbsolutePath(),
                     model.shardRoot.getAbsolutePath(),
+                    new File(context.getFilesDir(), "ntd97-capability-files").getAbsolutePath(),
                     model.verifyKey,
                     128);
             return chatModelReady;
@@ -341,6 +344,7 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
             int version,
             String capsulePath,
             String shardRoot,
+            String capabilityRoot,
             byte[] verifyKey,
             int contextLimit);
 
