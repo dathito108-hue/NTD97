@@ -2030,9 +2030,13 @@ impl ActionVerifier for AndroidProductionVerifier {
                                     && fields.get("selector_kind") == Some(&spec.selector_kind)
                                     && fields.get("selector") == Some(&spec.selector_value)
                                     && fields.get("receipt") == Some(&expected_receipt)
-                                    && spec.text_bytes.is_none_or(|text_bytes| {
-                                        fields.get("text_bytes") == Some(&text_bytes.to_string())
-                                    })
+                                    && match spec.text_bytes {
+                                        None => true,
+                                        Some(text_bytes) => {
+                                            fields.get("text_bytes")
+                                                == Some(&text_bytes.to_string())
+                                        }
+                                    }
                         )
                 }
             }
