@@ -1,6 +1,7 @@
 package ai.ntd97.mobile;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 
@@ -100,7 +101,17 @@ public final class NtdRealModelProbeActivity extends Activity {
         }
 
         pendingResult = result;
-        scheduleProductionCapabilityProbe();
+        restoreProbeForegroundAndSchedule();
+    }
+
+    private void restoreProbeForegroundAndSchedule() {
+        productionFocusAttempts = 0;
+        Intent foreground = new Intent(this, NtdRealModelProbeActivity.class);
+        foreground.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        startActivity(foreground);
+        getWindow().getDecorView().postDelayed(
+                this::scheduleProductionCapabilityProbe,
+                PRODUCTION_FOCUS_SETTLE_MS);
     }
 
     private void scheduleProductionCapabilityProbe() {
@@ -232,6 +243,7 @@ public final class NtdRealModelProbeActivity extends Activity {
         int restoredBudget = 0;
         int restoredIterations = 0;
         int restoredMemory = 0;
+        int restoredMemoryRecordsBefore = 0;
         int restoredMemoryRecords = 0;
         int restoredStatus = 0;
         NtdConversationStore store = new NtdConversationStore(this);
@@ -261,6 +273,8 @@ public final class NtdRealModelProbeActivity extends Activity {
                             : -1L;
                     restoredRequestId = restoredRequest;
                     if (restoredRequest > 0) {
+                        restoredMemoryRecordsBefore =
+                                host.chatMemoryRecordCount(restoredRequest);
                         boolean restoredComplete = false;
                         for (int attempt = 0; attempt < 8; attempt++) {
                             NtdRuntimeHost.ChatEvent event = host.nextChatEvent(restoredRequest);
@@ -280,8 +294,9 @@ public final class NtdRealModelProbeActivity extends Activity {
                                 && restoredBudget >= 1
                                 && restoredBudget <= 4
                                 && restoredIterations == expectedReasoningIterations(restoredBudget)
-                                && restoredMemoryRecords > 0
-                                && restoredMemoryRecords == checkpointMemoryRecords
+                                && restoredMemoryRecordsBefore > 0
+                                && restoredMemoryRecordsBefore == checkpointMemoryRecords
+                                && restoredMemoryRecords >= restoredMemoryRecordsBefore
                                 && actionPlannerStatusKnown(host, restoredRequest)
                                 && actionPlannerInvariantHolds(host, restoredRequest)
                                 && host.chatTranscript().contains("Once resume this response");
@@ -372,6 +387,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "restored_budget=" + restoredBudget + "\n"
                 + "restored_iterations=" + restoredIterations + "\n"
                 + "restored_memory_items=" + restoredMemory + "\n"
+                + "restored_memory_records_before=" + restoredMemoryRecordsBefore + "\n"
                 + "restored_memory_records=" + restoredMemoryRecords + "\n"
                 + "restored_status=" + restoredStatus + "\n"
                 + "chat_memory=" + (memoryOk ? "ok" : "failed") + "\n"
