@@ -7238,6 +7238,93 @@ mod tests {
     }
 
     #[test]
+    fn paired_pc_provision_describe_list_and_revoke_keep_seed_private() {
+        let root = std::env::temp_dir().join(format!(
+            "ntd97-pc-provision-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let remote = PairedIdentity::from_seed([72; 32]);
+        let receipt = provision_pc_pair_profile(
+            &root,
+            "workstation",
+            "127.0.0.1:45970",
+            &fixed_hex(&remote.peer_id()),
+            &fixed_hex(&remote.verify_key()),
+        )
+        .expect("provision");
+        assert!(receipt.starts_with("NTD97_PC_PAIR_RECEIPT_V1\n"));
+        assert!(receipt.contains("peer=workstation\n"));
+        assert!(receipt.contains("local_peer_id="));
+        assert!(receipt.contains("local_verify_key="));
+        assert!(!receipt.contains("local_seed"));
+        assert_eq!(
+            list_pc_pair_profiles(&root).expect("list"),
+            vec!["workstation".to_owned()]
+        );
+        assert_eq!(
+            describe_pc_pair_profile(&root, "workstation").expect("describe"),
+            receipt
+        );
+
+        let loaded = load_pc_pair_profile(&root, "workstation").expect("load");
+        assert_eq!(loaded.remote_peer_id, remote.peer_id());
+        assert_eq!(loaded.remote_verify_key, remote.verify_key());
+        assert_ne!(loaded.local_seed, [0; 32]);
+        assert!(provision_pc_pair_profile(
+            &root,
+            "workstation",
+            "127.0.0.1:45970",
+            &fixed_hex(&remote.peer_id()),
+            &fixed_hex(&remote.verify_key()),
+        )
+        .is_err());
+
+        revoke_pc_pair_profile(&root, "workstation").expect("revoke");
+        assert!(list_pc_pair_profiles(&root).expect("empty list").is_empty());
+        assert!(load_pc_pair_profile(&root, "workstation").is_err());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn paired_pc_provision_rejects_invalid_address_and_mismatched_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "ntd97-pc-provision-invalid-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let remote = PairedIdentity::from_seed([73; 32]);
+        assert!(provision_pc_pair_profile(
+            &root,
+            "workstation",
+            "0.0.0.0:45970",
+            &fixed_hex(&remote.peer_id()),
+            &fixed_hex(&remote.verify_key()),
+        )
+        .is_err());
+
+        let wrong_peer_id = [0x55; 16];
+        assert!(provision_pc_pair_profile(
+            &root,
+            "workstation",
+            "127.0.0.1:45970",
+            &fixed_hex(&wrong_peer_id),
+            &fixed_hex(&remote.verify_key()),
+        )
+        .is_err());
+        assert!(list_pc_pair_profiles(&root).expect("list").is_empty());
+        if root.exists() {
+            fs::remove_dir_all(root).expect("cleanup");
+        }
+    }
+
+    #[test]
     fn accessibility_commands_use_dedicated_scope_and_receipt_binding() {
         let package = "ai.ntd97.mobile";
         let view_id = "ai.ntd97.mobile:id/ntd_accessibility_probe_button";
