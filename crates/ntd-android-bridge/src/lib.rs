@@ -205,14 +205,12 @@ fn sync_pc_pair_directory(pairs: &Path) -> Result<(), String> {
         .map_err(|error| format!("sync paired-PC profile directory: {error}"))
 }
 
-fn rollback_pc_pair_commit(pairs: &Path, target: &Path, staged: &Path) -> Result<(), String> {
+fn rollback_pc_pair_commit(pairs: &Path, target: &Path) -> Result<(), String> {
     let mut errors = Vec::new();
-    for path in [target, staged] {
-        match fs::remove_file(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => errors.push(format!("remove {}: {error}", path.display())),
-        }
+    match fs::remove_file(target) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => errors.push(format!("remove {}: {error}", target.display())),
     }
     if let Err(error) = sync_pc_pair_directory(pairs) {
         errors.push(error);
@@ -255,8 +253,6 @@ fn provision_pc_pair_profile(
     }
 
     let local_seed = os_random::<32>()?;
-    let suffix = fixed_hex(&os_random::<8>()?);
-    let staged = pairs.join(format!(".{peer}.{suffix}.tmp"));
     let body = format!(
         "NTD97_PC_PAIR_V1\npeer={peer}\naddress={address}\nlocal_seed={}\nremote_peer_id={}\nremote_verify_key={}\nEND\n",
         fixed_hex(&local_seed),
@@ -268,45 +264,28 @@ fn provision_pc_pair_profile(
         let mut file = fs::OpenOptions::new()
             .create_new(true)
             .write(true)
-            .open(&staged)
-            .map_err(|error| format!("create paired-PC staged profile: {error}"))?;
+            .open(&target)
+            .map_err(|error| format!("create paired-PC profile without replacement: {error}"))?;
         file.write_all(body.as_bytes())
-            .map_err(|error| format!("write paired-PC staged profile: {error}"))?;
+            .map_err(|error| format!("write paired-PC profile: {error}"))?;
         file.sync_all()
-            .map_err(|error| format!("sync paired-PC staged profile: {error}"))?;
+            .map_err(|error| format!("sync paired-PC profile: {error}"))?;
         drop(file);
-
-        fs::hard_link(&staged, &target)
-            .map_err(|error| format!("commit paired-PC profile without replacement: {error}"))?;
-        if let Err(error) = fs::remove_file(&staged) {
-            let rollback = rollback_pc_pair_commit(&pairs, &target, &staged);
-            return Err(match rollback {
-                Ok(()) => format!("remove paired-PC staged profile: {error}"),
-                Err(rollback_error) => format!(
-                    "remove paired-PC staged profile: {error}; rollback failed: {rollback_error}"
-                ),
-            });
-        }
-        if let Err(error) = sync_pc_pair_directory(&pairs) {
-            let rollback = rollback_pc_pair_commit(&pairs, &target, &staged);
-            return Err(match rollback {
-                Ok(()) => error,
-                Err(rollback_error) => {
-                    format!("{error}; rollback failed: {rollback_error}")
-                }
-            });
-        }
+        sync_pc_pair_directory(&pairs)?;
         Ok(())
     })();
     if let Err(error) = write_result {
-        let _ = fs::remove_file(&staged);
-        return Err(error);
+        let rollback = rollback_pc_pair_commit(&pairs, &target);
+        return Err(match rollback {
+            Ok(()) => error,
+            Err(rollback_error) => format!("{error}; rollback failed: {rollback_error}"),
+        });
     }
 
     let loaded = match load_pc_pair_profile(root, peer) {
         Ok(profile) => profile,
         Err(error) => {
-            let rollback = rollback_pc_pair_commit(&pairs, &target, &staged);
+            let rollback = rollback_pc_pair_commit(&pairs, &target);
             return Err(match rollback {
                 Ok(()) => format!("paired-PC committed profile failed reload: {error}"),
                 Err(rollback_error) => format!(
@@ -320,7 +299,7 @@ fn provision_pc_pair_profile(
         || loaded.remote_verify_key != remote_verify_key
         || loaded.local_seed != local_seed
     {
-        let rollback = rollback_pc_pair_commit(&pairs, &target, &staged);
+        let rollback = rollback_pc_pair_commit(&pairs, &target);
         return Err(match rollback {
             Ok(()) => "paired-PC committed profile failed verification".into(),
             Err(rollback_error) => format!(
