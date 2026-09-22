@@ -631,8 +631,7 @@ mod tests {
         M13HardwareEvidenceRecord {
             build_revision: "0123456789abcdef0123456789abcdef01234567".into(),
             device_fingerprint:
-                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                    .into(),
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
             gate_mask: M13_REQUIRED_GATE_MASK,
             verified_action_count: M13_MIN_VERIFIED_ACTIONS,
             process_death_reconfirmed: true,
@@ -663,9 +662,7 @@ mod tests {
             decode_m13_hardware_evidence(&encoded),
             Err(ValidationError::EvidenceCodec)
         );
-        assert!(!record.accepted_for_revision(
-            "fedcba9876543210fedcba9876543210fedcba98"
-        ));
+        assert!(!record.accepted_for_revision("fedcba9876543210fedcba9876543210fedcba98"));
     }
 
     #[test]
