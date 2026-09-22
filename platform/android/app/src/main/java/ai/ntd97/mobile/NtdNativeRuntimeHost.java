@@ -12,6 +12,7 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static boolean loaded;
 
     private final Context context;
+    private final NtdPlatformWeb platformWeb = new NtdPlatformWeb();
     private boolean chatModelReady;
 
     private NtdNativeRuntimeHost(Context context) {
@@ -97,7 +98,8 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
                     model.capsule.getAbsolutePath(),
                     model.shardRoot.getAbsolutePath(),
                     model.verifyKey,
-                    128);
+                    128,
+                    platformWeb);
             return chatModelReady;
         } catch (java.io.IOException error) {
             chatModelReady = false;
@@ -342,7 +344,8 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
             String capsulePath,
             String shardRoot,
             byte[] verifyKey,
-            int contextLimit);
+            int contextLimit,
+            NtdPlatformWeb platformWeb);
 
     private static native long nativeSubmitChat(String prompt, int maxNewTokens);
 
