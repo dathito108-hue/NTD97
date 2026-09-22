@@ -153,7 +153,7 @@ final class NtdWebPlatform {
         if (rendered.indexOf('{') >= 0 || rendered.indexOf('}') >= 0) {
             throw new IOException("unsupported search endpoint placeholder");
         }
-        validatePublicHttpsUrl(rendered);
+        validateHttpsSyntax(rendered);
     }
 
     private static byte[] fetchBlocking(String rawUrl) {
@@ -223,7 +223,7 @@ final class NtdWebPlatform {
                 : message;
     }
 
-    static URL validatePublicHttpsUrl(String rawUrl) throws IOException {
+    private static URL validateHttpsSyntax(String rawUrl) throws IOException {
         if (rawUrl == null || rawUrl.length() > 4096) {
             throw new IOException("invalid URL");
         }
@@ -237,7 +237,11 @@ final class NtdWebPlatform {
         if (url.getPort() != -1 && url.getPort() != 443) {
             throw new IOException("non-standard HTTPS port is not allowed");
         }
+        return url;
+    }
 
+    static URL validatePublicHttpsUrl(String rawUrl) throws IOException {
+        URL url = validateHttpsSyntax(rawUrl);
         InetAddress[] addresses = InetAddress.getAllByName(url.getHost());
         if (addresses.length == 0) {
             throw new IOException("host did not resolve");
