@@ -122,6 +122,7 @@ pub enum SamplingError {
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenerationError {
     EmptyPrompt,
+    EmptyCandidate,
     InvalidContextLimit,
     InvalidVocabulary,
     MissingDistributionOutput(usize),
@@ -197,6 +198,41 @@ where
             GenerationError::MissingDistributionOutput(self.distribution_output),
         )?;
         Ok(last_distribution(output, self.vocab_size)?.to_vec())
+    }
+
+    pub fn score_continuation_with_resolver<R: TensorResolver>(
+        &self,
+        resolver: &R,
+        prompt_tokens: &[u32],
+        candidate_tokens: &[u32],
+        context_limit: usize,
+    ) -> Result<f32, GenerationError> {
+        validate_prompt_tokens(prompt_tokens, self.vocab_size, context_limit)?;
+        if candidate_tokens.is_empty() {
+            return Err(GenerationError::EmptyCandidate);
+        }
+        for token in candidate_tokens {
+            let id =
+                usize::try_from(*token).map_err(|_| GenerationError::TokenIdOutOfRange(*token))?;
+            if id >= self.vocab_size {
+                return Err(GenerationError::TokenIdOutOfRange(*token));
+            }
+        }
+
+        let mut context = prompt_tokens.to_vec();
+        let mut total_log_probability = 0.0f64;
+        for token in candidate_tokens {
+            let logits =
+                self.next_distribution_with_resolver(resolver, &context, context_limit)?;
+            total_log_probability +=
+                token_log_probability(&logits, usize::try_from(*token).map_err(|_| {
+                    GenerationError::TokenIdOutOfRange(*token)
+                })?)
+                .map_err(GenerationError::Sampling)? as f64;
+            context.push(*token);
+        }
+
+        Ok((total_log_probability / candidate_tokens.len() as f64) as f32)
     }
 
     pub fn generate_tokens(
@@ -462,6 +498,26 @@ where
             text,
         })
     }
+}
+
+fn token_log_probability(logits: &[f32], token: usize) -> Result<f32, SamplingError> {
+    if logits.is_empty() || token >= logits.len() {
+        return Err(SamplingError::EmptyDistribution);
+    }
+    if logits.iter().any(|value| !value.is_finite()) {
+        return Err(SamplingError::NonFinite);
+    }
+
+    let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let mut mass = 0.0f64;
+    for value in logits {
+        mass += f64::from((*value - max).exp());
+    }
+    if !mass.is_finite() || mass <= 0.0 {
+        return Err(SamplingError::ZeroMass);
+    }
+
+    Ok(logits[token] - max - (mass.ln() as f32))
 }
 
 pub fn model_inference_signals(logits: &[f32]) -> Result<ModelInferenceSignals, SamplingError> {
@@ -851,6 +907,40 @@ mod tests {
             .expect("generate");
 
         assert_eq!(result.generated_tokens, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn continuation_scoring_prefers_higher_native_probability() {
+        let transitions = Tensor::new(
+            vec![4, 4],
+            vec![
+                0.0, 10.0, 1.0, 0.0,
+                0.0, 0.0, 10.0, 0.0,
+                0.0, 0.0, 0.0, 10.0,
+                0.0, 0.0, 0.0, 10.0,
+            ],
+        )
+        .expect("transitions");
+        let mut static_inputs = BTreeMap::new();
+        static_inputs.insert(ValueId(1), transitions);
+        let generator = GraphGenerator::new(
+            transition_graph(),
+            crate::CpuReferenceProvider,
+            static_inputs,
+            ValueId(0),
+            0,
+            4,
+        )
+        .expect("generator");
+
+        let preferred = generator
+            .score_continuation_with_resolver(&crate::EmptyTensorResolver, &[0], &[1], 4)
+            .expect("preferred");
+        let alternate = generator
+            .score_continuation_with_resolver(&crate::EmptyTensorResolver, &[0], &[2], 4)
+            .expect("alternate");
+
+        assert!(preferred > alternate);
     }
 
     #[test]
