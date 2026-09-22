@@ -63,13 +63,17 @@ public final class NtdRealModelProbeActivity extends Activity {
     }
 
     @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (!hasFocus || productionProbeStarted || pendingResult == null) {
+    protected void onResume() {
+        super.onResume();
+        if (productionProbeStarted || pendingResult == null) {
             return;
         }
 
         productionProbeStarted = true;
+        getWindow().getDecorView().postDelayed(this::runProductionProbeAndFinish, 300L);
+    }
+
+    private void runProductionProbeAndFinish() {
         String result = pendingResult;
         try {
             result = result + new String(
