@@ -3496,6 +3496,44 @@ fn production_capability_probe(
         return Err("production web.fetch evidence verification failed".into());
     }
 
+    let mut search = AndroidWebSearchAdapter;
+    let search_action = TypedAction::WebSearch {
+        query: "IANA Example Domain".into(),
+        max_results: 3,
+    };
+    let search_result = search
+        .execute(ntd_runtime::ActionId(89), &search_action)
+        .map_err(|error| format!("production web.search probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: search_output,
+        ..
+    } = search_result
+    else {
+        return Err("production web.search probe did not complete".into());
+    };
+    let search_descriptor = CapabilityDescriptor::new(
+        CapabilityId("web.search".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("web.search probe descriptor: {error:?}"))?;
+    if verifier.verify(&search_descriptor, &search_action, &search_output)
+        != ActionVerification::Accept
+    {
+        return Err("production web.search evidence verification failed".into());
+    }
+    let ActionValue::TextList(search_items) = &search_output.value else {
+        return Err("production web.search did not return normalized result list".into());
+    };
+    if search_items.is_empty()
+        || search_items
+            .iter()
+            .any(|item| !item.contains("\thttps://") || item.contains('\n') || item.contains('\r'))
+    {
+        return Err("production web.search returned invalid normalized result".into());
+    }
+
     let private_blocked = web
         .execute(
             ntd_runtime::ActionId(91),
@@ -3747,7 +3785,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_search=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
@@ -4060,6 +4098,44 @@ mod tests {
         let mut app_allowed = AuthorityGrant::new().with_scope(app_scope);
         app_allowed.allow_external_write = true;
         assert!(app_allowed.permits(&app).is_ok());
+    }
+
+    #[test]
+    fn web_search_protocol_decodes_normalized_results_and_enforces_requested_limit() {
+        let mut encoded = vec![PLATFORM_WEB_PROTOCOL_VERSION, 1];
+        push_string(&mut encoded, "provider-test");
+        encoded.extend_from_slice(&1u32.to_le_bytes());
+        push_string(&mut encoded, "Example Domain");
+        push_string(&mut encoded, "https://example.com/");
+        push_string(&mut encoded, "An example result.");
+
+        let decoded = decode_android_web_search_result(&encoded, 3).expect("decode");
+        assert_eq!(decoded.provider, "provider-test");
+        assert_eq!(decoded.items.len(), 1);
+        assert_eq!(decoded.items[0].title, "Example Domain");
+        assert_eq!(decoded.items[0].url, "https://example.com/");
+
+        assert!(decode_android_web_search_result(&encoded, 0).is_err());
+    }
+
+    #[test]
+    fn web_search_protocol_rejects_non_https_and_noncanonical_trailing_data() {
+        let mut encoded = vec![PLATFORM_WEB_PROTOCOL_VERSION, 1];
+        push_string(&mut encoded, "provider-test");
+        encoded.extend_from_slice(&1u32.to_le_bytes());
+        push_string(&mut encoded, "Unsafe");
+        push_string(&mut encoded, "http://example.com/");
+        push_string(&mut encoded, "unsafe result");
+        assert!(decode_android_web_search_result(&encoded, 1).is_err());
+
+        let mut canonical = vec![PLATFORM_WEB_PROTOCOL_VERSION, 1];
+        push_string(&mut canonical, "provider-test");
+        canonical.extend_from_slice(&1u32.to_le_bytes());
+        push_string(&mut canonical, "Example");
+        push_string(&mut canonical, "https://example.com/");
+        push_string(&mut canonical, "safe");
+        canonical.push(0);
+        assert!(decode_android_web_search_result(&canonical, 1).is_err());
     }
 
     #[test]
