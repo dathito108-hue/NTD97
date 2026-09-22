@@ -64,6 +64,7 @@ const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
 const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
 const PLATFORM_BROWSER_PROTOCOL_VERSION: u8 = 1;
 const PLATFORM_DEVICE_APP_PROTOCOL_VERSION: u8 = 1;
+const PLATFORM_STORAGE_GRANT_PROTOCOL_VERSION: u8 = 1;
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
@@ -378,6 +379,49 @@ fn android_https_fetch(url: &str) -> Result<AndroidWebFetchResult, String> {
     let bytes = env
         .convert_byte_array(&encoded)
         .map_err(|error| format!("decode Android HTTPS platform response: {error}"))?;
+    decode_android_web_fetch_result(&bytes)
+}
+
+fn android_https_put(
+    url: &str,
+    body: &[u8],
+    digest: &[u8; 32],
+) -> Result<AndroidWebFetchResult, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android upload thread: {error}"))?;
+    let jurl = env
+        .new_string(url)
+        .map_err(|error| format!("encode artifact.upload URL for Android: {error}"))?;
+    let jbody = env
+        .byte_array_from_slice(body)
+        .map_err(|error| format!("encode artifact.upload body for Android: {error}"))?;
+    let jdigest = env
+        .new_string(digest_hex(digest))
+        .map_err(|error| format!("encode artifact.upload digest for Android: {error}"))?;
+    let jurl_object = JObject::from(jurl);
+    let jbody_object = JObject::from(jbody);
+    let jdigest_object = JObject::from(jdigest);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdWebPlatform",
+            "put",
+            "(Ljava/lang/String;[BLjava/lang/String;)[B",
+            &[
+                JValue::Object(&jurl_object),
+                JValue::Object(&jbody_object),
+                JValue::Object(&jdigest_object),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android HTTPS upload boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android HTTPS upload response: {error}"))?;
     decode_android_web_fetch_result(&bytes)
 }
 
@@ -712,6 +756,149 @@ impl CapabilityAdapter for AndroidAppActionAdapter {
             },
             rollback_token: None,
         })
+    }
+}
+
+fn decode_android_storage_grant_result(bytes: &[u8]) -> Result<String, String> {
+    let mut cursor = PlatformCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_STORAGE_GRANT_PROTOCOL_VERSION {
+        return Err("unsupported Android storage grant protocol".into());
+    }
+    let success = cursor.u8()?;
+    let message = cursor.string()?;
+    if !cursor.finished() || message.len() > MAX_PLATFORM_TEXT_BYTES {
+        return Err("invalid Android storage grant response framing".into());
+    }
+    match success {
+        1 => Ok(message),
+        0 => Err(format!("Android storage grant action failed: {message}")),
+        _ => Err("invalid Android storage grant platform status".into()),
+    }
+}
+
+fn android_granted_file_read(path: &str) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android storage thread: {error}"))?;
+    let jpath = env
+        .new_string(path)
+        .map_err(|error| format!("encode granted file path: {error}"))?;
+    let jpath_object = JObject::from(jpath);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdStorageGrantPlatform",
+            "read",
+            "(Ljava/lang/String;)[B",
+            &[JValue::Object(&jpath_object)],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android granted file read: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android granted file read: {error}"))?;
+    decode_android_storage_grant_result(&bytes)
+}
+
+fn android_granted_file_write(path: &str, body: &[u8]) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android storage thread: {error}"))?;
+    let jpath = env
+        .new_string(path)
+        .map_err(|error| format!("encode granted file path: {error}"))?;
+    let jbody = env
+        .byte_array_from_slice(body)
+        .map_err(|error| format!("encode granted file bytes: {error}"))?;
+    let jpath_object = JObject::from(jpath);
+    let jbody_object = JObject::from(jbody);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdStorageGrantPlatform",
+            "write",
+            "(Ljava/lang/String;[B)[B",
+            &[JValue::Object(&jpath_object), JValue::Object(&jbody_object)],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android granted file write: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android granted file write: {error}"))?;
+    decode_android_storage_grant_result(&bytes)
+}
+
+fn granted_file_parts(path: &str) -> Result<(&str, &str), String> {
+    let (alias, relative) = path
+        .split_once('\t')
+        .ok_or_else(|| "granted file path must contain alias and relative path".to_owned())?;
+    if alias.trim().is_empty()
+        || relative.trim().is_empty()
+        || alias != alias.trim()
+        || relative != relative.trim()
+    {
+        return Err("invalid granted file path".into());
+    }
+    Ok((alias, relative))
+}
+
+struct AndroidUserGrantedFileAdapter;
+
+impl CapabilityAdapter for AndroidUserGrantedFileAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        match action {
+            TypedAction::FileRead { path } => {
+                let (alias, relative) = granted_file_parts(path)?;
+                let text = android_granted_file_read(path)?;
+                Ok(AdapterResult::Completed {
+                    output: ActionOutput {
+                        summary: format!("verified user-granted file read: {alias}/{relative}"),
+                        value: ActionValue::Text(text),
+                        evidence: vec![
+                            "android-user-granted-file".into(),
+                            format!("grant:{alias}"),
+                            format!("path:{relative}"),
+                            "operation:read".into(),
+                        ],
+                    },
+                    rollback_token: None,
+                })
+            }
+            TypedAction::FileWrite { path, bytes } => {
+                let (alias, relative) = granted_file_parts(path)?;
+                let receipt = android_granted_file_write(path, bytes)?;
+                Ok(AdapterResult::Completed {
+                    output: ActionOutput {
+                        summary: format!("verified user-granted file write: {alias}/{relative}"),
+                        value: ActionValue::Fields(BTreeMap::from([
+                            ("grant".into(), alias.to_owned()),
+                            ("path".into(), relative.to_owned()),
+                            ("bytes".into(), bytes.len().to_string()),
+                            ("receipt".into(), receipt.clone()),
+                        ])),
+                        evidence: vec![
+                            "android-user-granted-file".into(),
+                            format!("grant:{alias}"),
+                            format!("path:{relative}"),
+                            "operation:write".into(),
+                            format!("receipt:{receipt}"),
+                        ],
+                    },
+                    rollback_token: None,
+                })
+            }
+            _ => Err("Android user-granted file adapter received wrong action".into()),
+        }
     }
 }
 
