@@ -1073,11 +1073,19 @@ impl CapabilityAdapter for AndroidBrowserObserveAdapter {
         if observation.len() > MAX_PLATFORM_TEXT_BYTES {
             return Err("browser observation exceeds native evidence limit".into());
         }
+        let receipt = browser_receipt(&observation)?;
+        if !browser_receipt_matches(&receipt, "observe", target, None) {
+            return Err("browser observation receipt does not bind the requested target".into());
+        }
         Ok(AdapterResult::Completed {
             output: ActionOutput {
                 summary: "verified Android browser observation".into(),
                 value: ActionValue::Text(observation),
-                evidence: vec!["android-webview-browser".into(), "operation:observe".into()],
+                evidence: vec![
+                    "android-webview-browser".into(),
+                    "operation:observe".into(),
+                    format!("receipt:{receipt}"),
+                ],
             },
             rollback_token: None,
         })
@@ -1100,11 +1108,14 @@ impl CapabilityAdapter for AndroidBrowserInteractAdapter {
         else {
             return Err("Android browser interaction adapter received wrong action".into());
         };
-        if operation != "click" && operation != "set_value" {
+        if !matches!(
+            operation.as_str(),
+            "click" | "set_value" | "submit" | "navigate"
+        ) {
             return Err("unsupported Android browser interaction operation".into());
         }
-        if operation == "click" && value.is_some() {
-            return Err("browser click must not carry a value".into());
+        if matches!(operation.as_str(), "click" | "submit" | "navigate") && value.is_some() {
+            return Err("browser interaction operation must not carry a value".into());
         }
         if operation == "set_value" && !value.as_ref().is_some_and(|value| !value.is_empty()) {
             return Err("browser set_value requires a value".into());
@@ -1115,6 +1126,18 @@ impl CapabilityAdapter for AndroidBrowserInteractAdapter {
             return Err("browser interaction receipt exceeds native evidence limit".into());
         }
         let receipt = browser_receipt(&result)?;
+        if !browser_receipt_matches(&receipt, operation, target, value.as_deref()) {
+            return Err("browser interaction receipt does not bind the canonical action".into());
+        }
+        if operation == "set_value" {
+            let expected_hash = value
+                .as_ref()
+                .map(|value| digest_hex(&sha256(value.as_bytes())))
+                .ok_or_else(|| "browser set_value lost its value".to_owned())?;
+            if browser_platform_field(&result, "value_sha256") != Some(expected_hash.as_str()) {
+                return Err("browser set_value platform read-back hash mismatch".into());
+            }
+        }
         Ok(AdapterResult::Completed {
             output: ActionOutput {
                 summary: format!("verified Android browser {operation} interaction"),
@@ -1147,6 +1170,45 @@ fn browser_receipt(result: &str) -> Result<String, String> {
     Ok(receipt.to_owned())
 }
 
+fn browser_platform_field<'a>(result: &'a str, key: &str) -> Option<&'a str> {
+    let prefix = format!("{key}=");
+    result.lines().find_map(|line| line.strip_prefix(&prefix))
+}
+
+fn browser_receipt_matches(
+    receipt: &str,
+    operation: &str,
+    target: &str,
+    value: Option<&str>,
+) -> bool {
+    let mut parts = receipt.split(':');
+    let Some(platform) = parts.next() else {
+        return false;
+    };
+    let Some(receipt_operation) = parts.next() else {
+        return false;
+    };
+    let Some(sequence) = parts.next() else {
+        return false;
+    };
+    let Some(receipt_digest) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some()
+        || platform != "android-webview"
+        || receipt_operation != operation
+        || sequence
+            .parse::<u64>()
+            .ok()
+            .map_or(true, |sequence| sequence == 0)
+        || receipt_digest.len() != 64
+    {
+        return false;
+    }
+    let canonical = format!("{operation}\n{target}\n{}", value.unwrap_or_default());
+    digest_hex(&sha256(canonical.as_bytes())) == receipt_digest
+}
+
 fn android_browser_observe(target: &str) -> Result<String, String> {
     let vm = JAVA_VM.get().ok_or_else(|| {
         "Android JavaVM is not attached to the native capability runtime".to_owned()
@@ -1172,6 +1234,29 @@ fn android_browser_observe(target: &str) -> Result<String, String> {
         .convert_byte_array(&encoded)
         .map_err(|error| format!("decode Android browser observe response: {error}"))?;
     decode_android_browser_result(&bytes)
+}
+
+fn android_browser_drop_in_memory_session_for_test() -> Result<(), String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android browser test thread: {error}"))?;
+    let dropped = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdBrowserPlatform",
+            "dropInMemorySessionForTest",
+            "()Z",
+            &[],
+        )
+        .and_then(|value| value.z())
+        .map_err(|error| format!("drop Android browser in-memory session: {error}"))?;
+    if dropped {
+        Ok(())
+    } else {
+        Err("Android browser test session reset was rejected".into())
+    }
 }
 
 fn android_browser_interact(
@@ -2198,18 +2283,75 @@ impl ActionVerifier for AndroidProductionVerifier {
                             .is_some_and(|source| source.starts_with("https://"))
                     })
             }
-            ("browser.observe", TypedAction::BrowserObserve { .. }) => {
-                output
-                    .evidence
-                    .iter()
-                    .any(|item| item == "android-webview-browser")
+            ("browser.observe", TypedAction::BrowserObserve { target }) => {
+                let ActionValue::Text(platform) = &output.value else {
+                    return ActionVerification::Reject {
+                        reason: "browser observe output is not platform text".into(),
+                    };
+                };
+                let Ok(receipt) = browser_receipt(platform) else {
+                    return ActionVerification::Reject {
+                        reason: "browser observe output lacks receipt".into(),
+                    };
+                };
+                browser_receipt_matches(&receipt, "observe", target, None)
+                    && browser_platform_field(platform, "operation") == Some("observe")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-webview-browser")
                     && output
                         .evidence
                         .iter()
                         .any(|item| item == "operation:observe")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == &format!("receipt:{receipt}"))
             }
-            ("browser.interact", TypedAction::BrowserInteract { operation, .. }) => {
-                (operation == "click" || operation == "set_value")
+            (
+                "browser.interact",
+                TypedAction::BrowserInteract {
+                    target,
+                    operation,
+                    value,
+                },
+            ) => {
+                let semantics_valid = match operation.as_str() {
+                    "click" | "submit" | "navigate" => value.is_none(),
+                    "set_value" => value.as_ref().is_some_and(|value| !value.is_empty()),
+                    _ => false,
+                };
+                let ActionValue::Fields(fields) = &output.value else {
+                    return ActionVerification::Reject {
+                        reason: "browser interaction output is not fields".into(),
+                    };
+                };
+                let Some(receipt) = fields.get("receipt") else {
+                    return ActionVerification::Reject {
+                        reason: "browser interaction output lacks receipt".into(),
+                    };
+                };
+                let Some(platform) = fields.get("platform") else {
+                    return ActionVerification::Reject {
+                        reason: "browser interaction output lacks platform result".into(),
+                    };
+                };
+                let value_hash_valid = if operation == "set_value" {
+                    value.as_ref().is_some_and(|value| {
+                        let expected_hash = digest_hex(&sha256(value.as_bytes()));
+                        browser_platform_field(platform, "value_sha256")
+                            == Some(expected_hash.as_str())
+                    })
+                } else {
+                    true
+                };
+                semantics_valid
+                    && browser_receipt_matches(receipt, operation, target, value.as_deref())
+                    && browser_platform_field(platform, "operation") == Some(operation.as_str())
+                    && value_hash_valid
+                    && fields.get("operation") == Some(operation)
+                    && fields.get("target") == Some(target)
                     && output
                         .evidence
                         .iter()
@@ -2221,7 +2363,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                     && output
                         .evidence
                         .iter()
-                        .any(|item| item.starts_with("receipt:android-webview:"))
+                        .any(|item| item == &format!("receipt:{receipt}"))
             }
             ("file.read", TypedAction::FileRead { .. }) => {
                 output
@@ -3067,6 +3209,21 @@ fn chat_session_active(status: NativeChatSessionStatus) -> bool {
     )
 }
 
+fn recover_orphaned_chat_turn(
+    conversation: &mut SovereignConversationState,
+) -> Result<bool, String> {
+    let Some(task_id) = conversation.active().map(|active| active.task_id) else {
+        return Ok(false);
+    };
+    conversation
+        .cancel_turn(
+            task_id,
+            "recovered orphaned native chat turn before new request",
+        )
+        .map_err(|error| format!("cancel orphaned sovereign conversation turn: {error:?}"))?;
+    Ok(true)
+}
+
 fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String> {
     if max_new_tokens == 0 {
         return Err("max_new_tokens must be greater than zero".into());
@@ -3104,6 +3261,9 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
             .chat_model
             .clone()
             .ok_or_else(|| "no verified native chat model is loaded".to_owned())?;
+        if recover_orphaned_chat_turn(&mut guard.conversation)? {
+            guard.chat_session = None;
+        }
         guard.chat_submit_in_progress = true;
         (
             model,
@@ -3412,6 +3572,60 @@ fn governed_explicit_action_plan(
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.observe|{target}\nEND"
         ))
+    } else if lower == "resume browser" {
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.observe|session\nEND"
+        ))
+    } else if lower.starts_with("browser navigate ") {
+        let target = trimmed
+            .get("browser navigate ".len()..)
+            .ok_or_else(|| "browser navigation command boundary failed".to_owned())?;
+        if target.trim().is_empty()
+            || target != target.trim()
+            || target
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tnavigate\nEND"
+        ))
+    } else if lower.starts_with("browser submit ") {
+        let target = trimmed
+            .get("browser submit ".len()..)
+            .ok_or_else(|| "browser submit command boundary failed".to_owned())?;
+        if target.trim().is_empty()
+            || target != target.trim()
+            || target
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tsubmit\nEND"
+        ))
+    } else if lower.starts_with("browser set ") {
+        let rest = trimmed
+            .get("browser set ".len()..)
+            .ok_or_else(|| "browser set_value command boundary failed".to_owned())?;
+        let Some((target, value)) = rest.split_once(" to ") else {
+            return Ok(None);
+        };
+        if target.trim().is_empty()
+            || target != target.trim()
+            || value.is_empty()
+            || target
+                .chars()
+                .chain(value.chars())
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tset_value\t{value}\nEND"
+        ))
     } else if lower.starts_with("browser click ") {
         let target = trimmed
             .get("browser click ".len()..)
@@ -3680,13 +3894,19 @@ fn external_write_approval(
                     operation,
                     value,
                 },
-            ) if (operation == "click" && value.is_none())
+            ) if (matches!(operation.as_str(), "click" | "submit" | "navigate")
+                && value.is_none())
                 || (operation == "set_value"
                     && value.as_ref().is_some_and(|value| !value.is_empty())) =>
             {
                 capabilities.insert("browser.interact".to_owned());
+                let subject = if operation == "navigate" {
+                    "public HTTPS destination"
+                } else {
+                    "unique DOM selector"
+                };
                 rationales.push(format!(
-                    "interact with the controlled browser using {operation} on selector {target}"
+                    "interact with the controlled browser using {operation} on {subject} {target}"
                 ));
             }
             (
@@ -5951,14 +6171,71 @@ fn production_capability_probe(
     browser_interact_authority
         .permits(&browser_interact_descriptor)
         .map_err(|error| format!("browser interaction explicit authority rejected: {error:?}"))?;
+    let mut browser_interact = AndroidBrowserInteractAdapter;
+    let ambiguous_selector_blocked = browser_interact
+        .execute(
+            ntd_runtime::ActionId(100),
+            &TypedAction::BrowserInteract {
+                target: "*".into(),
+                operation: "click".into(),
+                value: None,
+            },
+        )
+        .is_err();
+    if !ambiguous_selector_blocked {
+        return Err("ambiguous browser selector did not fail closed".into());
+    }
+
+    android_browser_drop_in_memory_session_for_test()?;
+    let lost_session_blocked = browser_interact
+        .execute(
+            ntd_runtime::ActionId(101),
+            &TypedAction::BrowserInteract {
+                target: "body".into(),
+                operation: "click".into(),
+                value: None,
+            },
+        )
+        .is_err();
+    if !lost_session_blocked {
+        return Err("browser interaction did not fail after in-memory session loss".into());
+    }
+
+    let browser_resume_action = TypedAction::BrowserObserve {
+        target: "session".into(),
+    };
+    let browser_resume_result = browser_observe
+        .execute(ntd_runtime::ActionId(102), &browser_resume_action)
+        .map_err(|error| format!("production browser session resume probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_resume_output,
+        ..
+    } = browser_resume_result
+    else {
+        return Err("production browser session resume did not complete".into());
+    };
+    if verifier.verify(
+        &browser_observe_descriptor,
+        &browser_resume_action,
+        &browser_resume_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser session resume verification failed".into());
+    }
+    let ActionValue::Text(browser_resume_platform) = &browser_resume_output.value else {
+        return Err("browser session resume output was not platform text".into());
+    };
+    if browser_platform_field(browser_resume_platform, "session") != Some("resumed") {
+        return Err("browser session resume did not report resumed state".into());
+    }
+
     let browser_interact_action = TypedAction::BrowserInteract {
         target: "body".into(),
         operation: "click".into(),
         value: None,
     };
-    let mut browser_interact = AndroidBrowserInteractAdapter;
     let browser_interact_result = browser_interact
-        .execute(ntd_runtime::ActionId(100), &browser_interact_action)
+        .execute(ntd_runtime::ActionId(103), &browser_interact_action)
         .map_err(|error| format!("production browser.interact probe: {error}"))?;
     let AdapterResult::Completed {
         output: browser_interact_output,
@@ -5974,6 +6251,98 @@ fn production_capability_probe(
     ) != ActionVerification::Accept
     {
         return Err("production browser.interact receipt verification failed".into());
+    }
+
+    let cross_origin_error = match browser_interact.execute(
+        ntd_runtime::ActionId(109),
+        &TypedAction::BrowserInteract {
+            target: "a[href*='iana']".into(),
+            operation: "click".into(),
+            value: None,
+        },
+    ) {
+        Err(error) => error,
+        Ok(_) => return Err("cross-origin browser link unexpectedly completed".into()),
+    };
+    if !cross_origin_error
+        .to_ascii_lowercase()
+        .contains("cross-origin")
+    {
+        return Err(format!(
+            "cross-origin browser link failed for unexpected reason: {cross_origin_error}"
+        ));
+    }
+
+    let browser_navigate_action = TypedAction::BrowserInteract {
+        target: "https://httpbin.org/forms/post".into(),
+        operation: "navigate".into(),
+        value: None,
+    };
+    let browser_navigate_result = browser_interact
+        .execute(ntd_runtime::ActionId(104), &browser_navigate_action)
+        .map_err(|error| format!("production browser.navigate probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_navigate_output,
+        ..
+    } = browser_navigate_result
+    else {
+        return Err("production browser.navigate did not complete".into());
+    };
+    if verifier.verify(
+        &browser_interact_descriptor,
+        &browser_navigate_action,
+        &browser_navigate_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.navigate receipt verification failed".into());
+    }
+
+    let browser_set_value_action = TypedAction::BrowserInteract {
+        target: "input[name='custname']".into(),
+        operation: "set_value".into(),
+        value: Some("NTD97-form-probe".into()),
+    };
+    let browser_set_value_result = browser_interact
+        .execute(ntd_runtime::ActionId(105), &browser_set_value_action)
+        .map_err(|error| format!("production browser.set_value probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_set_value_output,
+        ..
+    } = browser_set_value_result
+    else {
+        return Err("production browser.set_value did not complete".into());
+    };
+    if verifier.verify(
+        &browser_interact_descriptor,
+        &browser_set_value_action,
+        &browser_set_value_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.set_value receipt verification failed".into());
+    }
+
+    let browser_submit_action = TypedAction::BrowserInteract {
+        target: "form".into(),
+        operation: "submit".into(),
+        value: None,
+    };
+    let browser_submit_result = browser_interact
+        .execute(ntd_runtime::ActionId(106), &browser_submit_action)
+        .map_err(|error| format!("production browser.submit probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_submit_output,
+        ..
+    } = browser_submit_result
+    else {
+        return Err("production browser.submit did not complete".into());
+    };
+    if verifier.verify(
+        &browser_interact_descriptor,
+        &browser_submit_action,
+        &browser_submit_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.submit receipt verification failed".into());
     }
 
     let capability_root_path = Path::new(capability_root);
@@ -6514,7 +6883,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nweb_search_normalized=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\napp_accessibility_authority_block=ok\napp_accessibility_missing_target_block=ok\napp_accessibility_click=ok\napp_accessibility_set_text=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nweb_search_normalized=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_selector_ambiguity_block=ok\nbrowser_session_loss_block=ok\nbrowser_session_resume=ok\nbrowser_interact=ok\nbrowser_navigate=ok\nbrowser_set_value=ok\nbrowser_submit=ok\nbrowser_cross_origin_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\napp_accessibility_authority_block=ok\napp_accessibility_missing_target_block=ok\napp_accessibility_click=ok\napp_accessibility_set_text=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
@@ -6893,6 +7262,24 @@ mod tests {
     }
 
     #[test]
+    fn orphaned_conversation_turn_is_paused_before_next_chat_request() {
+        let mut conversation =
+            SovereignConversationState::new(CognitiveIdentity(*b"NTD97-ASSISTANT1"));
+        let task = conversation
+            .begin_turn("model.test", 1, "orphaned", vec![1], 4)
+            .expect("begin turn");
+        assert_eq!(
+            conversation.active().map(|active| active.task_id),
+            Some(task)
+        );
+
+        assert!(recover_orphaned_chat_turn(&mut conversation).expect("recover"));
+        assert!(conversation.active().is_none());
+        assert!(conversation.prior_conversation_failure());
+        assert!(!recover_orphaned_chat_turn(&mut conversation).expect("idempotent"));
+    }
+
+    #[test]
     fn ambiguous_external_retry_requires_reconfirmation_but_resumable_token_does_not() {
         let mut browser_registry = CapabilityRegistry::new();
         browser_registry
@@ -7120,10 +7507,57 @@ mod tests {
             click.graph.actions[0].side_effect,
             SideEffectClass::ExternalWrite
         );
+
+        let resume = governed_explicit_action_plan("resume browser")
+            .expect("resume plan")
+            .expect("resume action");
+        assert_eq!(
+            resume.payloads.get(&1),
+            Some(&TypedAction::BrowserObserve {
+                target: "session".into(),
+            })
+        );
+
+        let navigate = governed_explicit_action_plan("browser navigate https://example.com/docs")
+            .expect("navigate plan")
+            .expect("navigate action");
+        assert_eq!(
+            navigate.payloads.get(&1),
+            Some(&TypedAction::BrowserInteract {
+                target: "https://example.com/docs".into(),
+                operation: "navigate".into(),
+                value: None,
+            })
+        );
+
+        let set_value =
+            governed_explicit_action_plan("browser set input[name='q'] to NTD97 mobile")
+                .expect("set_value plan")
+                .expect("set_value action");
+        assert_eq!(
+            set_value.payloads.get(&1),
+            Some(&TypedAction::BrowserInteract {
+                target: "input[name='q']".into(),
+                operation: "set_value".into(),
+                value: Some("NTD97 mobile".into()),
+            })
+        );
+
+        let submit = governed_explicit_action_plan("browser submit form#search")
+            .expect("submit plan")
+            .expect("submit action");
+        assert_eq!(
+            submit.payloads.get(&1),
+            Some(&TypedAction::BrowserInteract {
+                target: "form#search".into(),
+                operation: "submit".into(),
+                value: None,
+            })
+        );
     }
 
     #[test]
-    fn browser_interaction_requires_chat_approval_and_receipt_evidence() {
+    fn browser_interaction_requires_chat_approval_and_action_bound_receipt() {
         let plan = governed_explicit_action_plan("browser click body")
             .expect("click plan")
             .expect("click action");
@@ -7141,13 +7575,23 @@ mod tests {
         )
         .expect("browser descriptor");
         let action = plan.payloads.get(&1).expect("browser action");
+        let digest = digest_hex(&sha256(b"click\nbody\n"));
+        let receipt = format!("android-webview:click:1:{digest}");
+        let platform = format!(
+            "receipt={receipt}\noperation=click\ntarget=body\nurl=https://example.com/\ntitle=Example Domain\ntag=BODY"
+        );
         let accepted = ActionOutput {
             summary: "verified browser click".into(),
-            value: ActionValue::None,
+            value: ActionValue::Fields(BTreeMap::from([
+                ("operation".into(), "click".into()),
+                ("target".into(), "body".into()),
+                ("receipt".into(), receipt.clone()),
+                ("platform".into(), platform),
+            ])),
             evidence: vec![
                 "android-webview-browser".into(),
                 "operation:click".into(),
-                "receipt:android-webview:click:1".into(),
+                format!("receipt:{receipt}"),
             ],
         };
         let mut verifier = AndroidProductionVerifier;
@@ -7156,13 +7600,58 @@ mod tests {
             ActionVerification::Accept
         );
 
-        let rejected = ActionOutput {
-            summary: "browser click claimed".into(),
-            value: ActionValue::None,
-            evidence: vec!["android-webview-browser".into(), "operation:click".into()],
+        let mut tampered = accepted.clone();
+        let ActionValue::Fields(fields) = &mut tampered.value else {
+            panic!("fields");
         };
+        fields.insert(
+            "receipt".into(),
+            format!("android-webview:click:1:{}", "0".repeat(64)),
+        );
         assert!(matches!(
-            verifier.verify(&descriptor, action, &rejected),
+            verifier.verify(&descriptor, action, &tampered),
+            ActionVerification::Reject { .. }
+        ));
+
+        let set_plan = governed_explicit_action_plan("browser set input#q to private-value")
+            .expect("set plan")
+            .expect("set action");
+        let set_action = set_plan.payloads.get(&1).expect("set action");
+        let value_hash = digest_hex(&sha256(b"private-value"));
+        let set_digest = digest_hex(&sha256(b"set_value\ninput#q\nprivate-value"));
+        let set_receipt = format!("android-webview:set_value:2:{set_digest}");
+        let set_platform = format!(
+            "receipt={set_receipt}\noperation=set_value\ntarget=input#q\nurl=https://example.com/\ntitle=Example\ntag=INPUT\nvalue_sha256={value_hash}"
+        );
+        let set_output = ActionOutput {
+            summary: "verified browser set_value".into(),
+            value: ActionValue::Fields(BTreeMap::from([
+                ("operation".into(), "set_value".into()),
+                ("target".into(), "input#q".into()),
+                ("receipt".into(), set_receipt.clone()),
+                ("platform".into(), set_platform),
+            ])),
+            evidence: vec![
+                "android-webview-browser".into(),
+                "operation:set_value".into(),
+                format!("receipt:{set_receipt}"),
+            ],
+        };
+        assert_eq!(
+            verifier.verify(&descriptor, set_action, &set_output),
+            ActionVerification::Accept
+        );
+        let mut wrong_hash = set_output;
+        let ActionValue::Fields(fields) = &mut wrong_hash.value else {
+            panic!("fields");
+        };
+        let platform = fields.get_mut("platform").expect("platform");
+        *platform = platform.replace(
+            &format!("value_sha256={value_hash}"),
+            &format!("value_sha256={}", "0".repeat(64)),
+        );
+        assert!(matches!(
+            verifier.verify(&descriptor, set_action, &wrong_hash),
             ActionVerification::Reject { .. }
         ));
     }
