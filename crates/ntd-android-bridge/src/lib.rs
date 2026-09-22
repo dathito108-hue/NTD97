@@ -1798,7 +1798,9 @@ fn governed_external_action_plan(
         let value = trimmed
             .get("set clipboard to ".len()..)
             .ok_or_else(|| "clipboard command boundary failed".to_owned())?;
-        if value.trim().is_empty() || value.contains(['\r', '\n', '|', '\t']) {
+        if value.trim().is_empty()
+            || value.chars().any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
             return Ok(None);
         }
         Some(format!(
@@ -1809,7 +1811,9 @@ fn governed_external_action_plan(
             .get("open app ".len()..)
             .ok_or_else(|| "app command boundary failed".to_owned())?;
         if package.trim().is_empty()
-            || package.contains(['\r', '\n', '|', '\t', ' '])
+            || package
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t' | ' '))
         {
             return Ok(None);
         }
@@ -1832,7 +1836,7 @@ fn governed_external_action_plan(
 fn external_write_approval(
     action_plan: &AssistantActionPlan,
 ) -> Result<Option<(String, String)>, String> {
-    let mut capabilities = BTreeSet::new();
+    let mut capabilities = std::collections::BTreeSet::new();
     let mut rationales = Vec::new();
 
     for node in &action_plan.graph.actions {
