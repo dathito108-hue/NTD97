@@ -1964,6 +1964,40 @@ fn run_constrained_device_planner(
     })
 }
 
+fn governed_web_search_plan(
+    user_message: &str,
+) -> Result<Option<AssistantActionPlan>, String> {
+    let trimmed = user_message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let query = if lower.starts_with("search web for ") {
+        trimmed.get("search web for ".len()..)
+    } else if lower.starts_with("web search ") {
+        trimmed.get("web search ".len()..)
+    } else {
+        None
+    };
+    let Some(query) = query else {
+        return Ok(None);
+    };
+    if query.trim().is_empty()
+        || query.len() > 512
+        || query != query.trim()
+        || query
+            .chars()
+            .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+    {
+        return Ok(None);
+    }
+
+    let canonical = format!(
+        "{NATIVE_ACTION_PROTOCOL_V1}\n1|web.search|{query}\nEND"
+    );
+    Ok(match parse_native_action_plan(&canonical) {
+        Ok(AssistantPlanDecision::Actions(plan)) => Some(plan),
+        _ => None,
+    })
+}
+
 fn governed_external_action_plan(
     user_message: &str,
 ) -> Result<Option<AssistantActionPlan>, String> {
@@ -2464,6 +2498,8 @@ fn submit_chat_reserved(
         .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
 
     let planner_outcome = if let Some(plan) = governed_external_action_plan(user_message)? {
+        NativeActionPlanningOutcome::Actions(plan)
+    } else if let Some(plan) = governed_web_search_plan(user_message)? {
         NativeActionPlanningOutcome::Actions(plan)
     } else {
         match governed_device_surfaces(user_message) {
