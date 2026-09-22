@@ -708,7 +708,6 @@ impl CapabilityAdapter for AndroidDeviceInteractAdapter {
                 value: ActionValue::Fields(BTreeMap::from([
                     ("surface".into(), "clipboard".into()),
                     ("operation".into(), "set_text".into()),
-                    ("receipt".into(), receipt.clone()),
                 ])),
                 evidence: vec![
                     "android-clipboard-write".into(),
