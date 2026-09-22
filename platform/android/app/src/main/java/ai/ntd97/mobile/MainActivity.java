@@ -161,6 +161,16 @@ public final class MainActivity extends Activity {
                         0,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         1.0f));
+
+        Button webSearch = new Button(this);
+        webSearch.setText("Web search");
+        webSearch.setOnClickListener(view -> openWebSearchSettings());
+        actionRow.addView(
+                webSearch,
+                new LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1.0f));
         controls.addView(actionRow);
 
         if (BuildConfig.DEBUG) {
@@ -550,6 +560,10 @@ public final class MainActivity extends Activity {
                 this,
                 getPackageName() + ".NtdPhysicalEvidenceActivity");
         startActivity(validation);
+    }
+
+    private void openWebSearchSettings() {
+        startActivity(new Intent(this, NtdWebSearchSettingsActivity.class));
     }
 
     private void openAccessibilitySettings() {
