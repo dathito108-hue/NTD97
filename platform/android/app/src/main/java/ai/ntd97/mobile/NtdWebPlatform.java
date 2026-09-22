@@ -6,12 +6,15 @@ import android.content.SharedPreferences;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -112,6 +115,24 @@ final class NtdWebPlatform {
         }
     }
 
+    static byte[] put(String rawUrl, byte[] body, String expectedSha256) {
+        Future<byte[]> future = NETWORK_EXECUTOR.submit(
+                () -> putBlocking(rawUrl, body, expectedSha256));
+        try {
+            return future.get(PLATFORM_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            future.cancel(true);
+            return encodeError("HTTPS upload interrupted");
+        } catch (TimeoutException error) {
+            future.cancel(true);
+            return encodeError("HTTPS upload timed out");
+        } catch (ExecutionException error) {
+            Throwable cause = error.getCause();
+            return encodeError(cause == null ? "HTTPS upload failed" : safeMessage(cause));
+        }
+    }
+
     private static byte[] searchBlocking(String query, int maxResults) {
         try {
             if (query == null || query.trim().isEmpty()) {
@@ -154,6 +175,74 @@ final class NtdWebPlatform {
             throw new IOException("unsupported search endpoint placeholder");
         }
         validateHttpsSyntax(rendered);
+    }
+
+    private static byte[] putBlocking(
+            String rawUrl,
+            byte[] body,
+            String expectedSha256) {
+        HttpsURLConnection connection = null;
+        try {
+            if (body == null || body.length == 0 || body.length > MAX_BODY_BYTES) {
+                throw new IOException("invalid upload body size");
+            }
+            String digest = sha256Hex(body);
+            if (expectedSha256 == null
+                    || !digest.equals(expectedSha256.toLowerCase(Locale.ROOT))) {
+                throw new IOException("upload body hash mismatch");
+            }
+
+            URL target = validatePublicHttpsUrl(rawUrl);
+            connection = (HttpsURLConnection) target.openConnection();
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(READ_TIMEOUT_MS);
+            connection.setRequestMethod("PUT");
+            connection.setDoOutput(true);
+            connection.setFixedLengthStreamingMode(body.length);
+            connection.setRequestProperty("Content-Type", "application/octet-stream");
+            connection.setRequestProperty("Accept", "application/json,text/plain,*/*;q=0.1");
+            connection.setRequestProperty("User-Agent", "NTD97-Mobile/1");
+            connection.setRequestProperty("X-NTD97-SHA256", digest);
+            connection.connect();
+
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(body);
+                output.flush();
+            }
+
+            int status = connection.getResponseCode();
+            if (status >= 300 && status < 400) {
+                throw new IOException("upload redirects are not allowed");
+            }
+            if (status < 200 || status >= 300) {
+                throw new IOException("HTTP status " + status);
+            }
+
+            byte[] responseBody = new byte[0];
+            long declared = connection.getContentLengthLong();
+            if (declared > MAX_BODY_BYTES) {
+                throw new IOException("upload response exceeds size limit");
+            }
+            InputStream input = connection.getInputStream();
+            if (input != null) {
+                try (InputStream response = input) {
+                    responseBody = readBounded(response);
+                }
+            }
+            String contentType = connection.getContentType();
+            return encode(
+                    status,
+                    target.toExternalForm(),
+                    contentType == null ? "" : contentType,
+                    responseBody);
+        } catch (Exception error) {
+            return encodeError(safeMessage(error));
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
     }
 
     private static byte[] fetchBlocking(String rawUrl) {
@@ -270,6 +359,15 @@ final class NtdWebPlatform {
             }
         }
         return false;
+    }
+
+    private static String sha256Hex(byte[] bytes) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+        StringBuilder out = new StringBuilder(digest.length * 2);
+        for (byte value : digest) {
+            out.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+        }
+        return out.toString();
     }
 
     private static byte[] readBounded(InputStream input) throws IOException {
