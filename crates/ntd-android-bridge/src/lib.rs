@@ -1052,6 +1052,7 @@ struct NativeState {
     chat_model: Option<Arc<NativeChatModel>>,
     chat_session: Option<NativeChatSession>,
     chat_submit_in_progress: bool,
+    chat_last_error: String,
     conversation: SovereignConversationState,
     next_chat_request_id: u64,
 }
@@ -1071,6 +1072,7 @@ impl Default for NativeState {
             chat_model: None,
             chat_session: None,
             chat_submit_in_progress: false,
+            chat_last_error: String::new(),
             conversation: SovereignConversationState::new(CognitiveIdentity(*b"NTD97-ASSISTANT1")),
             next_chat_request_id: 1,
         }
@@ -2990,18 +2992,25 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
         Err(_) => return 0,
     };
 
-    u8::from(
-        open_chat_model(
-            &asset_id,
-            version,
-            &capsule_path,
-            &shard_root,
-            &verify_key,
-            context_limit,
-            &capability_root,
-        )
-        .is_ok(),
-    )
+    match open_chat_model(
+        &asset_id,
+        version,
+        &capsule_path,
+        &shard_root,
+        &verify_key,
+        context_limit,
+        &capability_root,
+    ) {
+        Ok(()) => {
+            lock_state().chat_last_error.clear();
+            1
+        }
+        Err(error) => {
+            let mut guard = lock_state();
+            guard.chat_last_error = error.chars().take(2048).collect();
+            0
+        }
+    }
 }
 
 #[allow(unsafe_code)]
@@ -3018,10 +3027,17 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeSubmitCha
     let Ok(max_new_tokens) = usize::try_from(max_new_tokens) else {
         return -1;
     };
-    submit_chat(&prompt, max_new_tokens)
-        .ok()
-        .and_then(|request_id| i64::try_from(request_id).ok())
-        .unwrap_or(-1)
+    match submit_chat(&prompt, max_new_tokens) {
+        Ok(request_id) => {
+            lock_state().chat_last_error.clear();
+            i64::try_from(request_id).unwrap_or(-1)
+        }
+        Err(error) => {
+            let mut guard = lock_state();
+            guard.chat_last_error = error.chars().take(2048).collect();
+            -1
+        }
+    }
 }
 
 #[allow(unsafe_code)]
@@ -3158,6 +3174,16 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeResolveCh
         return 0;
     };
     u8::from(resolve_chat_approval(request_id, approved != 0).unwrap_or(false))
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatLastError(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jbyteArray {
+    let error = lock_state().chat_last_error.clone();
+    java_bytes(&env, error.as_bytes())
 }
 
 #[allow(unsafe_code)]
