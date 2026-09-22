@@ -44,6 +44,18 @@ Large returned artifacts use deterministic descriptors and chunk transfer. The r
 
 TAF97 minor version 0.2 serializes the additive PC action variants. MCS97 minor version 0.2 accepts the updated action checkpoint. Stable ActionId request IDs let the desktop agent cache completed requests so a retry/cold continuation does not replay a committed remote side effect.
 
+## Production Android integration
+
+M13 binds the pre-existing PCF97 fabric into the same production Android ActionFabric used by web, files, apps and device actions:
+
+- `pc.observe`, `pc.execute`, `pc.artifact.read` and `pc.artifact.write` remain canonical `TypedAction` variants and preserve stable TAF97 ActionIds;
+- a strict app-private pairing profile pins the peer alias, socket address, local signing seed, remote peer id and remote Ed25519 verify key;
+- each connection performs the canonical PCF97 handshake with fresh OS CSPRNG entropy and bounded TCP read/write timeouts;
+- remote capability discovery must match the expected id, version, side-effect class, verification bit and authority scope before registration;
+- the Android verifier accepts PC results only after the bridge marks them as authenticated following PCF97 request/result binding and secure-session verification;
+- read-only PC observation/artifact read never grants write authority; process execution and artifact write require the same sovereign ExternalWrite approval/reconfirm path as other M13 writes;
+- missing or invalid pairing profiles fail closed and do not fall back to a cloud or mock execution backend.
+
 ## Acceptance
 
 The block is covered by regression tests for:
@@ -55,6 +67,9 @@ The block is covered by regression tests for:
 - chunked artifact integrity and tamper rejection;
 - desktop policy denial for unallowlisted execution and path escape;
 - stable ActionId remote-side-effect idempotency;
-- TAF97 paired-PC action checkpoint round-trip.
+- TAF97 paired-PC action checkpoint round-trip;
+- production TCP handshake codec and authenticated loopback action execution;
+- strict Android pairing-profile parsing and pinned-identity validation;
+- Android default-authority denial for PC execution and fail-closed missing-profile behavior.
 
 Canonical Rust verification and the Android native/APK/lifecycle regression gate both passed before merge.

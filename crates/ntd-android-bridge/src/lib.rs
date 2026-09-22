@@ -4,13 +4,15 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
+    io::{Read, Write},
+    net::SocketAddr,
     path::{Component, Path, PathBuf},
     ptr::null_mut,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock,
     },
+    time::Duration,
 };
 
 use jni::{
@@ -27,6 +29,10 @@ use ntd_mobile_shell::{
     decode_mobile_continuity_bundle, encode_mobile_continuity_bundle,
     restore_mobile_continuity_bundle, AvatarController, AvatarSurface, LipSyncState,
     MobileContinuityBundle, MobileContinuityState, WakeReason,
+};
+use ntd_pc_fabric::{
+    connect_paired_tcp, HandshakeEntropy, PairedIdentity, PairedPcAdapter, PairingRecord,
+    RemoteCapability, TcpFrameTransport,
 };
 use ntd_runtime::{
     choose_reasoning_budget, continue_verified_assistant_plan, decode_action_fabric_checkpoint,
@@ -78,6 +84,228 @@ struct NativeChatModel {
     tokenizer: LlamaSpmTokenizer,
     context_limit: usize,
     capability_root: PathBuf,
+}
+
+#[derive(Clone)]
+struct PcPairProfile {
+    peer: String,
+    address: SocketAddr,
+    local_seed: [u8; 32],
+    remote_peer_id: [u8; 16],
+    remote_verify_key: [u8; 32],
+}
+
+fn valid_pc_peer_alias(peer: &str) -> bool {
+    !peer.is_empty()
+        && peer.len() <= 64
+        && peer
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn decode_fixed_hex<const N: usize>(value: &str) -> Result<[u8; N], String> {
+    if value.len() != N * 2 {
+        return Err("paired-PC hex field has invalid length".into());
+    }
+    let mut out = [0u8; N];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let high = (pair[0] as char)
+            .to_digit(16)
+            .ok_or_else(|| "paired-PC hex field is invalid".to_owned())?;
+        let low = (pair[1] as char)
+            .to_digit(16)
+            .ok_or_else(|| "paired-PC hex field is invalid".to_owned())?;
+        out[index] = u8::try_from((high << 4) | low)
+            .map_err(|_| "paired-PC hex field overflow".to_owned())?;
+    }
+    Ok(out)
+}
+
+fn profile_value<'a>(line: &'a str, key: &str) -> Result<&'a str, String> {
+    line.strip_prefix(key)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("paired-PC profile missing {key}"))
+}
+
+fn load_pc_pair_profile(root: &Path, expected_peer: &str) -> Result<PcPairProfile, String> {
+    if !valid_pc_peer_alias(expected_peer) {
+        return Err("paired-PC peer alias is invalid".into());
+    }
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize paired-PC capability root: {error}"))?;
+    let pairs = root.join("pc-pairs");
+    let pairs = fs::canonicalize(&pairs)
+        .map_err(|error| format!("paired-PC profile directory is unavailable: {error}"))?;
+    if !pairs.starts_with(&root) {
+        return Err("paired-PC profile directory escaped capability root".into());
+    }
+
+    let path = pairs.join(format!("{expected_peer}.pcp97"));
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| format!("paired-PC profile is unavailable: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 4096 {
+        return Err("paired-PC profile is not a bounded regular file".into());
+    }
+    let canonical = fs::canonicalize(&path)
+        .map_err(|error| format!("canonicalize paired-PC profile: {error}"))?;
+    if !canonical.starts_with(&pairs) {
+        return Err("paired-PC profile escaped profile directory".into());
+    }
+    let text = fs::read_to_string(&canonical)
+        .map_err(|error| format!("read paired-PC profile: {error}"))?;
+    let lines = text.lines().collect::<Vec<_>>();
+    if lines.len() != 7 || lines[0] != "NTD97_PC_PAIR_V1" || lines[6] != "END" {
+        return Err("paired-PC profile framing is invalid".into());
+    }
+
+    let peer = profile_value(lines[1], "peer=")?.to_owned();
+    if peer != expected_peer || !valid_pc_peer_alias(&peer) {
+        return Err("paired-PC profile peer alias mismatch".into());
+    }
+    let address = profile_value(lines[2], "address=")?
+        .parse::<SocketAddr>()
+        .map_err(|_| "paired-PC profile address is invalid".to_owned())?;
+    let local_seed = decode_fixed_hex::<32>(profile_value(lines[3], "local_seed=")?)?;
+    let remote_peer_id = decode_fixed_hex::<16>(profile_value(lines[4], "remote_peer_id=")?)?;
+    let remote_verify_key = decode_fixed_hex::<32>(profile_value(lines[5], "remote_verify_key=")?)?;
+    PairingRecord::from_public(remote_peer_id, remote_verify_key)
+        .map_err(|error| format!("paired-PC pinned identity is invalid: {error:?}"))?;
+
+    Ok(PcPairProfile {
+        peer,
+        address,
+        local_seed,
+        remote_peer_id,
+        remote_verify_key,
+    })
+}
+
+fn fresh_pc_handshake_entropy() -> Result<HandshakeEntropy, String> {
+    let mut seed = [0u8; 32];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut seed))
+        .map_err(|error| format!("read paired-PC handshake entropy: {error}"))?;
+    Ok(HandshakeEntropy::from_seed(seed))
+}
+
+fn expected_remote_pc_capability(
+    canonical: &str,
+) -> Option<(&'static str, SideEffectClass, &'static str)> {
+    match canonical {
+        "pc.observe" => Some(("pc.system.observe", SideEffectClass::ReadOnly, "pc.observe")),
+        "pc.execute" => Some((
+            "pc.process.execute",
+            SideEffectClass::ExternalWrite,
+            "pc.execute",
+        )),
+        "pc.artifact.read" => Some((
+            "pc.artifact.read",
+            SideEffectClass::ReadOnly,
+            "pc.artifact.read",
+        )),
+        "pc.artifact.write" => Some((
+            "pc.artifact.write",
+            SideEffectClass::ExternalWrite,
+            "pc.artifact.write",
+        )),
+        _ => None,
+    }
+}
+
+fn remote_pc_capability_matches(
+    capability: &RemoteCapability,
+    id: &str,
+    side_effect: SideEffectClass,
+    scope: &str,
+) -> bool {
+    capability.id == id
+        && capability.version == 1
+        && capability.side_effect == side_effect
+        && capability.verification_required
+        && !capability.rollback_supported
+        && !capability.resumable
+        && capability.required_scopes.len() == 1
+        && capability.required_scopes[0] == scope
+}
+
+struct AndroidPairedPcAdapter {
+    peer: String,
+    remote_capability: String,
+    inner: PairedPcAdapter<TcpFrameTransport>,
+}
+
+impl AndroidPairedPcAdapter {
+    fn connect(root: &Path, peer: &str, canonical_capability: &str) -> Result<Self, String> {
+        let profile = load_pc_pair_profile(root, peer)?;
+        let (remote_capability, expected_effect, expected_scope) =
+            expected_remote_pc_capability(canonical_capability)
+                .ok_or_else(|| "unsupported paired-PC capability".to_owned())?;
+        let local = PairedIdentity::from_seed(profile.local_seed);
+        let remote = PairingRecord::from_public(profile.remote_peer_id, profile.remote_verify_key)
+            .map_err(|error| format!("load paired-PC pinned identity: {error:?}"))?;
+        let (session, transport) = connect_paired_tcp(
+            profile.address,
+            local,
+            remote,
+            fresh_pc_handshake_entropy()?,
+            Duration::from_secs(5),
+        )
+        .map_err(|error| format!("establish authenticated PCF97 session: {error:?}"))?;
+        let mut inner = PairedPcAdapter::new(
+            profile.peer.clone(),
+            remote_capability,
+            1,
+            session,
+            transport,
+        )
+        .map_err(|error| format!("build paired-PC adapter: {error:?}"))?;
+        let capabilities = inner
+            .discover_capabilities()
+            .map_err(|error| format!("discover paired-PC capabilities: {error:?}"))?;
+        let advertised = capabilities
+            .iter()
+            .find(|capability| capability.id == remote_capability)
+            .ok_or_else(|| "paired PC did not advertise required capability".to_owned())?;
+        if !remote_pc_capability_matches(
+            advertised,
+            remote_capability,
+            expected_effect,
+            expected_scope,
+        ) {
+            return Err("paired-PC capability descriptor mismatch".into());
+        }
+        Ok(Self {
+            peer: profile.peer,
+            remote_capability: remote_capability.to_owned(),
+            inner,
+        })
+    }
+}
+
+impl CapabilityAdapter for AndroidPairedPcAdapter {
+    fn execute(
+        &mut self,
+        action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        match self.inner.execute(action_id, action)? {
+            AdapterResult::Completed {
+                mut output,
+                rollback_token,
+            } => {
+                output.evidence.push("pcf97-authenticated".into());
+                output.evidence.push(format!("peer:{}", self.peer));
+                output
+                    .evidence
+                    .push(format!("remote-capability:{}", self.remote_capability));
+                Ok(AdapterResult::Completed {
+                    output,
+                    rollback_token,
+                })
+            }
+            other => Ok(other),
+        }
+    }
 }
 
 struct NativeModelReasoningProbe<'a> {
@@ -1640,6 +1868,68 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .iter()
                         .any(|item| item == "operation:launch")
             }
+            ("pc.observe", TypedAction::PcObserve { peer, .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "pcf97-authenticated")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("peer:") == Some(peer.as_str()))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "remote-capability:pc.system.observe")
+            }
+            ("pc.execute", TypedAction::PcExecute { peer, .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "pcf97-authenticated")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("peer:") == Some(peer.as_str()))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "remote-capability:pc.process.execute")
+            }
+            ("pc.artifact.read", TypedAction::PcArtifactRead { peer, .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "pcf97-authenticated")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("peer:") == Some(peer.as_str()))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "remote-capability:pc.artifact.read")
+                    && matches!(&output.value, ActionValue::Bytes(_))
+            }
+            ("pc.artifact.write", TypedAction::PcArtifactWrite { peer, bytes, .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "pcf97-authenticated")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("peer:") == Some(peer.as_str()))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "remote-capability:pc.artifact.write")
+                    && matches!(
+                        &output.value,
+                        ActionValue::Fields(fields)
+                            if fields.get("bytes") == Some(&bytes.len().to_string())
+                    )
+            }
             _ => false,
         };
         if !trusted || output.summary.trim().is_empty() {
@@ -2594,6 +2884,87 @@ fn governed_explicit_action_plan(
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|artifact.upload|{url}\t{path}\nEND"
         ))
+    } else if lower.starts_with("observe pc ") {
+        let rest = trimmed
+            .get("observe pc ".len()..)
+            .ok_or_else(|| "paired-PC observe command boundary failed".to_owned())?;
+        let Some((peer, surface)) = rest.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_pc_peer_alias(peer)
+            || surface.trim().is_empty()
+            || surface != surface.trim()
+            || surface
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.observe|{peer}\t{surface}\nEND"
+        ))
+    } else if lower.starts_with("execute pc ") {
+        let rest = trimmed
+            .get("execute pc ".len()..)
+            .ok_or_else(|| "paired-PC execute command boundary failed".to_owned())?;
+        let Some((peer, program)) = rest.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_pc_peer_alias(peer)
+            || program.trim().is_empty()
+            || program != program.trim()
+            || program
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t' | '\u{1f}' | ' '))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.execute|{peer}\t{program}\nEND"
+        ))
+    } else if lower.starts_with("read pc file ") {
+        let rest = trimmed
+            .get("read pc file ".len()..)
+            .ok_or_else(|| "paired-PC artifact read command boundary failed".to_owned())?;
+        let Some((peer, path)) = rest.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_pc_peer_alias(peer)
+            || path.trim().is_empty()
+            || path != path.trim()
+            || path
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.artifact.read|{peer}\t{path}\nEND"
+        ))
+    } else if lower.starts_with("write pc file ") {
+        let rest = trimmed
+            .get("write pc file ".len()..)
+            .ok_or_else(|| "paired-PC artifact write command boundary failed".to_owned())?;
+        let Some((target, text)) = rest.split_once(" to ") else {
+            return Ok(None);
+        };
+        let Some((peer, path)) = target.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_pc_peer_alias(peer)
+            || path.trim().is_empty()
+            || path != path.trim()
+            || text.is_empty()
+            || path
+                .chars()
+                .chain(text.chars())
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|pc.artifact.write|{peer}\t{path}\t{text}\nEND"
+        ))
     } else if lower.starts_with("set clipboard to ") {
         let value = trimmed
             .get("set clipboard to ".len()..)
@@ -2708,6 +3079,34 @@ fn external_write_approval(
                 capabilities.insert("app.action".to_owned());
                 rationales.push(format!("launch Android app package {app}"));
             }
+            (
+                "pc.execute",
+                TypedAction::PcExecute {
+                    peer,
+                    program,
+                    args,
+                    working_dir,
+                },
+            ) if valid_pc_peer_alias(peer) && !program.trim().is_empty() => {
+                capabilities.insert("pc.execute".to_owned());
+                rationales.push(format!(
+                    "execute paired-PC program {program} on {peer} with {} typed arguments{}",
+                    args.len(),
+                    working_dir
+                        .as_ref()
+                        .map(|dir| format!(" in {dir}"))
+                        .unwrap_or_default()
+                ));
+            }
+            ("pc.artifact.write", TypedAction::PcArtifactWrite { peer, path, bytes })
+                if valid_pc_peer_alias(peer) && !path.trim().is_empty() && !bytes.is_empty() =>
+            {
+                capabilities.insert("pc.artifact.write".to_owned());
+                rationales.push(format!(
+                    "write {} bytes to paired-PC artifact {path} on {peer}",
+                    bytes.len()
+                ));
+            }
             _ => return Err("unsupported external-write action requested".into()),
         }
     }
@@ -2757,6 +3156,42 @@ struct AndroidActionExecutionContext<'a> {
     prepare_only: bool,
 }
 
+fn pc_peer_for_capability(
+    action_plan: &AssistantActionPlan,
+    capability: &str,
+) -> Result<String, String> {
+    let mut peer: Option<String> = None;
+    for node in &action_plan.graph.actions {
+        if node.capability.0 != capability {
+            continue;
+        }
+        let action = action_plan
+            .payloads
+            .get(&node.id)
+            .ok_or_else(|| "paired-PC action payload is missing".to_owned())?;
+        let action_peer = match action {
+            TypedAction::PcObserve { peer, .. }
+            | TypedAction::PcExecute { peer, .. }
+            | TypedAction::PcArtifactRead { peer, .. }
+            | TypedAction::PcArtifactWrite { peer, .. } => peer,
+            _ => return Err("paired-PC capability/action mismatch".into()),
+        };
+        if !valid_pc_peer_alias(action_peer) {
+            return Err("paired-PC action peer alias is invalid".into());
+        }
+        match &peer {
+            None => peer = Some(action_peer.clone()),
+            Some(existing) if existing == action_peer => {}
+            Some(_) => {
+                return Err(
+                    "one paired-PC capability cannot target multiple peers in one plan".into(),
+                )
+            }
+        }
+    }
+    peer.ok_or_else(|| "paired-PC capability has no target peer".to_owned())
+}
+
 fn execute_android_verified_actions(
     conversation: &mut SovereignConversationState,
     action_plan: &AssistantActionPlan,
@@ -2785,6 +3220,10 @@ fn execute_android_verified_actions(
         "artifact.upload",
         "device.interact",
         "app.action",
+        "pc.observe",
+        "pc.execute",
+        "pc.artifact.read",
+        "pc.artifact.write",
     ];
     if action_plan
         .graph
@@ -3008,6 +3447,68 @@ fn execute_android_verified_actions(
                 }
                 descriptor
             }
+            "pc.observe" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("pc.observe".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("pc.observe")
+                            .map_err(|error| format!("paired-PC observe scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "pc.execute" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("pc.execute".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("pc.execute")
+                            .map_err(|error| format!("paired-PC execute scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "pc.artifact.read" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("pc.artifact.read".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor
+                        .required_scopes
+                        .push(AuthorityScope::new("pc.artifact.read").map_err(|error| {
+                            format!("paired-PC artifact read scope: {error:?}")
+                        })?);
+                }
+                descriptor
+            }
+            "pc.artifact.write" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("pc.artifact.write".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("pc.artifact.write").map_err(|error| {
+                            format!("paired-PC artifact write scope: {error:?}")
+                        })?,
+                    );
+                }
+                descriptor
+            }
             _ => unreachable!("unsupported capabilities rejected above"),
         }
         .map_err(|error| format!("build Android capability descriptor: {error:?}"))?;
@@ -3125,6 +3626,21 @@ fn execute_android_verified_actions(
             .register_adapter(CapabilityId("app.action".into()), AndroidAppActionAdapter)
             .map_err(|error| format!("register app action adapter: {error:?}"))?;
     }
+    for capability in [
+        "pc.observe",
+        "pc.execute",
+        "pc.artifact.read",
+        "pc.artifact.write",
+    ] {
+        if fabric_capabilities.contains(capability) {
+            let peer = pc_peer_for_capability(action_plan, capability)?;
+            let adapter =
+                AndroidPairedPcAdapter::connect(&model.capability_root, &peer, capability)?;
+            fabric
+                .register_adapter(CapabilityId(capability.into()), adapter)
+                .map_err(|error| format!("register paired-PC adapter {capability}: {error:?}"))?;
+        }
+    }
 
     let mut authority = AuthorityGrant::new()
         .with_scope(
@@ -3145,6 +3661,18 @@ fn execute_android_verified_actions(
         authority = authority.with_scope(
             AuthorityScope::new("file.user_grant.read")
                 .map_err(|error| format!("granted file read authority scope: {error:?}"))?,
+        );
+    }
+    if fabric_capabilities.contains("pc.observe") {
+        authority = authority.with_scope(
+            AuthorityScope::new("pc.observe")
+                .map_err(|error| format!("paired-PC observe authority scope: {error:?}"))?,
+        );
+    }
+    if fabric_capabilities.contains("pc.artifact.read") {
+        authority = authority.with_scope(
+            AuthorityScope::new("pc.artifact.read")
+                .map_err(|error| format!("paired-PC artifact read authority scope: {error:?}"))?,
         );
     }
     if action_plan
@@ -3186,6 +3714,19 @@ fn execute_android_verified_actions(
                 AuthorityScope::new("app.launch")
                     .map_err(|error| format!("app authority scope: {error:?}"))?,
             );
+        }
+        if fabric_capabilities.contains("pc.execute") {
+            authority =
+                authority
+                    .with_scope(AuthorityScope::new("pc.execute").map_err(|error| {
+                        format!("paired-PC execute authority scope: {error:?}")
+                    })?);
+        }
+        if fabric_capabilities.contains("pc.artifact.write") {
+            authority =
+                authority.with_scope(AuthorityScope::new("pc.artifact.write").map_err(
+                    |error| format!("paired-PC artifact write authority scope: {error:?}"),
+                )?);
         }
     }
 
@@ -4723,6 +5264,44 @@ fn production_capability_probe(
         return Err("production browser.interact receipt verification failed".into());
     }
 
+    let capability_root_path = Path::new(capability_root);
+    let pc_profile_root = capability_root_path.join("pc-pairs");
+    if pc_profile_root.exists() {
+        fs::remove_dir_all(&pc_profile_root)
+            .map_err(|error| format!("clear paired-PC probe profiles: {error}"))?;
+    }
+    if load_pc_pair_profile(capability_root_path, "workstation").is_ok() {
+        return Err("unpaired PC profile did not fail closed".into());
+    }
+
+    let mut pc_execute_descriptor = CapabilityDescriptor::new(
+        CapabilityId("pc.execute".into()),
+        1,
+        CapabilityDomain::Pc,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("pc.execute descriptor: {error:?}"))?;
+    let pc_execute_scope = AuthorityScope::new("pc.execute")
+        .map_err(|error| format!("pc.execute scope: {error:?}"))?;
+    pc_execute_descriptor
+        .required_scopes
+        .push(pc_execute_scope.clone());
+    pc_execute_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize pc.execute descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(pc_execute_scope.clone())
+        .permits(&pc_execute_descriptor)
+        .is_ok()
+    {
+        return Err("paired-PC execute was not denied without external-write authority".into());
+    }
+    let mut pc_execute_authority = AuthorityGrant::new().with_scope(pc_execute_scope);
+    pc_execute_authority.allow_external_write = true;
+    pc_execute_authority
+        .permits(&pc_execute_descriptor)
+        .map_err(|error| format!("paired-PC execute explicit authority rejected: {error:?}"))?;
+
     let relative = "m13/probe.txt";
     let write_action = TypedAction::FileWrite {
         path: relative.into(),
@@ -5132,7 +5711,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
@@ -5624,6 +6203,113 @@ mod tests {
             verifier.verify(&descriptor, action, &rejected),
             ActionVerification::Reject { .. }
         ));
+    }
+
+    #[test]
+    fn paired_pc_commands_require_external_approval_and_authenticated_evidence() {
+        let observe = governed_explicit_action_plan("observe pc workstation system")
+            .expect("observe plan")
+            .expect("observe action");
+        assert_eq!(
+            observe.payloads.get(&1),
+            Some(&TypedAction::PcObserve {
+                peer: "workstation".into(),
+                surface: "system".into(),
+            })
+        );
+        assert_eq!(
+            observe.graph.actions[0].side_effect,
+            SideEffectClass::ReadOnly
+        );
+
+        let execute = governed_explicit_action_plan("execute pc workstation echo")
+            .expect("execute plan")
+            .expect("execute action");
+        assert_eq!(
+            execute.payloads.get(&1),
+            Some(&TypedAction::PcExecute {
+                peer: "workstation".into(),
+                program: "echo".into(),
+                args: Vec::new(),
+                working_dir: None,
+            })
+        );
+        let approval = external_write_approval(&execute)
+            .expect("approval policy")
+            .expect("approval required");
+        assert_eq!(approval.0, "pc.execute");
+
+        let descriptor = CapabilityDescriptor::new(
+            CapabilityId("pc.execute".into()),
+            1,
+            CapabilityDomain::Pc,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("descriptor");
+        let action = execute.payloads.get(&1).expect("action");
+        let accepted = ActionOutput {
+            summary: "remote process completed".into(),
+            value: ActionValue::Fields(BTreeMap::from([("exit_code".into(), "0".into())])),
+            evidence: vec![
+                "success=true".into(),
+                "pcf97-authenticated".into(),
+                "peer:workstation".into(),
+                "remote-capability:pc.process.execute".into(),
+            ],
+        };
+        let mut verifier = AndroidProductionVerifier;
+        assert_eq!(
+            verifier.verify(&descriptor, action, &accepted),
+            ActionVerification::Accept
+        );
+        let mut rejected = accepted;
+        rejected
+            .evidence
+            .retain(|item| item != "pcf97-authenticated");
+        assert!(matches!(
+            verifier.verify(&descriptor, action, &rejected),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
+    #[test]
+    fn paired_pc_profile_is_strictly_pinned_to_alias_and_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "ntd97-pc-profile-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let pairs = root.join("pc-pairs");
+        fs::create_dir_all(&pairs).expect("pairs");
+        let remote = PairedIdentity::from_seed([72; 32]);
+        let hex = |bytes: &[u8]| {
+            let mut encoded = String::with_capacity(bytes.len() * 2);
+            for byte in bytes {
+                std::fmt::Write::write_fmt(&mut encoded, format_args!("{byte:02x}"))
+                    .expect("write hex");
+            }
+            encoded
+        };
+        let profile = format!(
+            "NTD97_PC_PAIR_V1\npeer=workstation\naddress=127.0.0.1:45970\nlocal_seed={}\nremote_peer_id={}\nremote_verify_key={}\nEND",
+            hex(&[71; 32]),
+            hex(&remote.peer_id()),
+            hex(&remote.verify_key()),
+        );
+        fs::write(pairs.join("workstation.pcp97"), profile).expect("write profile");
+
+        let loaded = load_pc_pair_profile(&root, "workstation").expect("load profile");
+        assert_eq!(loaded.peer, "workstation");
+        assert_eq!(loaded.address, "127.0.0.1:45970".parse().expect("address"));
+        assert_eq!(loaded.local_seed, [71; 32]);
+        assert_eq!(loaded.remote_peer_id, remote.peer_id());
+        assert_eq!(loaded.remote_verify_key, remote.verify_key());
+        assert!(load_pc_pair_profile(&root, "other").is_err());
+
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

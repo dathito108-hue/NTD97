@@ -472,7 +472,14 @@ Current implementation:
 - production chat reconstructs the exact capability registry from the persisted canonical action protocol, validates/decodes the embedded TAF97 state and resumes the same ActionPlanId instead of preparing a second plan;
 - approved ExternalWrite execution now stops at a durable prepared boundary before any side effect, Android persists NCS97 immediately on ACTION_CHECKPOINTED events, and interrupted approved execution restores as reconfirm before any replay;
 - suspended/retryable resumable actions keep their TAF97 resume token across process death; ambiguous non-resumable ExternalWrite retry without a resume token is forced back to reconfirm even in the same live process;
-- verified completion clears the embedded ActionFabric checkpoint only after committed evidence has produced the synthesis prompt; emulator approval acceptance proves no clipboard side effect occurs before the durable prepare checkpoint and restore never auto-replays it.
+- verified completion clears the embedded ActionFabric checkpoint only after committed evidence has produced the synthesis prompt; emulator approval acceptance proves no clipboard side effect occurs before the durable prepare checkpoint and restore never auto-replays it;
+- production paired-PC actions now reuse canonical `TypedAction::Pc*`, TAF97 ActionIds and the existing PCF97 fabric instead of a separate remote-execution stack;
+- PCF97 adds a bounded canonical handshake frame over timeout-bounded TCP, pins Ed25519 peer identity, derives mutually authenticated X25519/ChaCha20-Poly1305 sessions and rejects malformed/mismatched handshakes before capability discovery;
+- Android loads a strict app-private `pc-pairs/<alias>.pcp97` profile, rejects symlinks/path escape/invalid pinned identity, uses OS CSPRNG entropy for each session and fails closed when the requested peer is not paired;
+- remote capability discovery must exactly match the expected version, side-effect class and authority scope before a `PairedPcAdapter` is registered into production ActionFabric;
+- `pc.observe` and `pc.artifact.read` are read-only scoped actions; `pc.execute` and `pc.artifact.write` are ExternalWrite actions requiring explicit chat approval and dedicated scopes;
+- Android verifier only accepts PC outputs carrying bridge-added `pcf97-authenticated`, exact peer and exact remote-capability evidence after PCF97 request/result binding has passed; unpaired profiles and default external-write authority are required to fail closed in emulator acceptance;
+- Rust acceptance uses the production TCP connector and desktop agent loopback to prove mutual authentication, encrypted request/result exchange and typed remote observation without a mock ActionFabric adapter.
 
 Still required before M13 completion:
 
@@ -481,7 +488,7 @@ Still required before M13 completion:
 - successful SAF read/write acceptance on representative physical phones/providers, including grant revocation/reselection and provider-specific edge cases;
 - representative-phone process-death acceptance for resumable upload and SAF provider state, including retryable network loss after the durable TAF97 checkpoint;
 - accessibility-assisted app interaction remains fail-closed until its explicit-authority adapter is implemented;
-- paired-PC integration into the same production mixed TaskGraph;
+- user-facing paired-PC provisioning/revocation UI and representative-phone pairing against a real desktop agent;
 - real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
 
 Exit: NTD97 can complete useful multi-surface tasks on a real phone with verifiable results and no mock adapter in the canonical path.

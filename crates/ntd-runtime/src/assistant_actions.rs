@@ -298,6 +298,77 @@ fn parse_action_line(
                 surface: surface.to_owned(),
             }
         }
+        "pc.execute" => {
+            let mut parts = payload.splitn(4, '\t');
+            let peer = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let program = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let working_dir = parts.next().unwrap_or_default();
+            let args = parts.next().unwrap_or_default();
+            if peer.trim().is_empty()
+                || program.trim().is_empty()
+                || peer != peer.trim()
+                || program != program.trim()
+                || working_dir != working_dir.trim()
+                || args.contains('\t')
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            let args = if args.is_empty() {
+                Vec::new()
+            } else {
+                args.split('\u{1f}')
+                    .map(|arg| {
+                        if arg.is_empty() {
+                            Err(AssistantPlanError::InvalidPayload)
+                        } else {
+                            Ok(arg.to_owned())
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+            TypedAction::PcExecute {
+                peer: peer.to_owned(),
+                program: program.to_owned(),
+                args,
+                working_dir: (!working_dir.is_empty()).then(|| working_dir.to_owned()),
+            }
+        }
+        "pc.artifact.read" => {
+            let (peer, path) = payload
+                .split_once('\t')
+                .ok_or(AssistantPlanError::InvalidPayload)?;
+            if peer.trim().is_empty()
+                || path.trim().is_empty()
+                || peer != peer.trim()
+                || path != path.trim()
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::PcArtifactRead {
+                peer: peer.to_owned(),
+                path: path.to_owned(),
+            }
+        }
+        "pc.artifact.write" => {
+            let mut parts = payload.splitn(3, '\t');
+            let peer = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let path = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let text = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            if peer.trim().is_empty()
+                || path.trim().is_empty()
+                || peer != peer.trim()
+                || path != path.trim()
+                || text.is_empty()
+                || text.contains('\t')
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::PcArtifactWrite {
+                peer: peer.to_owned(),
+                path: path.to_owned(),
+                bytes: text.as_bytes().to_vec(),
+            }
+        }
         other => return Err(AssistantPlanError::UnsupportedCapability(other.to_owned())),
     };
     typed
@@ -308,7 +379,7 @@ fn parse_action_line(
     let side_effect = match capability {
         "file.write" | "artifact.download" => SideEffectClass::Reversible,
         "artifact.upload" | "file.grant.write" | "browser.interact" | "device.interact"
-        | "app.action" => SideEffectClass::ExternalWrite,
+        | "app.action" | "pc.execute" | "pc.artifact.write" => SideEffectClass::ExternalWrite,
         _ => SideEffectClass::ReadOnly,
     };
     let node = ActionNode {
@@ -787,6 +858,36 @@ END",
             Some(&TypedAction::ArtifactUpload {
                 url: "https://example.com/upload".into(),
                 path: "artifacts/report.bin".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn paired_pc_actions_materialize_typed_side_effects() {
+        let parsed = parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|pc.observe|workstation\tsystem\n2|pc.execute|workstation\techo\t\thello\u{1f}world\n3|pc.artifact.read|workstation\tshared/result.txt\n4|pc.artifact.write|workstation\tshared/input.txt\tpayload\nEND",
+        )
+        .expect("pc plan");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+        assert_eq!(plan.graph.actions[0].side_effect, SideEffectClass::ReadOnly);
+        assert_eq!(
+            plan.graph.actions[1].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+        assert_eq!(plan.graph.actions[2].side_effect, SideEffectClass::ReadOnly);
+        assert_eq!(
+            plan.graph.actions[3].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+        assert_eq!(
+            plan.payloads.get(&2),
+            Some(&TypedAction::PcExecute {
+                peer: "workstation".into(),
+                program: "echo".into(),
+                args: vec!["hello".into(), "world".into()],
+                working_dir: None,
             })
         );
     }
