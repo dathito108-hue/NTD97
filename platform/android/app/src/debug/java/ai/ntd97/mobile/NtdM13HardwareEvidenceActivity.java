@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.os.Process;
 import android.os.SystemClock;
 import android.util.AtomicFile;
+import android.util.Base64;
 import android.widget.TextView;
 
 import java.io.File;
@@ -49,6 +50,7 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
     private static final int GATE_MIXED_SEQUENCE = 1 << 9;
     private static final int REQUIRED_GATE_MASK = (1 << 10) - 1;
     private static final int MAX_CHAT_EVENTS = 512;
+    private static final String PROCESS_INSTANCE = randomHex(16);
 
     private TextView statusView;
     private NtdRuntimeHost host;
@@ -222,7 +224,8 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
                 hex(nonce),
                 gates,
                 verifiedActions,
-                Process.myPid());
+                Process.myPid(),
+                PROCESS_INSTANCE);
         writeState(state);
         writeSummary(
                 "status=awaiting-process-death\n"
@@ -232,7 +235,10 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
                         + "gate_mask=" + gates + "\n"
                         + "verified_actions=" + verifiedActions + "\n"
                         + "run_nonce_sha256=" + hex(nonceHash) + "\n"
-                        + "process_pid=" + Process.myPid() + "\n");
+                        + "process_pid=" + Process.myPid() + "\n"
+                        + "process_instance_sha256="
+                        + hex(sha256(PROCESS_INSTANCE.getBytes(StandardCharsets.UTF_8)))
+                        + "\n");
 
         runOnUiThread(() -> {
             statusView.setText(
@@ -250,7 +256,8 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
         if (!fingerprintHash.equals(state.fingerprintHash)) {
             throw new IllegalStateException("physical device changed across process death");
         }
-        if (state.processPid == Process.myPid()) {
+        if (state.processPid == Process.myPid()
+                || PROCESS_INSTANCE.equals(state.processInstance)) {
             throw new IllegalStateException("process death was not observed");
         }
 
@@ -414,7 +421,17 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
     }
 
     private String requiredExtra(String name, int maxChars) {
-        String value = getIntent().getStringExtra(name);
+        String value = getIntent().getStringExtra(name + "_b64");
+        if (value != null && !value.isEmpty()) {
+            try {
+                byte[] decoded = Base64.decode(value, Base64.NO_WRAP);
+                value = new String(decoded, StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException error) {
+                throw new IllegalArgumentException("invalid base64 extra: " + name, error);
+            }
+        } else {
+            value = getIntent().getStringExtra(name);
+        }
         if (value == null
                 || value.trim().isEmpty()
                 || !value.equals(value.trim())
@@ -460,6 +477,7 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
         properties.setProperty("gates", Integer.toString(state.gates));
         properties.setProperty("verified_actions", Integer.toString(state.verifiedActions));
         properties.setProperty("process_pid", Integer.toString(state.processPid));
+        properties.setProperty("process_instance", state.processInstance);
         AtomicFile atomic = new AtomicFile(file(STATE_FILE));
         FileOutputStream stream = null;
         try {
@@ -490,7 +508,8 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
                 requireProperty(properties, "nonce_hex"),
                 Integer.parseInt(requireProperty(properties, "gates")),
                 Integer.parseInt(requireProperty(properties, "verified_actions")),
-                Integer.parseInt(requireProperty(properties, "process_pid")));
+                Integer.parseInt(requireProperty(properties, "process_pid")),
+                requireProperty(properties, "process_instance"));
     }
 
     private static String requireProperty(Properties properties, String key) {
@@ -541,6 +560,12 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
 
     private static byte[] sha256(byte[] bytes) throws Exception {
         return MessageDigest.getInstance("SHA-256").digest(bytes);
+    }
+
+    private static String randomHex(int byteCount) {
+        byte[] bytes = new byte[byteCount];
+        new SecureRandom().nextBytes(bytes);
+        return hex(bytes);
     }
 
     private static String hex(byte[] bytes) {
@@ -607,6 +632,7 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
         final int gates;
         final int verifiedActions;
         final int processPid;
+        final String processInstance;
 
         PhaseState(
                 String buildRevision,
@@ -614,13 +640,15 @@ public final class NtdM13HardwareEvidenceActivity extends Activity {
                 String nonceHex,
                 int gates,
                 int verifiedActions,
-                int processPid) {
+                int processPid,
+                String processInstance) {
             this.buildRevision = buildRevision;
             this.fingerprintHash = fingerprintHash;
             this.nonceHex = nonceHex;
             this.gates = gates;
             this.verifiedActions = verifiedActions;
             this.processPid = processPid;
+            this.processInstance = processInstance;
         }
     }
 
