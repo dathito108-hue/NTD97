@@ -357,10 +357,10 @@ final class NtdPlatformCapabilityBridge {
         output.write(0);
         writeIntLe(output, code);
         writeIntLe(output, identifierBytes.length);
-        writeIntLe(output, evidenceBytes.length);
-        writeIntLe(output, payload.length);
         output.write(identifierBytes, 0, identifierBytes.length);
+        writeIntLe(output, evidenceBytes.length);
         output.write(evidenceBytes, 0, evidenceBytes.length);
+        writeIntLe(output, payload.length);
         output.write(payload, 0, payload.length);
         return output.toByteArray();
     }
