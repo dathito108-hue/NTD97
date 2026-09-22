@@ -62,6 +62,7 @@ for REQUIRED in \
   chat_action_planner=ok \
   chat_action_safety=ok \
   chat_governed_e2e=ok \
+  chat_external_approval=ok \
   chat_memory=ok \
   chat_restore=ok \
   chat_store=ok \
