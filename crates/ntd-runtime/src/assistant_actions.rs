@@ -168,7 +168,7 @@ fn parse_action_line(
                 operation: operation.to_owned(),
                 value,
             }
-        }
+        },
         "file.read" => TypedAction::FileRead {
             path: payload.to_owned(),
         },
