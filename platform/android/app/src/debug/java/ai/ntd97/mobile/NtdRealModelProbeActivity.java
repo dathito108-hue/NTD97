@@ -310,6 +310,16 @@ public final class NtdRealModelProbeActivity extends Activity {
                     throw new IOException("WebSearch credential handling verification failed");
                 }
                 result = result + "web_search_credential_storage=ok\n";
+                if (!NtdWebPlatform.probeSearchCredentialPreserveForTest(
+                        this,
+                        "X-NTD97-Probe")
+                        || !NtdWebPlatform.probeSearchCredentialStorageForTest(
+                                this,
+                                "NTD97-CREDENTIAL-PROBE")
+                        || !NtdWebPlatform.probeSearchCredentialHeaderForTest()) {
+                    throw new IOException("WebSearch hidden credential preservation failed");
+                }
+                result = result + "web_search_credential_preserve=ok\n";
                 if (!NtdWebPlatform.probeCredentialCrossOriginRedirectBlockForTest()) {
                     throw new IOException("credentialed WebSearch redirect did not fail closed");
                 }
