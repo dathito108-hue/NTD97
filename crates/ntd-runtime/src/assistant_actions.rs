@@ -147,6 +147,22 @@ fn parse_action_line(
                 path: path.to_owned(),
             }
         }
+        "artifact.upload" => {
+            let (url, path) = payload
+                .split_once('\t')
+                .ok_or(AssistantPlanError::InvalidPayload)?;
+            if url.trim().is_empty()
+                || path.trim().is_empty()
+                || url != url.trim()
+                || path != path.trim()
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::ArtifactUpload {
+                url: url.to_owned(),
+                path: path.to_owned(),
+            }
+        }
         "browser.observe" => TypedAction::BrowserObserve {
             target: payload.to_owned(),
         },
@@ -169,10 +185,10 @@ fn parse_action_line(
                 value,
             }
         }
-        "file.read" => TypedAction::FileRead {
+        "file.read" | "file.grant.read" => TypedAction::FileRead {
             path: payload.to_owned(),
         },
-        "file.write" => {
+        "file.write" | "file.grant.write" => {
             let (path, text) = payload
                 .split_once('\t')
                 .ok_or(AssistantPlanError::InvalidPayload)?;
@@ -254,7 +270,11 @@ fn parse_action_line(
     let capability_id = CapabilityId(capability.to_owned());
     let side_effect = match capability {
         "file.write" | "artifact.download" => SideEffectClass::Reversible,
-        "browser.interact" | "device.interact" | "app.action" => SideEffectClass::ExternalWrite,
+        "artifact.upload"
+        | "file.grant.write"
+        | "browser.interact"
+        | "device.interact"
+        | "app.action" => SideEffectClass::ExternalWrite,
         _ => SideEffectClass::ReadOnly,
     };
     let node = ActionNode {
@@ -642,6 +662,40 @@ END",
                 app: "ai.ntd97.mobile".into(),
                 action: "launch".into(),
                 payload: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn granted_storage_and_upload_keep_canonical_side_effects() {
+        let parsed = parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|file.grant.read|shared\tnotes/read.txt\n2|file.grant.write|shared\tnotes/write.txt\thello\n3|artifact.upload|https://example.com/upload\tartifacts/report.bin\nEND",
+        )
+        .expect("plan");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+
+        assert_eq!(plan.graph.actions[0].side_effect, SideEffectClass::ReadOnly);
+        assert_eq!(
+            plan.graph.actions[1].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+        assert_eq!(
+            plan.graph.actions[2].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+        assert_eq!(
+            plan.payloads.get(&1),
+            Some(&TypedAction::FileRead {
+                path: "shared\tnotes/read.txt".into(),
+            })
+        );
+        assert_eq!(
+            plan.payloads.get(&3),
+            Some(&TypedAction::ArtifactUpload {
+                url: "https://example.com/upload".into(),
+                path: "artifacts/report.bin".into(),
             })
         );
     }
