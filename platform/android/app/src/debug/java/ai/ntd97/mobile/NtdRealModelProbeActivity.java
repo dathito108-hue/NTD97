@@ -303,9 +303,13 @@ public final class NtdRealModelProbeActivity extends Activity {
                         NtdWebPlatform.searchConfiguration();
                 if (!credentialConfiguration.hasCredential()
                         || !"X-NTD97-Probe".equals(credentialConfiguration.credentialHeaderName)
+                        || !NtdWebPlatform.probeSearchCredentialStorageForTest(
+                                this,
+                                "NTD97-CREDENTIAL-PROBE")
                         || !NtdWebPlatform.probeSearchCredentialHeaderForTest()) {
-                    throw new IOException("WebSearch credential header was not delivered");
+                    throw new IOException("WebSearch credential handling verification failed");
                 }
+                result = result + "web_search_credential_storage=ok\n";
                 if (!NtdWebPlatform.probeCredentialCrossOriginRedirectBlockForTest()) {
                     throw new IOException("credentialed WebSearch redirect did not fail closed");
                 }
