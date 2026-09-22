@@ -108,12 +108,19 @@ final class NtdBrowserPlatform {
         }
         try {
             validateInteraction(target, operation, value);
-            if (webView == null) {
+            Context context = requireContext();
+            if (!"navigate".equals(operation) && webView == null) {
                 return encodeError("browser session is not initialized");
             }
             AtomicReference<byte[]> result = new AtomicReference<>();
             CountDownLatch latch = new CountDownLatch(1);
-            MAIN.post(() -> performInteract(target, operation, value, result, latch));
+            MAIN.post(() -> performInteract(
+                    context,
+                    target,
+                    operation,
+                    value,
+                    result,
+                    latch));
             if (!latch.await(OPERATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 return encodeError("browser interaction timed out");
             }
@@ -207,6 +214,7 @@ final class NtdBrowserPlatform {
     }
 
     private static void performInteract(
+            Context context,
             String target,
             String operation,
             String value,
@@ -214,6 +222,43 @@ final class NtdBrowserPlatform {
             CountDownLatch latch) {
         AtomicBoolean completed = new AtomicBoolean();
         try {
+            if ("navigate".equals(operation)) {
+                URL destination = validatePublicHttps(target);
+                WebView view = ensureWebView(context);
+                view.setWebViewClient(new GuardedClient(result, latch, completed) {
+                    @Override
+                    public void onPageFinished(WebView finishedView, String url) {
+                        if (completed.get()) {
+                            return;
+                        }
+                        try {
+                            URL finalUrl = validatePublicHttps(url);
+                            persistVerifiedSessionUrl(context, finalUrl);
+                            long receiptId = RECEIPT_COUNTER.incrementAndGet();
+                            String receipt = browserReceipt(
+                                    operation,
+                                    target,
+                                    value == null ? "" : value,
+                                    receiptId);
+                            finish(
+                                    completed,
+                                    result,
+                                    latch,
+                                    encodeSuccess(
+                                            "receipt=" + receipt
+                                                    + "\noperation=" + operation
+                                                    + "\nurl=" + finalUrl.toExternalForm()
+                                                    + "\ntitle=" + sanitizeLine(finishedView.getTitle())));
+                        } catch (Exception error) {
+                            finish(completed, result, latch, encodeError(safeMessage(error)));
+                        }
+                    }
+                });
+                view.stopLoading();
+                view.loadUrl(destination.toExternalForm());
+                return;
+            }
+
             WebView view = webView;
             if (view == null) {
                 finish(completed, result, latch, encodeError("browser session disappeared"));
@@ -227,20 +272,32 @@ final class NtdBrowserPlatform {
             validatePublicHttps(current);
 
             String selector = JSONObject.quote(target);
+            String uniquePrefix = "try{var m=document.querySelectorAll(" + selector + ");"
+                    + "if(m.length===0){return 'ERR\\u001fmissing-target';}"
+                    + "if(m.length!==1){return 'ERR\\u001fambiguous-target';}"
+                    + "var e=m[0];var tag=e.tagName||'';";
             String script;
             if ("click".equals(operation)) {
-                script = "(function(){var e=document.querySelector(" + selector + ");"
-                        + "if(!e){return 'ERR\\u001fmissing-target';}"
-                        + "var tag=e.tagName||'';e.click();return 'OK\\u001f'+tag;})()";
+                script = "(function(){" + uniquePrefix
+                        + "if(typeof e.click!=='function'){return 'ERR\\u001fnot-clickable';}"
+                        + "e.click();return 'OK\\u001f'+tag;"
+                        + "}catch(x){return 'ERR\\u001fscript-error';}})()";
             } else if ("set_value".equals(operation)) {
                 String quotedValue = JSONObject.quote(value);
-                script = "(function(){var e=document.querySelector(" + selector + ");"
-                        + "if(!e){return 'ERR\\u001fmissing-target';}"
+                script = "(function(){" + uniquePrefix
                         + "if(!('value' in e)){return 'ERR\\u001fnot-value-target';}"
                         + "e.value=" + quotedValue + ";"
                         + "e.dispatchEvent(new Event('input',{bubbles:true}));"
                         + "e.dispatchEvent(new Event('change',{bubbles:true}));"
-                        + "return 'OK\\u001f'+(e.tagName||'');})()";
+                        + "return 'OK\\u001f'+tag+'\\u001f'+String(e.value);"
+                        + "}catch(x){return 'ERR\\u001fscript-error';}})()";
+            } else if ("submit".equals(operation)) {
+                script = "(function(){" + uniquePrefix
+                        + "if(tag.toUpperCase()!=='FORM'){return 'ERR\\u001fnot-form';}"
+                        + "setTimeout(function(){"
+                        + "if(typeof e.requestSubmit==='function'){e.requestSubmit();}else{e.submit();}"
+                        + "},0);return 'OK\\u001f'+tag;"
+                        + "}catch(x){return 'ERR\\u001fscript-error';}})()";
             } else {
                 finish(completed, result, latch, encodeError("unsupported browser operation"));
                 return;
@@ -252,11 +309,20 @@ final class NtdBrowserPlatform {
                 }
                 try {
                     String decoded = decodeJsString(raw);
-                    String[] fields = decoded.split("\\u001f", 2);
-                    if (fields.length != 2 || !"OK".equals(fields[0])) {
-                        String reason = fields.length == 2 ? fields[1] : "invalid-result";
+                    String[] fields = decoded.split("\\u001f", 3);
+                    if (fields.length < 2 || !"OK".equals(fields[0])) {
+                        String reason = fields.length >= 2 ? fields[1] : "invalid-result";
                         finish(completed, result, latch,
                                 encodeError("browser interaction rejected: " + sanitizeLine(reason)));
+                        return;
+                    }
+                    if ("set_value".equals(operation)
+                            && (fields.length != 3 || value == null || !value.equals(fields[2]))) {
+                        finish(
+                                completed,
+                                result,
+                                latch,
+                                encodeError("browser set_value read-back mismatch"));
                         return;
                     }
                     Runnable finishInteraction = () -> {
@@ -265,25 +331,35 @@ final class NtdBrowserPlatform {
                             if (finalUrl == null) {
                                 throw new IOException("browser interaction lost active URL");
                             }
-                            validatePublicHttps(finalUrl);
+                            URL verifiedFinalUrl = validatePublicHttps(finalUrl);
+                            persistVerifiedSessionUrl(context, verifiedFinalUrl);
                             long receiptId = RECEIPT_COUNTER.incrementAndGet();
-                            String receipt = "android-webview:" + operation + ":" + receiptId;
+                            String receipt = browserReceipt(
+                                    operation,
+                                    target,
+                                    value == null ? "" : value,
+                                    receiptId);
+                            StringBuilder message = new StringBuilder()
+                                    .append("receipt=").append(receipt)
+                                    .append("\noperation=").append(operation)
+                                    .append("\ntarget=").append(sanitizeLine(target))
+                                    .append("\nurl=").append(verifiedFinalUrl.toExternalForm())
+                                    .append("\ntitle=").append(sanitizeLine(view.getTitle()))
+                                    .append("\ntag=").append(sanitizeLine(fields[1]));
+                            if ("set_value".equals(operation)) {
+                                message.append("\nvalue_sha256=")
+                                        .append(sha256Hex(value.getBytes(StandardCharsets.UTF_8)));
+                            }
                             finish(
                                     completed,
                                     result,
                                     latch,
-                                    encodeSuccess(
-                                            "receipt=" + receipt
-                                                    + "\noperation=" + operation
-                                                    + "\ntarget=" + sanitizeLine(target)
-                                                    + "\nurl=" + finalUrl
-                                                    + "\ntitle=" + sanitizeLine(view.getTitle())
-                                                    + "\ntag=" + sanitizeLine(fields[1])));
+                                    encodeSuccess(message.toString()));
                         } catch (Exception error) {
                             finish(completed, result, latch, encodeError(safeMessage(error)));
                         }
                     };
-                    if ("click".equals(operation)) {
+                    if ("click".equals(operation) || "submit".equals(operation)) {
                         MAIN.postDelayed(finishInteraction, INTERACTION_SETTLE_MS);
                     } else {
                         finishInteraction.run();
