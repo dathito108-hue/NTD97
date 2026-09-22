@@ -65,10 +65,14 @@ final class NtdStorageGrantPlatform {
             if (!hasPersistedPermission(resolver, treeUri, true, false)) {
                 return false;
             }
-            preferences(context)
-                    .edit()
-                    .putString(KEY_PREFIX + alias, treeUri.toString())
-                    .apply();
+            SharedPreferences prefs = preferences(context);
+            String previous = prefs.getString(KEY_PREFIX + alias, "");
+            prefs.edit().putString(KEY_PREFIX + alias, treeUri.toString()).apply();
+            if (previous != null
+                    && !previous.isEmpty()
+                    && !previous.equals(treeUri.toString())) {
+                releasePersistedPermission(resolver, Uri.parse(previous));
+            }
             return true;
         } catch (Exception error) {
             return false;
@@ -161,6 +165,30 @@ final class NtdStorageGrantPlatform {
             throw new IOException("storage grant permission is missing or revoked: " + alias);
         }
         return tree;
+    }
+
+    private static void releasePersistedPermission(ContentResolver resolver, Uri tree) {
+        for (UriPermission permission : resolver.getPersistedUriPermissions()) {
+            if (!tree.equals(permission.getUri())) {
+                continue;
+            }
+            int flags = 0;
+            if (permission.isReadPermission()) {
+                flags |= Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            }
+            if (permission.isWritePermission()) {
+                flags |= Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+            }
+            if (flags != 0) {
+                try {
+                    resolver.releasePersistableUriPermission(tree, flags);
+                } catch (Exception ignored) {
+                    // The alias no longer references this URI; stale platform permission
+                    // is not used by NTD97 and can still be revoked by the user/OS.
+                }
+            }
+            return;
+        }
     }
 
     private static boolean hasPersistedPermission(
