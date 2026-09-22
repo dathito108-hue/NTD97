@@ -150,6 +150,25 @@ fn parse_action_line(
         "browser.observe" => TypedAction::BrowserObserve {
             target: payload.to_owned(),
         },
+        "browser.interact" => {
+            let mut parts = payload.splitn(3, '\t');
+            let target = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let operation = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let value = parts.next().map(str::to_owned);
+            if target.trim().is_empty()
+                || operation.trim().is_empty()
+                || target != target.trim()
+                || operation != operation.trim()
+                || value.as_ref().is_some_and(|value| value.is_empty())
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::BrowserInteract {
+                target: target.to_owned(),
+                operation: operation.to_owned(),
+                value,
+            }
+        }
         "file.read" => TypedAction::FileRead {
             path: payload.to_owned(),
         },
@@ -235,7 +254,7 @@ fn parse_action_line(
     let capability_id = CapabilityId(capability.to_owned());
     let side_effect = match capability {
         "file.write" | "artifact.download" => SideEffectClass::Reversible,
-        "device.interact" | "app.action" => SideEffectClass::ExternalWrite,
+        "browser.interact" | "device.interact" | "app.action" => SideEffectClass::ExternalWrite,
         _ => SideEffectClass::ReadOnly,
     };
     let node = ActionNode {
@@ -623,6 +642,32 @@ END",
                 app: "ai.ntd97.mobile".into(),
                 action: "launch".into(),
                 payload: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn browser_interaction_is_external_write() {
+        let parsed = parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|browser.observe|https://example.com/\n2|browser.interact|a\tclick\nEND",
+        )
+        .expect("plan");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+
+        assert_eq!(plan.graph.actions.len(), 2);
+        assert_eq!(plan.graph.actions[0].side_effect, SideEffectClass::ReadOnly);
+        assert_eq!(
+            plan.graph.actions[1].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+        assert_eq!(
+            plan.payloads.get(&2),
+            Some(&TypedAction::BrowserInteract {
+                target: "a".into(),
+                operation: "click".into(),
+                value: None,
             })
         );
     }
