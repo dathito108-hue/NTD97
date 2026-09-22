@@ -2561,6 +2561,33 @@ fn governed_explicit_action_plan(
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|file.grant.write|{path}\t{text}\nEND"
         ))
+    } else if lower.starts_with("upload artifact ") {
+        let rest = trimmed
+            .get("upload artifact ".len()..)
+            .ok_or_else(|| "artifact upload command boundary failed".to_owned())?;
+        let Some((path, url)) = rest.rsplit_once(" to ") else {
+            return Ok(None);
+        };
+        let path = path.trim();
+        let url = url.trim();
+        let path_value = Path::new(path);
+        if path.is_empty()
+            || url.is_empty()
+            || !url.to_ascii_lowercase().starts_with("https://")
+            || path_value.is_absolute()
+            || path_value
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+            || path
+                .chars()
+                .chain(url.chars())
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|artifact.upload|{url}\t{path}\nEND"
+        ))
     } else if lower.starts_with("set clipboard to ") {
         let value = trimmed
             .get("set clipboard to ".len()..)
@@ -5592,6 +5619,23 @@ mod tests {
             .expect("write approval")
             .expect("write approval required");
         assert_eq!(write_approval.0, "file.grant.write");
+
+        let explicit_upload = governed_explicit_action_plan(
+            "upload artifact artifacts/report.bin to https://example.com/upload",
+        )
+        .expect("explicit upload plan")
+        .expect("explicit upload action");
+        assert_eq!(
+            explicit_upload.payloads.get(&1),
+            Some(&TypedAction::ArtifactUpload {
+                url: "https://example.com/upload".into(),
+                path: "artifacts/report.bin".into(),
+            })
+        );
+        assert_eq!(
+            explicit_upload.graph.actions[0].side_effect,
+            SideEffectClass::ExternalWrite
+        );
 
         let upload = match parse_native_action_plan(
             "NTD97_ACTIONS_V1\n1|artifact.upload|https://example.com/upload\tartifacts/report.bin\nEND",
