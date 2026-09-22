@@ -2016,6 +2016,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
     version: jint,
     capsule_path: JString<'_>,
     shard_root: JString<'_>,
+    capability_root: JString<'_>,
     verify_key: JByteArray<'_>,
     context_limit: jint,
 ) -> jboolean {
@@ -2028,6 +2029,15 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
     let Some(shard_root) = java_string(&mut env, &shard_root) else {
         return 0;
     };
+    let Some(capability_root) = java_string(&mut env, &capability_root) else {
+        return 0;
+    };
+    if JAVA_VM.get().is_none() {
+        let Ok(vm) = env.get_java_vm() else {
+            return 0;
+        };
+        let _ = JAVA_VM.set(vm);
+    }
     let Ok(version) = u32::try_from(version) else {
         return 0;
     };
@@ -2047,6 +2057,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
             &shard_root,
             &verify_key,
             context_limit,
+            &capability_root,
         )
         .is_ok(),
     )
