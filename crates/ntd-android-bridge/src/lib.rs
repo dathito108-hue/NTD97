@@ -2359,6 +2359,139 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatTrans
     java_bytes(&env, chat_transcript().as_bytes())
 }
 
+fn production_capability_probe(capability_root: &str) -> Result<String, String> {
+    let root = PathBuf::from(capability_root);
+    let mut file = AndroidScopedFileAdapter::new(root.clone())?;
+    let mut verifier = AndroidProductionVerifier;
+
+    let mut web = AndroidWebFetchAdapter;
+    let web_action = TypedAction::WebFetch {
+        url: "https://example.com/".into(),
+    };
+    let web_result = web
+        .execute(ntd_runtime::ActionId(90), &web_action)
+        .map_err(|error| format!("production web.fetch probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: web_output,
+        ..
+    } = web_result
+    else {
+        return Err("production web.fetch probe did not complete".into());
+    };
+    let web_descriptor = CapabilityDescriptor::new(
+        CapabilityId("web.fetch".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("web.fetch probe descriptor: {error:?}"))?;
+    if verifier.verify(&web_descriptor, &web_action, &web_output) != ActionVerification::Accept {
+        return Err("production web.fetch evidence verification failed".into());
+    }
+
+    let private_blocked = web
+        .execute(
+            ntd_runtime::ActionId(91),
+            &TypedAction::WebFetch {
+                url: "https://127.0.0.1/".into(),
+            },
+        )
+        .is_err();
+    if !private_blocked {
+        return Err("private-network web.fetch was not rejected".into());
+    }
+
+    let relative = "m13/probe.txt";
+    let write_action = TypedAction::FileWrite {
+        path: relative.into(),
+        bytes: b"NTD97-M13-PRODUCTION".to_vec(),
+    };
+    let write_result = file
+        .execute(ntd_runtime::ActionId(92), &write_action)
+        .map_err(|error| format!("production file.write probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: write_output,
+        rollback_token: Some(rollback_token),
+    } = write_result
+    else {
+        return Err("production file.write probe lacked rollback token".into());
+    };
+    let write_descriptor = {
+        let mut descriptor = CapabilityDescriptor::new(
+            CapabilityId("file.write".into()),
+            1,
+            CapabilityDomain::File,
+            SideEffectClass::Reversible,
+        )
+        .map_err(|error| format!("file.write probe descriptor: {error:?}"))?;
+        descriptor.rollback_supported = true;
+        descriptor
+    };
+    if verifier.verify(&write_descriptor, &write_action, &write_output)
+        != ActionVerification::Accept
+    {
+        return Err("production file.write evidence verification failed".into());
+    }
+
+    let read_action = TypedAction::FileRead {
+        path: relative.into(),
+    };
+    let read_result = file
+        .execute(ntd_runtime::ActionId(93), &read_action)
+        .map_err(|error| format!("production file.read probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: read_output,
+        ..
+    } = read_result
+    else {
+        return Err("production file.read probe did not complete".into());
+    };
+    let read_descriptor = CapabilityDescriptor::new(
+        CapabilityId("file.read".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("file.read probe descriptor: {error:?}"))?;
+    if verifier.verify(&read_descriptor, &read_action, &read_output) != ActionVerification::Accept {
+        return Err("production file.read evidence verification failed".into());
+    }
+    if read_output.value != ActionValue::Text("NTD97-M13-PRODUCTION".into()) {
+        return Err("production file.read returned unexpected content".into());
+    }
+
+    file.rollback(ntd_runtime::ActionId(92), &write_action, &rollback_token)
+        .map_err(|error| format!("production file.write rollback: {error}"))?;
+    let rollback_ok = file.read_text(relative).is_err();
+    if !rollback_ok {
+        return Err("production file.write rollback did not restore absent state".into());
+    }
+
+    Ok(
+        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\n"
+            .into(),
+    )
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeProductionCapabilityProbe(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    capability_root: JString<'_>,
+) -> jbyteArray {
+    let Some(capability_root) = java_string(&mut env, &capability_root) else {
+        return java_bytes(&env, b"production_capabilities=failed\n");
+    };
+    match production_capability_probe(&capability_root) {
+        Ok(result) => java_bytes(&env, result.as_bytes()),
+        Err(error) => java_bytes(
+            &env,
+            format!("production_capabilities=failed\nerror={error}\n").as_bytes(),
+        ),
+    }
+}
+
 fn real_model_probe(
     capsule_path: &str,
     shard_root: &str,
