@@ -285,11 +285,10 @@ fn revoke_pc_pair_profile(root: &Path, peer: &str) -> Result<(), String> {
 }
 
 fn list_pc_pair_profiles(root: &Path) -> Result<Vec<String>, String> {
-    let pairs = match canonical_pc_pair_directory(root, false) {
-        Ok(pairs) => pairs,
-        Err(error) if error.contains("unavailable") => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
+    if !root.exists() || !root.join("pc-pairs").exists() {
+        return Ok(Vec::new());
+    }
+    let pairs = canonical_pc_pair_directory(root, false)?;
     let mut peers = Vec::new();
     for entry in fs::read_dir(&pairs)
         .map_err(|error| format!("read paired-PC profile directory: {error}"))?
@@ -6470,6 +6469,80 @@ fn production_capability_probe(
         "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nweb_search_normalized=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\napp_accessibility_authority_block=ok\napp_accessibility_missing_target_block=ok\napp_accessibility_click=ok\napp_accessibility_set_text=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeProvisionPcPairProfile(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    capability_root: JString<'_>,
+    peer: JString<'_>,
+    address: JString<'_>,
+    remote_peer_id: JString<'_>,
+    remote_verify_key: JString<'_>,
+) -> jbyteArray {
+    let Some(capability_root) = java_string(&mut env, &capability_root) else {
+        return java_bytes(&env, b"ERROR:invalid capability root");
+    };
+    let Some(peer) = java_string(&mut env, &peer) else {
+        return java_bytes(&env, b"ERROR:invalid peer alias");
+    };
+    let Some(address) = java_string(&mut env, &address) else {
+        return java_bytes(&env, b"ERROR:invalid peer address");
+    };
+    let Some(remote_peer_id) = java_string(&mut env, &remote_peer_id) else {
+        return java_bytes(&env, b"ERROR:invalid remote peer id");
+    };
+    let Some(remote_verify_key) = java_string(&mut env, &remote_verify_key) else {
+        return java_bytes(&env, b"ERROR:invalid remote verify key");
+    };
+    match provision_pc_pair_profile(
+        Path::new(&capability_root),
+        &peer,
+        &address,
+        &remote_peer_id,
+        &remote_verify_key,
+    ) {
+        Ok(receipt) => java_bytes(&env, receipt.as_bytes()),
+        Err(error) => java_bytes(&env, format!("ERROR:{error}").as_bytes()),
+    }
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeRevokePcPairProfile(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    capability_root: JString<'_>,
+    peer: JString<'_>,
+) -> jbyteArray {
+    let Some(capability_root) = java_string(&mut env, &capability_root) else {
+        return java_bytes(&env, b"ERROR:invalid capability root");
+    };
+    let Some(peer) = java_string(&mut env, &peer) else {
+        return java_bytes(&env, b"ERROR:invalid peer alias");
+    };
+    match revoke_pc_pair_profile(Path::new(&capability_root), &peer) {
+        Ok(()) => java_bytes(&env, b"OK"),
+        Err(error) => java_bytes(&env, format!("ERROR:{error}").as_bytes()),
+    }
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeListPcPairProfiles(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    capability_root: JString<'_>,
+) -> jbyteArray {
+    let Some(capability_root) = java_string(&mut env, &capability_root) else {
+        return java_bytes(&env, b"ERROR:invalid capability root");
+    };
+    match list_pc_pair_profiles(Path::new(&capability_root)) {
+        Ok(peers) => java_bytes(&env, peers.join("\n").as_bytes()),
+        Err(error) => java_bytes(&env, format!("ERROR:{error}").as_bytes()),
+    }
 }
 
 #[allow(unsafe_code)]
