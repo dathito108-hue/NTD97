@@ -44,6 +44,17 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
         return result == null ? new byte[0] : result;
     }
 
+    static byte[] runProductionCapabilityProbe(Context context) {
+        if (!ensureLoaded()) {
+            return "production_capabilities=failed\nerror=native library unavailable\n"
+                    .getBytes(StandardCharsets.UTF_8);
+        }
+        File root = new File(context.getFilesDir(), "ntd97-capability-probe");
+        byte[] result = nativeProductionCapabilityProbe(root.getAbsolutePath());
+        return result == null ? new byte[0] : result;
+    }
+
+
     private static synchronized boolean ensureLoaded() {
         if (!loadAttempted) {
             loadAttempted = true;
@@ -375,6 +386,8 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static native long nativeRestoreChatCheckpoint(byte[] checkpoint);
 
     private static native byte[] nativeChatTranscript();
+
+    private static native byte[] nativeProductionCapabilityProbe(String capabilityRoot);
 
     private static native byte[] nativeRealModelProbe(
             String capsulePath,
