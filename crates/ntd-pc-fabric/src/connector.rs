@@ -213,7 +213,7 @@ impl<'a> FixedCursor<'a> {
 mod tests {
     use std::{net::TcpListener, thread};
 
-    use ntd_runtime::{ActionId, AdapterResult, TypedAction};
+    use ntd_runtime::{ActionId, AdapterResult, CapabilityAdapter, TypedAction};
 
     use crate::{
         read_length_prefixed_frame, write_length_prefixed_frame, DesktopAgent, PairedPcAdapter,
