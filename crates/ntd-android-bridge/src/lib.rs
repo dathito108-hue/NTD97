@@ -1613,8 +1613,11 @@ impl ActionVerifier for AndroidProductionVerifier {
                     argument,
                 },
             ) => argument.as_ref().is_some_and(|text| {
-                let expected_receipt =
-                    format!("clipboard-set:{}:{}", text.len(), digest_hex(&sha256(text.as_bytes())));
+                let expected_receipt = format!(
+                    "clipboard-set:{}:{}",
+                    text.len(),
+                    digest_hex(&sha256(text.as_bytes()))
+                );
                 surface == "clipboard"
                     && operation == "set_text"
                     && output
