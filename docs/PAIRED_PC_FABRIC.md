@@ -64,7 +64,7 @@ M13 also exposes a user-facing Android provisioning surface for the production P
 - the phone signing seed is generated from the OS CSPRNG inside native code and remains only in app-private storage;
 - the UI receives only a public receipt containing the phone peer id and Ed25519 verify key for exchange with the desktop;
 - alias replacement is create-only: an existing alias must be explicitly revoked before a new identity can be installed, including under file-race conditions;
-- staged profile bytes are synced before commit, committed inside the same app-private directory without replacement, reloaded and revalidated before success is returned;
+- the target profile is created with filesystem no-replacement semantics (`create_new`), file + directory state are synced, then the canonical loader reloads and revalidates it before success is returned; any write/sync/reload mismatch rolls the target back;
 - list returns only profiles that still pass the canonical loader, while revoke rejects symlink/path escape and syncs the profile directory after removal;
 - provisioning a profile does not grant any PC execution authority; `pc.execute` and `pc.artifact.write` remain governed ExternalWrite actions requiring sovereign approval.
 
