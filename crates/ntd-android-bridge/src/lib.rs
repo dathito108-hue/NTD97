@@ -1530,6 +1530,13 @@ fn open_chat_model(
     Ok(())
 }
 
+fn chat_session_active(status: NativeChatSessionStatus) -> bool {
+    matches!(
+        status,
+        NativeChatSessionStatus::Running | NativeChatSessionStatus::WaitingApproval
+    )
+}
+
 fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String> {
     if max_new_tokens == 0 {
         return Err("max_new_tokens must be greater than zero".into());
@@ -1541,7 +1548,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
             || guard
                 .chat_session
                 .as_ref()
-                .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+                .is_some_and(|session| chat_session_active(session.status))
         {
             return Err("another native chat request is still running".into());
         }
@@ -2185,7 +2192,7 @@ fn submit_chat_reserved(
         if guard
             .chat_session
             .as_ref()
-            .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+            .is_some_and(|session| chat_session_active(session.status))
         {
             return Err("another native chat request started during preflight".into());
         }
@@ -2314,7 +2321,7 @@ fn submit_chat_reserved(
         || guard
             .chat_session
             .as_ref()
-            .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+            .is_some_and(|session| chat_session_active(session.status))
     {
         return Err("sovereign conversation changed during native reasoning".into());
     }
@@ -2332,6 +2339,149 @@ fn submit_chat_reserved(
         status: session_status,
     });
     Ok(request_id)
+}
+
+fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String> {
+    let (task_id, model, resources, mut conversation) = {
+        let guard = lock_state();
+        let session = guard
+            .chat_session
+            .as_ref()
+            .filter(|session| {
+                session.request_id == request_id
+                    && session.status == NativeChatSessionStatus::WaitingApproval
+            })
+            .ok_or_else(|| "chat request is not waiting for approval".to_owned())?;
+        let model = guard
+            .chat_model
+            .clone()
+            .ok_or_else(|| "native chat model is not loaded".to_owned())?;
+        (
+            session.task_id,
+            model,
+            guard.resources,
+            guard.conversation.clone(),
+        )
+    };
+
+    let (_, _, approval_status) = conversation
+        .chat_approval_for_task(task_id)
+        .ok_or_else(|| "pending chat approval state is missing".to_owned())?;
+    if !matches!(approval_status, "pending" | "reconfirm" | "approved-executing") {
+        return Err("chat approval is no longer pending".into());
+    }
+
+    if !approved {
+        conversation
+            .set_chat_approval_status(task_id, "denied")
+            .map_err(|error| format!("record denied chat approval: {error:?}"))?;
+        conversation
+            .cancel_turn(task_id, "user denied external-write approval")
+            .map_err(|error| format!("cancel denied chat task: {error:?}"))?;
+
+        let mut guard = lock_state();
+        let session = guard
+            .chat_session
+            .as_mut()
+            .filter(|session| session.request_id == request_id)
+            .ok_or_else(|| "chat request changed during denial".to_owned())?;
+        session.status = NativeChatSessionStatus::Cancelled;
+        guard.conversation = conversation;
+        return Ok(true);
+    }
+
+    conversation
+        .set_chat_approval_status(task_id, "approved-executing")
+        .map_err(|error| format!("record executing chat approval: {error:?}"))?;
+
+    {
+        let mut guard = lock_state();
+        let session = guard
+            .chat_session
+            .as_ref()
+            .filter(|session| {
+                session.request_id == request_id
+                    && session.status == NativeChatSessionStatus::WaitingApproval
+            })
+            .ok_or_else(|| "chat request changed before approved execution".to_owned())?;
+        if session.task_id != task_id {
+            return Err("chat task changed before approved execution".into());
+        }
+        guard.conversation = conversation.clone();
+    }
+
+    let active = conversation
+        .active()
+        .cloned()
+        .ok_or_else(|| "approved chat task has no active turn".to_owned())?;
+    if active.task_id != task_id {
+        return Err("approved chat task identity mismatch".into());
+    }
+    let protocol = conversation
+        .action_plan_protocol_for_task(task_id)
+        .ok_or_else(|| "approved chat task has no canonical action protocol".to_owned())?
+        .to_owned();
+    let action_plan = match parse_native_action_plan(&protocol)
+        .map_err(|error| format!("reconstruct approved action plan: {error:?}"))?
+    {
+        AssistantPlanDecision::Actions(plan) => plan,
+        AssistantPlanDecision::Direct => {
+            return Err("approved chat protocol did not contain actions".into())
+        }
+    };
+    external_write_approval(&action_plan)?
+        .ok_or_else(|| "approved chat plan no longer contains external writes".to_owned())?;
+
+    let prompt_limit = model
+        .context_limit
+        .saturating_sub(active.max_new_tokens)
+        .max(1);
+    let mut executed = conversation.clone();
+    let execution = execute_android_verified_actions(
+        &mut executed,
+        &model,
+        task_id,
+        &active.user_message,
+        prompt_limit,
+        resources,
+        &action_plan,
+        true,
+    );
+
+    match execution {
+        Ok(()) => {
+            executed
+                .set_chat_approval_status(task_id, "approved")
+                .map_err(|error| format!("record approved chat execution: {error:?}"))?;
+            let mut guard = lock_state();
+            let session = guard
+                .chat_session
+                .as_mut()
+                .filter(|session| {
+                    session.request_id == request_id
+                        && session.status == NativeChatSessionStatus::WaitingApproval
+                })
+                .ok_or_else(|| "chat request changed during approved execution".to_owned())?;
+            if guard.conversation != conversation {
+                return Err("sovereign conversation changed during approved execution".into());
+            }
+            guard.conversation = executed;
+            session.status = NativeChatSessionStatus::Running;
+            Ok(true)
+        }
+        Err(error) => {
+            let mut guard = lock_state();
+            if guard.conversation == conversation {
+                guard
+                    .conversation
+                    .set_chat_approval_status(task_id, "reconfirm")
+                    .map_err(|state_error| {
+                        format!("record approval reconfirmation: {state_error:?}")
+                    })?;
+            }
+            Err(error)
+        }
+    }
 }
 
 fn chat_status(request_id: u64) -> i32 {
@@ -2474,7 +2624,7 @@ fn cancel_chat(request_id: u64) -> bool {
     let (task_id, cancel) = {
         let guard = lock_state();
         let Some(session) = guard.chat_session.as_ref().filter(|session| {
-            session.request_id == request_id && session.status == NativeChatSessionStatus::Running
+            session.request_id == request_id && chat_session_active(session.status)
         }) else {
             return false;
         };
@@ -2712,11 +2862,29 @@ fn restore_chat_checkpoint(bytes: &[u8]) -> Result<u64, String> {
         .next_chat_request_id
         .checked_add(1)
         .ok_or_else(|| "chat request id overflow".to_owned())?;
+    let approval_status = guard
+        .conversation
+        .chat_approval_for_task(task_id)
+        .map(|(_, _, status)| status.to_owned());
+    if approval_status.as_deref() == Some("approved-executing") {
+        guard
+            .conversation
+            .set_chat_approval_status(task_id, "reconfirm")
+            .map_err(|error| format!("mark interrupted external write for reconfirmation: {error:?}"))?;
+    }
+    let waiting_approval = matches!(
+        approval_status.as_deref(),
+        Some("pending" | "reconfirm" | "approved-executing")
+    );
     guard.chat_session = Some(NativeChatSession {
         request_id,
         task_id,
         cancel: Arc::new(AtomicBool::new(false)),
-        status: NativeChatSessionStatus::Running,
+        status: if waiting_approval {
+            NativeChatSessionStatus::WaitingApproval
+        } else {
+            NativeChatSessionStatus::Running
+        },
     });
     Ok(request_id)
 }
