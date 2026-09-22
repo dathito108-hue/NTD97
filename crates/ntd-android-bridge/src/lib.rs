@@ -6161,14 +6161,71 @@ fn production_capability_probe(
     browser_interact_authority
         .permits(&browser_interact_descriptor)
         .map_err(|error| format!("browser interaction explicit authority rejected: {error:?}"))?;
+    let mut browser_interact = AndroidBrowserInteractAdapter;
+    let ambiguous_selector_blocked = browser_interact
+        .execute(
+            ntd_runtime::ActionId(100),
+            &TypedAction::BrowserInteract {
+                target: "*".into(),
+                operation: "click".into(),
+                value: None,
+            },
+        )
+        .is_err();
+    if !ambiguous_selector_blocked {
+        return Err("ambiguous browser selector did not fail closed".into());
+    }
+
+    android_browser_drop_in_memory_session_for_test()?;
+    let lost_session_blocked = browser_interact
+        .execute(
+            ntd_runtime::ActionId(101),
+            &TypedAction::BrowserInteract {
+                target: "body".into(),
+                operation: "click".into(),
+                value: None,
+            },
+        )
+        .is_err();
+    if !lost_session_blocked {
+        return Err("browser interaction did not fail after in-memory session loss".into());
+    }
+
+    let browser_resume_action = TypedAction::BrowserObserve {
+        target: "session".into(),
+    };
+    let browser_resume_result = browser_observe
+        .execute(ntd_runtime::ActionId(102), &browser_resume_action)
+        .map_err(|error| format!("production browser session resume probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_resume_output,
+        ..
+    } = browser_resume_result
+    else {
+        return Err("production browser session resume did not complete".into());
+    };
+    if verifier.verify(
+        &browser_observe_descriptor,
+        &browser_resume_action,
+        &browser_resume_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser session resume verification failed".into());
+    }
+    let ActionValue::Text(browser_resume_platform) = &browser_resume_output.value else {
+        return Err("browser session resume output was not platform text".into());
+    };
+    if browser_platform_field(browser_resume_platform, "session") != Some("resumed") {
+        return Err("browser session resume did not report resumed state".into());
+    }
+
     let browser_interact_action = TypedAction::BrowserInteract {
         target: "body".into(),
         operation: "click".into(),
         value: None,
     };
-    let mut browser_interact = AndroidBrowserInteractAdapter;
     let browser_interact_result = browser_interact
-        .execute(ntd_runtime::ActionId(100), &browser_interact_action)
+        .execute(ntd_runtime::ActionId(103), &browser_interact_action)
         .map_err(|error| format!("production browser.interact probe: {error}"))?;
     let AdapterResult::Completed {
         output: browser_interact_output,
@@ -6184,6 +6241,54 @@ fn production_capability_probe(
     ) != ActionVerification::Accept
     {
         return Err("production browser.interact receipt verification failed".into());
+    }
+
+    let browser_navigate_action = TypedAction::BrowserInteract {
+        target: "https://httpbin.org/forms/post".into(),
+        operation: "navigate".into(),
+        value: None,
+    };
+    let browser_navigate_result = browser_interact
+        .execute(ntd_runtime::ActionId(104), &browser_navigate_action)
+        .map_err(|error| format!("production browser.navigate probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_navigate_output,
+        ..
+    } = browser_navigate_result
+    else {
+        return Err("production browser.navigate did not complete".into());
+    };
+    if verifier.verify(
+        &browser_interact_descriptor,
+        &browser_navigate_action,
+        &browser_navigate_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.navigate receipt verification failed".into());
+    }
+
+    let browser_set_value_action = TypedAction::BrowserInteract {
+        target: "input[name='custname']".into(),
+        operation: "set_value".into(),
+        value: Some("NTD97-form-probe".into()),
+    };
+    let browser_set_value_result = browser_interact
+        .execute(ntd_runtime::ActionId(105), &browser_set_value_action)
+        .map_err(|error| format!("production browser.set_value probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_set_value_output,
+        ..
+    } = browser_set_value_result
+    else {
+        return Err("production browser.set_value did not complete".into());
+    };
+    if verifier.verify(
+        &browser_interact_descriptor,
+        &browser_set_value_action,
+        &browser_set_value_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.set_value receipt verification failed".into());
     }
 
     let capability_root_path = Path::new(capability_root);
