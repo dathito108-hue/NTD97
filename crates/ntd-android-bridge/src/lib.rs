@@ -1238,6 +1238,29 @@ fn android_browser_observe(target: &str) -> Result<String, String> {
     decode_android_browser_result(&bytes)
 }
 
+fn android_browser_drop_in_memory_session_for_test() -> Result<(), String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android browser test thread: {error}"))?;
+    let dropped = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdBrowserPlatform",
+            "dropInMemorySessionForTest",
+            "()Z",
+            &[],
+        )
+        .and_then(|value| value.z())
+        .map_err(|error| format!("drop Android browser in-memory session: {error}"))?;
+    if dropped {
+        Ok(())
+    } else {
+        Err("Android browser test session reset was rejected".into())
+    }
+}
+
 fn android_browser_interact(
     target: &str,
     operation: &str,
