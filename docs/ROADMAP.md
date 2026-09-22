@@ -497,6 +497,12 @@ Current implementation:
 - search endpoint evidence exposes only the HTTPS source host rather than the configured path/query so endpoint tokens are not copied into ActionFabric evidence;
 - Rust decodes the normalized search protocol into `ActionValue::TextList`, binds result count and a canonical SHA-256 digest into evidence and independently rejects malformed item framing, over-limit result counts or digest mismatch;
 - emulator acceptance persists/reloads a field mapping, proves unconfigured search still fails closed, performs a real mapped JSON search, requires at least one normalized result and verifies provider endpoint path/query do not leak into evidence;
+- WebSearch profiles now support two provider-independent presets: Generic JSON field mapping and standards-based OpenSearch description discovery; neither preset embeds a provider hostname or SDK and both still emit the same bounded canonical search-item protocol into native cognition;
+- optional search credentials are stored only in Android app-private preferences as an explicit HTTP header name/value, reject reserved transport headers/control characters and are attached only by the WebSearch-specific GET transport; generic `web.fetch` and upload transports never see them;
+- credentialed WebSearch redirects must stay on the exact HTTPS origin and OpenSearch discovery may not move a credential-bearing query from the configured description origin to a different origin, preventing header forwarding to an untrusted redirect/template;
+- OpenSearch XML parsing disables DTD/external entities, accepts only JSON result templates, expands only the bounded standard search/count/page/language/encoding parameters and rejects unknown placeholders; returned title/URL/snippet arrays are normalized through the same public-HTTPS/result-size limits as Generic JSON;
+- normalized native evidence is now mode-neutral (`normalization:canonical-items-v1`), binds result count + SHA-256 and still exposes only the source HTTPS host, never the configured credential, endpoint path/query or raw provider payload;
+- emulator acceptance uses a non-secret debug credential to prove header delivery and cross-origin redirect rejection, then performs a real OpenSearch discovery/search before restoring the Generic JSON profile for the production ActionFabric probe;
 - browser session maturation preserves the last verifier-approved public-HTTPS URL plus its exact normalized origin in app-private preferences and supports an explicit read-only `browser.observe session` / `resume browser` path; resume rejects or clears persisted state when URL/origin no longer match, interaction never auto-replays after in-memory WebView loss and fails closed until the persisted URL is re-observed;
 - direct observe/navigation establishes an exact main-frame origin pin; click, set_value and submit must remain on that origin, while public-HTTPS subresources may use other origins; private/non-HTTPS resources remain blocked and cross-origin main-frame redirects fail closed;
 - browser selectors now use `querySelectorAll` and require exactly one DOM match, so missing and ambiguous targets fail closed rather than silently choosing the first element;
@@ -507,7 +513,7 @@ Current implementation:
 
 Still required before M13 completion:
 
-- WebSearch provider discovery/presets and credential-header handling beyond the generic endpoint + field-mapping configuration foundation;
+- representative-phone WebSearch acceptance for authenticated provider profiles, OpenSearch descriptors and credential rotation/revocation across process restart;
 - representative-phone/browser-engine acceptance for persisted-session reload, redirects, cookies/authenticated sessions and complex form/navigation edge cases beyond the app-owned WebView foundation;
 - successful SAF read/write acceptance on representative physical phones/providers, including grant revocation/reselection and provider-specific edge cases;
 - representative-phone process-death acceptance for resumable upload and SAF provider state, including retryable network loss after the durable TAF97 checkpoint;
