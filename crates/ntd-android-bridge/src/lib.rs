@@ -240,6 +240,27 @@ impl ActionVerifier for AndroidResourceVerifier {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct AndroidActionVerifier {
+    resource: AndroidResourceVerifier,
+    platform: AndroidPlatformVerifier,
+}
+
+impl ActionVerifier for AndroidActionVerifier {
+    fn verify(
+        &mut self,
+        descriptor: &CapabilityDescriptor,
+        action: &TypedAction,
+        output: &ActionOutput,
+    ) -> ActionVerification {
+        if descriptor.id.0 == "device.observe" {
+            self.resource.verify(descriptor, action, output)
+        } else {
+            self.platform.verify(descriptor, action, output)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativeChatSessionStatus {
     Running,
@@ -994,16 +1015,17 @@ fn execute_android_verified_actions(
     platform_vm: Option<Arc<JavaVM>>,
     action_plan: &AssistantActionPlan,
 ) -> Result<(), String> {
-    if action_plan
-        .graph
-        .actions
-        .iter()
-        .any(|node| node.capability.0 != "device.observe")
-    {
+    let supported = action_plan.graph.actions.iter().all(|node| {
+        matches!(
+            node.capability.0.as_str(),
+            "device.observe" | "web.fetch" | "file.read" | "file.write"
+        )
+    });
+    if !supported {
         conversation
             .record_action_planner_status(task_id, "unsupported")
             .map_err(|error| format!("record unsupported action plan: {error:?}"))?;
-        return Err("model requested a capability without an Android chat adapter".into());
+        return Err("model requested a capability without an Android production adapter".into());
     }
 
     conversation
@@ -1022,6 +1044,56 @@ fn execute_android_verified_actions(
             .map_err(|error| format!("build device.observe descriptor: {error:?}"))?,
         )
         .map_err(|error| format!("register device.observe capability: {error:?}"))?;
+
+    let mut web_fetch = CapabilityDescriptor::new(
+        CapabilityId("web.fetch".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("build web.fetch descriptor: {error:?}"))?;
+    web_fetch
+        .required_scopes
+        .push(AuthorityScope::new("network.read").map_err(|error| format!("{error:?}"))?);
+    registry
+        .register(web_fetch)
+        .map_err(|error| format!("register web.fetch capability: {error:?}"))?;
+
+    let mut file_read = CapabilityDescriptor::new(
+        CapabilityId("file.read".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("build file.read descriptor: {error:?}"))?;
+    file_read
+        .required_scopes
+        .push(AuthorityScope::new("storage.app.read").map_err(|error| format!("{error:?}"))?);
+    registry
+        .register(file_read)
+        .map_err(|error| format!("register file.read capability: {error:?}"))?;
+
+    let mut file_write = CapabilityDescriptor::new(
+        CapabilityId("file.write".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::Reversible,
+    )
+    .map_err(|error| format!("build file.write descriptor: {error:?}"))?;
+    file_write.rollback_supported = true;
+    file_write
+        .required_scopes
+        .push(AuthorityScope::new("storage.app.write").map_err(|error| format!("{error:?}"))?);
+    registry
+        .register(file_write)
+        .map_err(|error| format!("register file.write capability: {error:?}"))?;
+
+    let needs_platform = action_plan.graph.actions.iter().any(|node| {
+        matches!(
+            node.capability.0.as_str(),
+            "web.fetch" | "file.read" | "file.write"
+        )
+    });
     let mut fabric = ActionFabric::new(registry);
     fabric
         .register_adapter(
@@ -1031,6 +1103,35 @@ fn execute_android_verified_actions(
             },
         )
         .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+
+    if needs_platform {
+        let vm = platform_vm
+            .ok_or_else(|| "Android platform bridge is unavailable for Web/File action".to_owned())?;
+        for capability in ["web.fetch", "file.read", "file.write"] {
+            fabric
+                .register_adapter(
+                    CapabilityId(capability.into()),
+                    AndroidPlatformAdapter::new(Arc::clone(&vm)),
+                )
+                .map_err(|error| format!("register Android {capability} adapter: {error:?}"))?;
+        }
+    }
+
+    let mut authority = AuthorityGrant::new();
+    for action in &action_plan.graph.actions {
+        authority = match action.capability.0.as_str() {
+            "web.fetch" => authority.with_scope(
+                AuthorityScope::new("network.read").map_err(|error| format!("{error:?}"))?,
+            ),
+            "file.read" => authority.with_scope(
+                AuthorityScope::new("storage.app.read").map_err(|error| format!("{error:?}"))?,
+            ),
+            "file.write" => authority.with_scope(
+                AuthorityScope::new("storage.app.write").map_err(|error| format!("{error:?}"))?,
+            ),
+            _ => authority,
+        };
+    }
 
     let task = conversation
         .cognition()
@@ -1043,8 +1144,8 @@ fn execute_android_verified_actions(
         &mut fabric,
         &task,
         action_plan,
-        &AuthorityGrant::new(),
-        &mut AndroidResourceVerifier,
+        &authority,
+        &mut AndroidActionVerifier::default(),
         user_message,
     )
     .map_err(|error| format!("execute verified Android action plan: {error:?}"))?;
