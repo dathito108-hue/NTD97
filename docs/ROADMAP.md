@@ -510,7 +510,12 @@ Current implementation:
 - `browser.interact` keeps the same canonical action type and ExternalWrite authority but now supports `navigate`, `submit`, `click` and `set_value`; navigation remains public-HTTPS-only, submit requires an exact FORM selector and is accepted only after same-origin main-frame completion, while set_value requires post-event DOM read-back of the exact value;
 - every browser observe/interaction receipt binds `operation + target + value` with SHA-256 and the native verifier recomputes that binding; set_value evidence carries only the value hash, not the entered value itself;
 - browser persistence does not serialize DOM state or enable DOM storage; file/content access, mixed content, geolocation, multiple windows and third-party cookies remain disabled;
-- emulator acceptance proves ambiguous-selector rejection, interaction failure after in-memory session loss, explicit persisted-session resume, receipt-verified navigation, real HTTPS form value read-back + submit, and rejection of a real cross-origin link click that attempts to move the main frame away from the pinned origin.
+- emulator acceptance proves ambiguous-selector rejection, interaction failure after in-memory session loss, explicit persisted-session resume, receipt-verified navigation, real HTTPS form value read-back + submit, and rejection of a real cross-origin link click that attempts to move the main frame away from the pinned origin;
+- the existing physical-device validation subsystem now also defines an integrity-protected `M13E97` mixed-hardware record instead of introducing a second evidence stack; records bind canonical build SHA, hashed Android build fingerprint, verifier-committed action count, gate mask, sovereignty audit, process-death reconfirm and a per-run nonce hash without storing prompts, credentials or action payloads;
+- the debug-only M13 hardware harness drives the normal `submitChat -> approval -> ActionFabric -> production adapter -> verifier` path for WebSearch, browser, SAF, clipboard, third-party accessibility and authenticated PCF97 actions; it has no mock adapter or JNI side-effect shortcut;
+- upload hardware acceptance is two-phase: phase A stops at the durable pre-network ActionFabric checkpoint, the host force-stops Android, and phase B requires both a new process instance and sovereign `reconfirm` before the HTTPS PUT can resume;
+- the host collector Base64-encodes intent parameters across ADB, rejects emulators, requires the canonical CI-attested APK and user-enabled AccessibilityService, exports `.m13e97` plus a non-sensitive summary and runs the canonical `m13e97-gate`;
+- a passing M13E97 mixed-core record is necessary hardware evidence but is not by itself sufficient to close M13; the representative-phone edge cases below remain mandatory.
 
 Still required before M13 completion:
 
@@ -520,7 +525,7 @@ Still required before M13 completion:
 - representative-phone process-death acceptance for resumable upload and SAF provider state, including retryable network loss after the durable TAF97 checkpoint;
 - representative-phone accessibility acceptance against third-party apps, including user enable/disable/revocation, package transitions and OEM accessibility-service behavior beyond the initial exact-view-id click/set_text foundation;
 - representative-phone paired-PC provisioning against a real desktop agent, including public-identity exchange, reconnect and revoke/re-pair behavior;
-- real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
+- collect at least one passing M13E97 mixed Web -> File -> App/Device -> PC record on representative phone hardware using real user grants, real third-party accessibility target, real PCF97 desktop peer and real HTTPS upload service.
 
 Exit: NTD97 can complete useful multi-surface tasks on a real phone with verifiable results and no mock adapter in the canonical path.
 

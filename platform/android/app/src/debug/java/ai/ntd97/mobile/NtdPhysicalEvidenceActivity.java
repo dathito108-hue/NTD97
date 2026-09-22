@@ -219,7 +219,7 @@ public final class NtdPhysicalEvidenceActivity extends Activity {
         return revision.substring(0, 8);
     }
 
-    private static boolean isProbablyEmulator() {
+    static boolean isProbablyEmulator() {
         String fingerprint = Build.FINGERPRINT == null ? "" : Build.FINGERPRINT.toLowerCase();
         String model = Build.MODEL == null ? "" : Build.MODEL.toLowerCase();
         String manufacturer =

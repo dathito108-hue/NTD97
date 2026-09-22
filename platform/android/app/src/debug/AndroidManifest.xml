@@ -7,6 +7,9 @@
             android:name=".NtdPhysicalEvidenceActivity"
             android:exported="true" />
         <activity
+            android:name=".NtdM13HardwareEvidenceActivity"
+            android:exported="true" />
+        <activity
             android:name=".NtdRealModelProbeActivity"
             android:exported="true" />
     </application>

@@ -49,8 +49,9 @@ use ntd_runtime::{
     ThermalState, TypedAction, NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
 };
 use ntd_validation::{
-    encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
-    DeviceEvidence, EvidenceClass, PhysicalEvidenceRecord,
+    encode_m13_hardware_evidence, encode_physical_evidence, run_logical_continuity_soak,
+    run_native_validation_workload, DeviceEvidence, EvidenceClass, M13HardwareEvidenceRecord,
+    PhysicalEvidenceRecord,
 };
 
 const BRIDGE_PROTOCOL_VERSION: u8 = 1;
@@ -7157,6 +7158,52 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeRe
     _class: JClass<'_>,
 ) -> jboolean {
     u8::from(run_logical_continuity_soak(1, 5).is_ok())
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdM13HardwareEvidenceActivity_nativeEncodeM13Evidence(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    build_revision: JString<'_>,
+    fingerprint_hash: JString<'_>,
+    gate_mask: jint,
+    verified_action_count: jint,
+    process_death_reconfirmed: jboolean,
+    sovereignty_audit_passed: jboolean,
+    run_nonce_sha256: JByteArray<'_>,
+) -> jbyteArray {
+    let Some(build_revision) = java_string(&mut env, &build_revision) else {
+        return java_bytes(&env, &[]);
+    };
+    let Some(device_fingerprint) = java_string(&mut env, &fingerprint_hash) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(gate_mask) = u16::try_from(gate_mask) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(verified_action_count) = u32::try_from(verified_action_count) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(nonce) = env.convert_byte_array(&run_nonce_sha256) else {
+        return java_bytes(&env, &[]);
+    };
+    let Ok(run_nonce_sha256) = <[u8; 32]>::try_from(nonce.as_slice()) else {
+        return java_bytes(&env, &[]);
+    };
+    let record = M13HardwareEvidenceRecord {
+        build_revision,
+        device_fingerprint,
+        gate_mask,
+        verified_action_count,
+        process_death_reconfirmed: process_death_reconfirmed != 0,
+        sovereignty_audit_passed: sovereignty_audit_passed != 0,
+        run_nonce_sha256,
+    };
+    match encode_m13_hardware_evidence(&record) {
+        Ok(bytes) => java_bytes(&env, &bytes),
+        Err(_) => java_bytes(&env, &[]),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
