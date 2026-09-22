@@ -80,6 +80,10 @@ public interface NtdRuntimeHost {
         return 0;
     }
 
+    default String chatLastError() {
+        return "";
+    }
+
     default int chatReasoningBudget(long requestId) {
         return 0;
     }
