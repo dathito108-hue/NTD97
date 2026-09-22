@@ -889,6 +889,99 @@ fn android_platform_receipt(method: &str, value: &str) -> Result<String, String>
     decode_android_platform_receipt(&bytes)
 }
 
+fn android_accessibility_receipt(
+    app: &str,
+    operation: &str,
+    payload: &str,
+) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android accessibility thread: {error}"))?;
+    let japp = env
+        .new_string(app)
+        .map_err(|error| format!("encode accessibility package: {error}"))?;
+    let joperation = env
+        .new_string(operation)
+        .map_err(|error| format!("encode accessibility operation: {error}"))?;
+    let jpayload = env
+        .new_string(payload)
+        .map_err(|error| format!("encode accessibility payload: {error}"))?;
+    let japp_object = JObject::from(japp);
+    let joperation_object = JObject::from(joperation);
+    let jpayload_object = JObject::from(jpayload);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdDeviceAppPlatform",
+            "accessibilityInteract",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)[B",
+            &[
+                JValue::Object(&japp_object),
+                JValue::Object(&joperation_object),
+                JValue::Object(&jpayload_object),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android accessibility boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android accessibility response: {error}"))?;
+    decode_android_platform_receipt(&bytes)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AccessibilityActionSpec {
+    selector_kind: String,
+    selector_value: String,
+    text_bytes: Option<usize>,
+}
+
+fn parse_accessibility_action(
+    operation: &str,
+    payload: &[u8],
+) -> Result<AccessibilityActionSpec, String> {
+    let payload = std::str::from_utf8(payload)
+        .map_err(|_| "accessibility payload is not UTF-8".to_owned())?;
+    if payload.is_empty()
+        || payload.len() > MAX_PLATFORM_TEXT_BYTES
+        || payload.chars().any(|ch| matches!(ch, '\r' | '\n' | '|'))
+    {
+        return Err("accessibility payload is invalid".into());
+    }
+    let parts = payload.split('\t').collect::<Vec<_>>();
+    match operation {
+        "accessibility.click"
+            if parts.len() == 2
+                && parts[0] == "view_id"
+                && !parts[1].is_empty()
+                && parts[1].len() <= 4096 =>
+        {
+            Ok(AccessibilityActionSpec {
+                selector_kind: parts[0].to_owned(),
+                selector_value: parts[1].to_owned(),
+                text_bytes: None,
+            })
+        }
+        "accessibility.set_text"
+            if parts.len() == 3
+                && parts[0] == "view_id"
+                && !parts[1].is_empty()
+                && parts[1].len() <= 4096
+                && !parts[2].is_empty() =>
+        {
+            Ok(AccessibilityActionSpec {
+                selector_kind: parts[0].to_owned(),
+                selector_value: parts[1].to_owned(),
+                text_bytes: Some(parts[2].len()),
+            })
+        }
+        _ => Err("unsupported or malformed accessibility action".into()),
+    }
+}
+
 fn decode_android_platform_receipt(bytes: &[u8]) -> Result<String, String> {
     let mut cursor = PlatformCursor::new(bytes);
     if cursor.u8()? != PLATFORM_DEVICE_APP_PROTOCOL_VERSION {
@@ -964,22 +1057,49 @@ impl CapabilityAdapter for AndroidAppActionAdapter {
         else {
             return Err("Android app adapter received wrong action".into());
         };
-        if action != "launch" || !payload.is_empty() {
-            return Err("unsupported Android app action".into());
+
+        if action == "launch" && payload.is_empty() {
+            let receipt = android_platform_receipt("launchApp", app)?;
+            return Ok(AdapterResult::Completed {
+                output: ActionOutput {
+                    summary: format!("verified Android app launch: {app}"),
+                    value: ActionValue::Fields(BTreeMap::from([
+                        ("package".into(), app.clone()),
+                        ("operation".into(), "launch".into()),
+                        ("receipt".into(), receipt.clone()),
+                    ])),
+                    evidence: vec![
+                        "android-app-launch".into(),
+                        "operation:launch".into(),
+                        receipt,
+                    ],
+                },
+                rollback_token: None,
+            });
         }
-        let receipt = android_platform_receipt("launchApp", app)?;
+
+        let spec = parse_accessibility_action(action, payload)?;
+        let payload_text = std::str::from_utf8(payload)
+            .map_err(|_| "accessibility payload is not UTF-8".to_owned())?;
+        let receipt = android_accessibility_receipt(app, action, payload_text)?;
+        let mut fields = BTreeMap::from([
+            ("package".into(), app.clone()),
+            ("operation".into(), action.clone()),
+            ("selector_kind".into(), spec.selector_kind),
+            ("selector".into(), spec.selector_value),
+            ("receipt".into(), receipt.clone()),
+        ]);
+        if let Some(text_bytes) = spec.text_bytes {
+            fields.insert("text_bytes".into(), text_bytes.to_string());
+        }
 
         Ok(AdapterResult::Completed {
             output: ActionOutput {
-                summary: format!("verified Android app launch: {app}"),
-                value: ActionValue::Fields(BTreeMap::from([
-                    ("package".into(), app.clone()),
-                    ("operation".into(), "launch".into()),
-                    ("receipt".into(), receipt.clone()),
-                ])),
+                summary: format!("verified Android accessibility interaction: {action} on {app}"),
+                value: ActionValue::Fields(fields),
                 evidence: vec![
-                    "android-app-launch".into(),
-                    "operation:launch".into(),
+                    "android-accessibility-interaction".into(),
+                    format!("operation:{action}"),
                     receipt,
                 ],
             },
@@ -1857,16 +1977,68 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .any(|item| item == "operation:set_text")
                     && output.evidence.iter().any(|item| item == &expected_receipt)
             }),
-            ("app.action", TypedAction::AppAction { action, .. }) => {
-                action == "launch"
-                    && output
+            (
+                "app.action",
+                TypedAction::AppAction {
+                    app,
+                    action,
+                    payload,
+                },
+            ) => {
+                if action == "launch" && payload.is_empty() {
+                    let expected_receipt = format!("app-launch:{app}");
+                    output
                         .evidence
                         .iter()
                         .any(|item| item == "android-app-launch")
-                    && output
+                        && output
+                            .evidence
+                            .iter()
+                            .any(|item| item == "operation:launch")
+                        && output.evidence.iter().any(|item| item == &expected_receipt)
+                        && matches!(
+                            &output.value,
+                            ActionValue::Fields(fields)
+                                if fields.get("package") == Some(app)
+                                    && fields.get("operation") == Some(action)
+                                    && fields.get("receipt") == Some(&expected_receipt)
+                        )
+                } else {
+                    let Ok(spec) = parse_accessibility_action(action, payload) else {
+                        return ActionVerification::Reject {
+                            reason: "Android accessibility action payload is invalid".into(),
+                        };
+                    };
+                    let expected_receipt = format!(
+                        "accessibility:{action}:{app}:{}",
+                        digest_hex(&sha256(payload))
+                    );
+                    output
                         .evidence
                         .iter()
-                        .any(|item| item == "operation:launch")
+                        .any(|item| item == "android-accessibility-interaction")
+                        && output
+                            .evidence
+                            .iter()
+                            .any(|item| item == &format!("operation:{action}"))
+                        && output.evidence.iter().any(|item| item == &expected_receipt)
+                        && matches!(
+                            &output.value,
+                            ActionValue::Fields(fields)
+                                if fields.get("package") == Some(app)
+                                    && fields.get("operation") == Some(action)
+                                    && fields.get("selector_kind") == Some(&spec.selector_kind)
+                                    && fields.get("selector") == Some(&spec.selector_value)
+                                    && fields.get("receipt") == Some(&expected_receipt)
+                                    && match spec.text_bytes {
+                                        None => true,
+                                        Some(text_bytes) => {
+                                            fields.get("text_bytes")
+                                                == Some(&text_bytes.to_string())
+                                        }
+                                    }
+                        )
+                }
             }
             ("pc.observe", TypedAction::PcObserve { peer, .. }) => {
                 output
@@ -2768,6 +2940,32 @@ fn run_constrained_device_planner(
     })
 }
 
+fn valid_android_package(value: &str) -> bool {
+    if value.is_empty() || value.len() > 255 {
+        return false;
+    }
+    let mut segments = value.split('.');
+    let Some(first) = segments.next() else {
+        return false;
+    };
+    if first.is_empty()
+        || !first.as_bytes()[0].is_ascii_alphabetic()
+        || !first
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return false;
+    }
+    let rest = segments.collect::<Vec<_>>();
+    !rest.is_empty()
+        && rest.iter().all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+}
+
 fn granted_command_path(value: &str) -> Option<String> {
     let (alias, relative) = value.split_once('/')?;
     if alias.trim().is_empty()
@@ -2979,15 +3177,56 @@ fn governed_explicit_action_plan(
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|device.interact|clipboard\tset_text\t{value}\nEND"
         ))
+    } else if lower.starts_with("accessibility click ") {
+        let rest = trimmed
+            .get("accessibility click ".len()..)
+            .ok_or_else(|| "accessibility click command boundary failed".to_owned())?;
+        let Some((package, view_id)) = rest.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_android_package(package)
+            || view_id.trim().is_empty()
+            || view_id != view_id.trim()
+            || view_id.len() > 4096
+            || view_id
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t' | ' '))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|app.action|{package}\taccessibility.click\tview_id\t{view_id}\nEND"
+        ))
+    } else if lower.starts_with("accessibility set text ") {
+        let rest = trimmed
+            .get("accessibility set text ".len()..)
+            .ok_or_else(|| "accessibility set_text command boundary failed".to_owned())?;
+        let Some((target, text)) = rest.rsplit_once(" to ") else {
+            return Ok(None);
+        };
+        let Some((package, view_id)) = target.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_android_package(package)
+            || view_id.trim().is_empty()
+            || view_id != view_id.trim()
+            || view_id.len() > 4096
+            || text.is_empty()
+            || view_id
+                .chars()
+                .chain(text.chars())
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|app.action|{package}\taccessibility.set_text\tview_id\t{view_id}\t{text}\nEND"
+        ))
     } else if lower.starts_with("open app ") {
         let package = trimmed
             .get("open app ".len()..)
             .ok_or_else(|| "app command boundary failed".to_owned())?;
-        if package.trim().is_empty()
-            || package
-                .chars()
-                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t' | ' '))
-        {
+        if !valid_android_package(package) {
             return Ok(None);
         }
         Some(format!(
@@ -3075,9 +3314,29 @@ fn external_write_approval(
                     action,
                     payload,
                 },
-            ) if action == "launch" && payload.is_empty() && !app.trim().is_empty() => {
+            ) if action == "launch" && payload.is_empty() && valid_android_package(app) => {
                 capabilities.insert("app.action".to_owned());
                 rationales.push(format!("launch Android app package {app}"));
+            }
+            (
+                "app.action",
+                TypedAction::AppAction {
+                    app,
+                    action,
+                    payload,
+                },
+            ) if valid_android_package(app)
+                && matches!(
+                    action.as_str(),
+                    "accessibility.click" | "accessibility.set_text"
+                ) =>
+            {
+                let spec = parse_accessibility_action(action, payload)?;
+                capabilities.insert("app.action".to_owned());
+                rationales.push(format!(
+                    "perform {action} in foreground Android package {app} on {} selector {}",
+                    spec.selector_kind, spec.selector_value
+                ));
             }
             (
                 "pc.execute",
@@ -3118,6 +3377,43 @@ fn external_write_approval(
         capabilities.into_iter().collect::<Vec<_>>().join(","),
         rationales.join("; "),
     )))
+}
+
+fn app_action_scope_names(
+    action_plan: &AssistantActionPlan,
+) -> Result<std::collections::BTreeSet<&'static str>, String> {
+    let mut scopes = std::collections::BTreeSet::new();
+    for node in &action_plan.graph.actions {
+        if node.capability.0 != "app.action" {
+            continue;
+        }
+        let action = action_plan
+            .payloads
+            .get(&node.id)
+            .ok_or_else(|| "app.action payload is missing".to_owned())?;
+        let TypedAction::AppAction {
+            app,
+            action,
+            payload,
+        } = action
+        else {
+            return Err("app.action capability/action mismatch".into());
+        };
+        if !valid_android_package(app) {
+            return Err("app.action package is invalid".into());
+        }
+        match action.as_str() {
+            "launch" if payload.is_empty() => {
+                scopes.insert("app.launch");
+            }
+            "accessibility.click" | "accessibility.set_text" => {
+                parse_accessibility_action(action, payload)?;
+                scopes.insert("app.accessibility.interact");
+            }
+            _ => return Err("unsupported Android app action".into()),
+        }
+    }
+    Ok(scopes)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3440,10 +3736,12 @@ fn execute_android_verified_actions(
                     SideEffectClass::ExternalWrite,
                 );
                 if let Ok(descriptor) = descriptor.as_mut() {
-                    descriptor.required_scopes.push(
-                        AuthorityScope::new("app.launch")
-                            .map_err(|error| format!("app scope: {error:?}"))?,
-                    );
+                    for scope in app_action_scope_names(action_plan)? {
+                        descriptor.required_scopes.push(
+                            AuthorityScope::new(scope)
+                                .map_err(|error| format!("app action scope: {error:?}"))?,
+                        );
+                    }
                 }
                 descriptor
             }
@@ -3710,10 +4008,12 @@ fn execute_android_verified_actions(
             );
         }
         if fabric_capabilities.contains("app.action") {
-            authority = authority.with_scope(
-                AuthorityScope::new("app.launch")
-                    .map_err(|error| format!("app authority scope: {error:?}"))?,
-            );
+            for scope in app_action_scope_names(action_plan)? {
+                authority = authority.with_scope(
+                    AuthorityScope::new(scope)
+                        .map_err(|error| format!("app authority scope: {error:?}"))?,
+                );
+            }
         }
         if fabric_capabilities.contains("pc.execute") {
             authority =
@@ -5621,6 +5921,97 @@ fn production_capability_probe(
     )
     .map_err(|error| format!("artifact upload source rollback: {error}"))?;
 
+    let accessibility_scope = AuthorityScope::new("app.accessibility.interact")
+        .map_err(|error| format!("accessibility authority scope: {error:?}"))?;
+    let mut accessibility_descriptor = CapabilityDescriptor::new(
+        CapabilityId("app.action".into()),
+        1,
+        CapabilityDomain::App,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("accessibility app.action descriptor: {error:?}"))?;
+    accessibility_descriptor
+        .required_scopes
+        .push(accessibility_scope.clone());
+    accessibility_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize accessibility app.action descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(accessibility_scope.clone())
+        .permits(&accessibility_descriptor)
+        .is_ok()
+    {
+        return Err(
+            "accessibility app interaction was not denied without external-write authority".into(),
+        );
+    }
+    let mut accessibility_authority = AuthorityGrant::new().with_scope(accessibility_scope);
+    accessibility_authority.allow_external_write = true;
+    accessibility_authority
+        .permits(&accessibility_descriptor)
+        .map_err(|error| format!("accessibility explicit authority rejected: {error:?}"))?;
+
+    let click_view_id = format!("{package_name}:id/ntd_accessibility_probe_button");
+    let text_view_id = format!("{package_name}:id/ntd_accessibility_probe_text");
+    let mut app_accessibility = AndroidAppActionAdapter;
+
+    let missing_target_action = TypedAction::AppAction {
+        app: package_name.to_owned(),
+        action: "accessibility.click".into(),
+        payload: format!("view_id\t{package_name}:id/ntd_accessibility_missing").into_bytes(),
+    };
+    if app_accessibility
+        .execute(ntd_runtime::ActionId(104), &missing_target_action)
+        .is_ok()
+    {
+        return Err("accessibility missing target did not fail closed".into());
+    }
+
+    let click_action = TypedAction::AppAction {
+        app: package_name.to_owned(),
+        action: "accessibility.click".into(),
+        payload: format!("view_id\t{click_view_id}").into_bytes(),
+    };
+    let click_result = app_accessibility
+        .execute(ntd_runtime::ActionId(105), &click_action)
+        .map_err(|error| format!("production accessibility click probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: click_output,
+        ..
+    } = click_result
+    else {
+        return Err("production accessibility click did not complete".into());
+    };
+    if verifier.verify(&accessibility_descriptor, &click_action, &click_output)
+        != ActionVerification::Accept
+    {
+        return Err("production accessibility click evidence verification failed".into());
+    }
+
+    let set_text_action = TypedAction::AppAction {
+        app: package_name.to_owned(),
+        action: "accessibility.set_text".into(),
+        payload: format!("view_id\t{text_view_id}\tNTD97-accessibility").into_bytes(),
+    };
+    let set_text_result = app_accessibility
+        .execute(ntd_runtime::ActionId(106), &set_text_action)
+        .map_err(|error| format!("production accessibility set_text probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: set_text_output,
+        ..
+    } = set_text_result
+    else {
+        return Err("production accessibility set_text did not complete".into());
+    };
+    if verifier.verify(
+        &accessibility_descriptor,
+        &set_text_action,
+        &set_text_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production accessibility set_text evidence verification failed".into());
+    }
+
     let clipboard_scope = AuthorityScope::new("device.clipboard.write")
         .map_err(|error| format!("clipboard authority scope: {error:?}"))?;
     let mut clipboard_descriptor = CapabilityDescriptor::new(
@@ -5711,7 +6102,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\napp_accessibility_authority_block=ok\napp_accessibility_missing_target_block=ok\napp_accessibility_click=ok\napp_accessibility_set_text=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
@@ -6310,6 +6701,107 @@ mod tests {
         assert!(load_pc_pair_profile(&root, "other").is_err());
 
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn accessibility_commands_use_dedicated_scope_and_receipt_binding() {
+        let package = "ai.ntd97.mobile";
+        let view_id = "ai.ntd97.mobile:id/ntd_accessibility_probe_button";
+        let click =
+            governed_explicit_action_plan(&format!("accessibility click {package} {view_id}"))
+                .expect("click plan")
+                .expect("click action");
+        assert_eq!(
+            click.payloads.get(&1),
+            Some(&TypedAction::AppAction {
+                app: package.into(),
+                action: "accessibility.click".into(),
+                payload: format!("view_id\t{view_id}").into_bytes(),
+            })
+        );
+        let click_scopes = app_action_scope_names(&click).expect("click scopes");
+        assert_eq!(
+            click_scopes,
+            std::collections::BTreeSet::from(["app.accessibility.interact"])
+        );
+        let approval = external_write_approval(&click)
+            .expect("approval policy")
+            .expect("approval required");
+        assert_eq!(approval.0, "app.action");
+        assert!(approval.1.contains("accessibility.click"));
+        assert!(!approval.1.contains("NTD97-accessibility"));
+
+        let set_text = governed_explicit_action_plan(&format!(
+            "accessibility set text {package} ai.ntd97.mobile:id/ntd_accessibility_probe_text to NTD97-accessibility"
+        ))
+        .expect("set text plan")
+        .expect("set text action");
+        let set_text_action = set_text.payloads.get(&1).expect("set text payload");
+        let TypedAction::AppAction {
+            action, payload, ..
+        } = set_text_action
+        else {
+            panic!("expected app action");
+        };
+        assert_eq!(action, "accessibility.set_text");
+        let spec = parse_accessibility_action(action, payload).expect("accessibility spec");
+        assert_eq!(spec.selector_kind, "view_id");
+        assert_eq!(
+            spec.selector_value,
+            "ai.ntd97.mobile:id/ntd_accessibility_probe_text"
+        );
+        assert_eq!(spec.text_bytes, Some("NTD97-accessibility".len()));
+
+        let launch = governed_explicit_action_plan("open app ai.ntd97.mobile")
+            .expect("launch plan")
+            .expect("launch action");
+        assert_eq!(
+            app_action_scope_names(&launch).expect("launch scopes"),
+            std::collections::BTreeSet::from(["app.launch"])
+        );
+
+        let descriptor = CapabilityDescriptor::new(
+            CapabilityId("app.action".into()),
+            1,
+            CapabilityDomain::App,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("descriptor");
+        let expected_receipt = format!(
+            "accessibility:{action}:{package}:{}",
+            digest_hex(&sha256(payload))
+        );
+        let output = ActionOutput {
+            summary: "verified accessibility".into(),
+            value: ActionValue::Fields(BTreeMap::from([
+                ("package".into(), package.into()),
+                ("operation".into(), action.clone()),
+                ("selector_kind".into(), spec.selector_kind.clone()),
+                ("selector".into(), spec.selector_value.clone()),
+                (
+                    "text_bytes".into(),
+                    spec.text_bytes.expect("text bytes").to_string(),
+                ),
+                ("receipt".into(), expected_receipt.clone()),
+            ])),
+            evidence: vec![
+                "android-accessibility-interaction".into(),
+                format!("operation:{action}"),
+                expected_receipt.clone(),
+            ],
+        };
+        let mut verifier = AndroidProductionVerifier;
+        assert_eq!(
+            verifier.verify(&descriptor, set_text_action, &output),
+            ActionVerification::Accept
+        );
+
+        let mut rejected = output;
+        rejected.evidence.retain(|item| item != &expected_receipt);
+        assert!(matches!(
+            verifier.verify(&descriptor, set_text_action, &rejected),
+            ActionVerification::Reject { .. }
+        ));
     }
 
     #[test]
