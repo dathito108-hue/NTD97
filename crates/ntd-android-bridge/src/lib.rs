@@ -1048,6 +1048,28 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .iter()
                         .any(|item| item.starts_with("status:2"))
             }
+            ("web.search", TypedAction::WebSearch { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-opensearch")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("descriptor:https://"))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("response:https://"))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| {
+                            item.strip_prefix("results:")
+                                .and_then(|value| value.parse::<usize>().ok())
+                                .is_some_and(|count| count > 0)
+                        })
+            }
             ("file.read", TypedAction::FileRead { .. }) => {
                 output
                     .evidence
@@ -2060,6 +2082,7 @@ fn execute_android_verified_actions(
     } = context;
     let supported = [
         "device.observe",
+        "web.search",
         "web.fetch",
         "file.read",
         "file.write",
@@ -2093,6 +2116,21 @@ fn execute_android_verified_actions(
                 CapabilityDomain::Device,
                 SideEffectClass::ReadOnly,
             ),
+            "web.search" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("web.search".into()),
+                    1,
+                    CapabilityDomain::Web,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
             "web.fetch" => {
                 let mut descriptor = CapabilityDescriptor::new(
                     CapabilityId("web.fetch".into()),
@@ -2211,6 +2249,11 @@ fn execute_android_verified_actions(
                 },
             )
             .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("web.search") {
+        fabric
+            .register_adapter(CapabilityId("web.search".into()), AndroidWebSearchAdapter)
+            .map_err(|error| format!("register Android OpenSearch adapter: {error:?}"))?;
     }
     if fabric_capabilities.contains("web.fetch") {
         fabric
