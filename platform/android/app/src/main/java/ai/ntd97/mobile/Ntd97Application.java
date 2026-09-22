@@ -9,6 +9,7 @@ public final class Ntd97Application extends Application {
     public void onCreate() {
         super.onCreate();
         continuityStore = new NtdContinuityStore(this);
+        NtdPlatformCapabilityBridge.initialize(this);
         NtdNotificationController.ensureChannels(this);
         NtdRuntimeBootstrap.attachFirstLocalProvider(this);
     }
