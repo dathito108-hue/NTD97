@@ -310,6 +310,61 @@ final class NtdWebPlatform {
         }
     }
 
+    static boolean probeSearchCredentialHeaderForTest() {
+        if (!BuildConfig.DEBUG) {
+            return false;
+        }
+        SearchConfiguration configuration = searchConfiguration;
+        if (!configuration.hasCredential()) {
+            return false;
+        }
+        try {
+            HttpResult response = fetchSearchResponse(
+                    "https://httpbin.org/headers",
+                    configuration,
+                    "application/json");
+            Object root = new JSONTokener(
+                    new String(response.body, StandardCharsets.UTF_8)).nextValue();
+            if (!(root instanceof JSONObject)) {
+                return false;
+            }
+            JSONObject headers = ((JSONObject) root).optJSONObject("headers");
+            if (headers == null) {
+                return false;
+            }
+            String observed = null;
+            java.util.Iterator<String> names = headers.keys();
+            while (names.hasNext()) {
+                String name = names.next();
+                if (configuration.credentialHeaderName.equalsIgnoreCase(name)) {
+                    Object value = headers.opt(name);
+                    observed = value instanceof String ? (String) value : null;
+                    break;
+                }
+            }
+            return configuration.credentialHeaderValue.equals(observed);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    static boolean probeCredentialCrossOriginRedirectBlockForTest() {
+        if (!BuildConfig.DEBUG || !searchConfiguration.hasCredential()) {
+            return false;
+        }
+        try {
+            fetchSearchResponse(
+                    "https://httpbin.org/redirect-to?url=https%3A%2F%2Fexample.com%2F",
+                    searchConfiguration,
+                    "application/json");
+            return false;
+        } catch (IOException error) {
+            String message = error.getMessage();
+            return message != null
+                    && message.toLowerCase(Locale.ROOT).contains("cross-origin");
+        }
+    }
+
     static byte[] fetch(String rawUrl) {
         Future<byte[]> future = NETWORK_EXECUTOR.submit(() -> fetchBlocking(rawUrl));
         try {
