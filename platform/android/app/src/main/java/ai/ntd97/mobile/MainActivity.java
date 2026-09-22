@@ -171,6 +171,16 @@ public final class MainActivity extends Activity {
                         0,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         1.0f));
+
+        Button pairedPc = new Button(this);
+        pairedPc.setText("Paired PC");
+        pairedPc.setOnClickListener(view -> openPairedPcSettings());
+        actionRow.addView(
+                pairedPc,
+                new LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1.0f));
         controls.addView(actionRow);
 
         if (BuildConfig.DEBUG) {
@@ -564,6 +574,10 @@ public final class MainActivity extends Activity {
 
     private void openWebSearchSettings() {
         startActivity(new Intent(this, NtdWebSearchSettingsActivity.class));
+    }
+
+    private void openPairedPcSettings() {
+        startActivity(new Intent(this, NtdPairedPcSettingsActivity.class));
     }
 
     private void openAccessibilitySettings() {
