@@ -335,6 +335,123 @@ impl ActionVerifier for AndroidWebVerifier {
     }
 }
 
+fn decode_android_web_response(bytes: &[u8]) -> Result<AndroidWebResponse, String> {
+    let mut cursor = WebResponseCursor::new(bytes);
+    if cursor.take(WEB_RESPONSE_MAGIC.len())? != WEB_RESPONSE_MAGIC.as_slice() {
+        return Err("Android web response has invalid magic".into());
+    }
+    if cursor.u16()? != WEB_RESPONSE_VERSION {
+        return Err("Android web response has unsupported version".into());
+    }
+
+    let status = cursor.i32()?;
+    let redirects = cursor.u32()?;
+    if redirects > u32::try_from(WEB_FETCH_MAX_REDIRECTS).unwrap_or(u32::MAX) {
+        return Err("Android web response redirect count exceeds policy".into());
+    }
+    let final_url = cursor.string(4096)?;
+    let content_type = cursor.string(512)?;
+    let body = cursor.bytes(WEB_FETCH_MAX_BYTES)?;
+    let error = cursor.string(512)?;
+    if !cursor.is_finished() {
+        return Err("Android web response has trailing bytes".into());
+    }
+
+    if status == 0 {
+        if error.trim().is_empty() || !body.is_empty() {
+            return Err("Android web transport failure frame is non-canonical".into());
+        }
+    } else {
+        if !(100..=599).contains(&status) || !error.is_empty() {
+            return Err("Android web HTTP response frame is non-canonical".into());
+        }
+        if !(final_url.starts_with("http://") || final_url.starts_with("https://")) {
+            return Err("Android web response final URL is invalid".into());
+        }
+    }
+
+    Ok(AndroidWebResponse {
+        status,
+        redirects,
+        final_url,
+        content_type,
+        body,
+        error,
+    })
+}
+
+fn is_textual_content_type(content_type: &str) -> bool {
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    media_type.starts_with("text/")
+        || media_type.contains("json")
+        || media_type.contains("xml")
+        || media_type.contains("javascript")
+        || media_type == "application/x-www-form-urlencoded"
+}
+
+struct WebResponseCursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> WebResponseCursor<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8], String> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| "Android web response length overflow".to_owned())?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or_else(|| "Android web response is truncated".to_owned())?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn u16(&mut self) -> Result<u16, String> {
+        let value = self.take(2)?;
+        Ok(u16::from_le_bytes([value[0], value[1]]))
+    }
+
+    fn u32(&mut self) -> Result<u32, String> {
+        let value = self.take(4)?;
+        Ok(u32::from_le_bytes([
+            value[0], value[1], value[2], value[3],
+        ]))
+    }
+
+    fn i32(&mut self) -> Result<i32, String> {
+        Ok(i32::from_le_bytes(self.u32()?.to_le_bytes()))
+    }
+
+    fn bytes(&mut self, max_len: usize) -> Result<Vec<u8>, String> {
+        let len = usize::try_from(self.u32()?)
+            .map_err(|_| "Android web response length does not fit usize".to_owned())?;
+        if len > max_len {
+            return Err("Android web response field exceeds policy limit".into());
+        }
+        Ok(self.take(len)?.to_vec())
+    }
+
+    fn string(&mut self, max_len: usize) -> Result<String, String> {
+        let bytes = self.bytes(max_len)?;
+        String::from_utf8(bytes).map_err(|_| "Android web response contains invalid UTF-8".into())
+    }
+
+    fn is_finished(&self) -> bool {
+        self.offset == self.bytes.len()
+    }
+}
+
 struct AndroidResourceAdapter {
     snapshot: ResourceSnapshot,
 }
