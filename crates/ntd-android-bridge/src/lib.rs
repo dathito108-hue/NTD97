@@ -5172,6 +5172,127 @@ mod tests {
     }
 
     #[test]
+    fn governed_storage_and_upload_commands_materialize_canonical_actions() {
+        let read = governed_explicit_action_plan("read granted file shared/notes/read.txt")
+            .expect("read plan")
+            .expect("read action");
+        assert_eq!(
+            read.payloads.get(&1),
+            Some(&TypedAction::FileRead {
+                path: "shared\tnotes/read.txt".into(),
+            })
+        );
+
+        let write = governed_explicit_action_plan(
+            "write granted file shared/notes/write.txt to sovereign",
+        )
+        .expect("write plan")
+        .expect("write action");
+        assert_eq!(
+            write.payloads.get(&1),
+            Some(&TypedAction::FileWrite {
+                path: "shared\tnotes/write.txt".into(),
+                bytes: b"sovereign".to_vec(),
+            })
+        );
+        assert_eq!(
+            write.graph.actions[0].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+        let write_approval = external_write_approval(&write)
+            .expect("write approval")
+            .expect("write approval required");
+        assert_eq!(write_approval.0, "file.grant.write");
+
+        let upload = governed_explicit_action_plan(
+            "upload artifact https://example.com/upload from artifacts/report.bin",
+        )
+        .expect("upload plan")
+        .expect("upload action");
+        assert_eq!(
+            upload.payloads.get(&1),
+            Some(&TypedAction::ArtifactUpload {
+                url: "https://example.com/upload".into(),
+                path: "artifacts/report.bin".into(),
+            })
+        );
+        let upload_approval = external_write_approval(&upload)
+            .expect("upload approval")
+            .expect("upload approval required");
+        assert_eq!(upload_approval.0, "artifact.upload");
+        assert!(upload_approval.1.contains("idempotent HTTPS PUT"));
+    }
+
+    #[test]
+    fn production_verifier_requires_storage_and_upload_receipts() {
+        let mut verifier = AndroidProductionVerifier;
+        let grant_descriptor = CapabilityDescriptor::new(
+            CapabilityId("file.grant.write".into()),
+            1,
+            CapabilityDomain::File,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("grant descriptor");
+        let grant_action = TypedAction::FileWrite {
+            path: "shared\tnotes/out.txt".into(),
+            bytes: b"hello".to_vec(),
+        };
+        let grant_output = ActionOutput {
+            summary: "granted write".into(),
+            value: ActionValue::None,
+            evidence: vec![
+                "android-user-granted-file".into(),
+                "operation:write".into(),
+                "receipt:grant-write:shared:notes/out.txt:5:abcd".into(),
+            ],
+        };
+        assert_eq!(
+            verifier.verify(&grant_descriptor, &grant_action, &grant_output),
+            ActionVerification::Accept
+        );
+
+        let upload_descriptor = CapabilityDescriptor::new(
+            CapabilityId("artifact.upload".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("upload descriptor");
+        let upload_action = TypedAction::ArtifactUpload {
+            url: "https://example.com/upload".into(),
+            path: "artifacts/report.bin".into(),
+        };
+        let upload_output = ActionOutput {
+            summary: "uploaded".into(),
+            value: ActionValue::None,
+            evidence: vec![
+                "android-artifact-upload".into(),
+                "transport:https-put".into(),
+                "status:200".into(),
+                "sha256:0123456789abcdef".into(),
+            ],
+        };
+        assert_eq!(
+            verifier.verify(&upload_descriptor, &upload_action, &upload_output),
+            ActionVerification::Accept
+        );
+
+        let missing_hash = ActionOutput {
+            summary: "uploaded".into(),
+            value: ActionValue::None,
+            evidence: vec![
+                "android-artifact-upload".into(),
+                "transport:https-put".into(),
+                "status:200".into(),
+            ],
+        };
+        assert!(matches!(
+            verifier.verify(&upload_descriptor, &upload_action, &missing_hash),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
+    #[test]
     fn external_write_capabilities_require_scope_and_explicit_write_authority() {
         let clipboard_scope = AuthorityScope::new("device.clipboard.write").expect("scope");
         let mut clipboard = CapabilityDescriptor::new(
