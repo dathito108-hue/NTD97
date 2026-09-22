@@ -48,7 +48,6 @@ public final class NtdRealModelProbeActivity extends Activity {
             if (result.isEmpty()) {
                 result = "android_real_model=failed\nerror=empty native result\n";
             }
-            result = result + runChatApiProbe();
             pendingResult = result;
         } catch (Exception error) {
             String message = error.getMessage();
@@ -76,6 +75,21 @@ public final class NtdRealModelProbeActivity extends Activity {
 
     private void runProductionProbeAndFinish() {
         String result = pendingResult;
+        try {
+            result = result + runChatApiProbe();
+        } catch (Exception error) {
+            String message = error.getMessage();
+            if (message == null || message.isEmpty()) {
+                message = error.getClass().getSimpleName();
+            }
+            result = result
+                    + "chat_submit=failed\n"
+                    + "chat_external_approval=failed\n"
+                    + "chat_external_approval_detail=foreground-probe:"
+                    + message.replace('\n', ' ').replace('\r', ' ')
+                    + "\n";
+        }
+
         try {
             result = result + new String(
                     NtdNativeRuntimeHost.runProductionCapabilityProbe(this),
