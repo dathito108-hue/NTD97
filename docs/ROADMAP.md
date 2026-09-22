@@ -479,7 +479,13 @@ Current implementation:
 - remote capability discovery must exactly match the expected version, side-effect class and authority scope before a `PairedPcAdapter` is registered into production ActionFabric;
 - `pc.observe` and `pc.artifact.read` are read-only scoped actions; `pc.execute` and `pc.artifact.write` are ExternalWrite actions requiring explicit chat approval and dedicated scopes;
 - Android verifier only accepts PC outputs carrying bridge-added `pcf97-authenticated`, exact peer and exact remote-capability evidence after PCF97 request/result binding has passed; unpaired profiles and default external-write authority are required to fail closed in emulator acceptance;
-- Rust acceptance uses the production TCP connector and desktop agent loopback to prove mutual authentication, encrypted request/result exchange and typed remote observation without a mock ActionFabric adapter.
+- Rust acceptance uses the production TCP connector and desktop agent loopback to prove mutual authentication, encrypted request/result exchange and typed remote observation without a mock ActionFabric adapter;
+- production `app.action` now also supports accessibility-assisted `accessibility.click` and `accessibility.set_text` operations without introducing a second app-automation action type;
+- Android AccessibilityService remains user-controlled through system Accessibility Settings, uses `BIND_ACCESSIBILITY_SERVICE`, retrieves window content only for explicit commands and exposes no autonomous event-driven action loop;
+- accessibility interaction is restricted to the exact foreground package and a unique `view_id` selector; click requires a clickable node, set_text requires an editable node plus post-action text read-back, while missing/ambiguous selectors and package mismatch fail closed;
+- launch and accessibility authority are separated: launch requires `app.launch`, accessibility requires `app.accessibility.interact`, and both remain ExternalWrite actions gated by persisted chat approval/reconfirm semantics;
+- accessibility receipts bind exact package + operation + SHA-256 of the canonical payload without copying user-entered text into verifier evidence;
+- emulator acceptance first proves accessibility interaction fails closed while the service is disabled, then explicitly enables NTD97's service, executes a real Button click and EditText set_text through production ActionFabric, verifies native receipts and confirms the real UI effects.
 
 Still required before M13 completion:
 
@@ -487,7 +493,7 @@ Still required before M13 completion:
 - broader browser session persistence/navigation/form semantics beyond the initial fail-closed observe/click/set-value foundation;
 - successful SAF read/write acceptance on representative physical phones/providers, including grant revocation/reselection and provider-specific edge cases;
 - representative-phone process-death acceptance for resumable upload and SAF provider state, including retryable network loss after the durable TAF97 checkpoint;
-- accessibility-assisted app interaction remains fail-closed until its explicit-authority adapter is implemented;
+- representative-phone accessibility acceptance against third-party apps, including user enable/disable/revocation, package transitions and OEM accessibility-service behavior beyond the initial exact-view-id click/set_text foundation;
 - user-facing paired-PC provisioning/revocation UI and representative-phone pairing against a real desktop agent;
 - real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
 
