@@ -3110,6 +3110,20 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatVerif
 
 #[allow(unsafe_code)]
 #[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeResolveChatApproval(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+    approved: jboolean,
+) -> jboolean {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    u8::from(resolve_chat_approval(request_id, approved != 0).unwrap_or(false))
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeCancelChat(
     _env: JNIEnv<'_>,
     _class: JClass<'_>,
