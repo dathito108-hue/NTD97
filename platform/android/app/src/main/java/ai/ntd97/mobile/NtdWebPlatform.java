@@ -2,6 +2,9 @@ package ai.ntd97.mobile;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -18,6 +21,7 @@ import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -31,6 +35,10 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.net.ssl.HttpsURLConnection;
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -62,7 +70,11 @@ final class NtdWebPlatform {
     private static final String SEARCH_URL_PATH_KEY = "search-url-path";
     private static final String SEARCH_SNIPPET_PATH_KEY = "search-snippet-path";
     private static final String SEARCH_CREDENTIAL_HEADER_KEY = "search-credential-header";
-    private static final String SEARCH_CREDENTIAL_VALUE_KEY = "search-credential-value";
+    private static final String SEARCH_CREDENTIAL_VALUE_KEY = "search-credential-ciphertext";
+    private static final String SEARCH_CREDENTIAL_KEY_ALIAS =
+            "NTD97.WebSearchCredential.v1";
+    private static final String SEARCH_CREDENTIAL_CIPHER = "AES/GCM/NoPadding";
+    private static final int SEARCH_CREDENTIAL_GCM_TAG_BITS = 128;
     private static final int MAX_SEARCH_CREDENTIAL_BYTES = 4096;
     private static final int MAX_SEARCH_HEADER_NAME_BYTES = 64;
 
@@ -184,7 +196,7 @@ final class NtdWebPlatform {
                     value(preferences, SEARCH_URL_PATH_KEY),
                     value(preferences, SEARCH_SNIPPET_PATH_KEY),
                     value(preferences, SEARCH_CREDENTIAL_HEADER_KEY),
-                    rawValue(preferences, SEARCH_CREDENTIAL_VALUE_KEY));
+                    readSearchCredential(preferences));
             searchConfiguration = configuration;
         } catch (IOException ignored) {
             clearSearchPreferences(preferences);
@@ -255,6 +267,15 @@ final class NtdWebPlatform {
             return false;
         }
 
+        final String encryptedCredential;
+        try {
+            encryptedCredential = configuration.hasCredential()
+                    ? encryptSearchCredential(configuration.credentialHeaderValue)
+                    : "";
+        } catch (Exception error) {
+            return false;
+        }
+
         SharedPreferences.Editor editor = preferences.edit()
                 .putString(SEARCH_MODE_KEY, configuration.mode)
                 .putString(SEARCH_TEMPLATE_KEY, configuration.endpointTemplate)
@@ -267,10 +288,12 @@ final class NtdWebPlatform {
                 .putString(SEARCH_SNIPPET_PATH_KEY, configuration.snippetPath)
                 .putString(
                         SEARCH_CREDENTIAL_HEADER_KEY,
-                        configuration.credentialHeaderName)
-                .putString(
-                        SEARCH_CREDENTIAL_VALUE_KEY,
-                        configuration.credentialHeaderValue);
+                        configuration.credentialHeaderName);
+        if (configuration.hasCredential()) {
+            editor.putString(SEARCH_CREDENTIAL_VALUE_KEY, encryptedCredential);
+        } else {
+            editor.remove(SEARCH_CREDENTIAL_VALUE_KEY);
+        }
         if (!editor.commit()) {
             return false;
         }
@@ -1286,9 +1309,90 @@ final class NtdWebPlatform {
         return value == null ? "" : value.trim();
     }
 
-    private static String rawValue(SharedPreferences preferences, String key) {
-        String value = preferences.getString(key, "");
-        return value == null ? "" : value;
+    private static String readSearchCredential(SharedPreferences preferences)
+            throws IOException {
+        String encoded = preferences.getString(SEARCH_CREDENTIAL_VALUE_KEY, "");
+        if (encoded == null || encoded.isEmpty()) {
+            return "";
+        }
+        try {
+            byte[] blob = Base64.decode(encoded, Base64.NO_WRAP);
+            if (blob.length <= 12) {
+                throw new IOException("search credential ciphertext is invalid");
+            }
+            ByteBuffer buffer = ByteBuffer.wrap(blob).order(ByteOrder.BIG_ENDIAN);
+            int ivLength = Byte.toUnsignedInt(buffer.get());
+            if (ivLength < 12 || ivLength > 32 || buffer.remaining() <= ivLength) {
+                throw new IOException("search credential IV is invalid");
+            }
+            byte[] iv = new byte[ivLength];
+            buffer.get(iv);
+            byte[] ciphertext = new byte[buffer.remaining()];
+            buffer.get(ciphertext);
+
+            KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+            keyStore.load(null);
+            SecretKey key = (SecretKey) keyStore.getKey(SEARCH_CREDENTIAL_KEY_ALIAS, null);
+            if (key == null) {
+                throw new IOException("search credential key is unavailable");
+            }
+            Cipher cipher = Cipher.getInstance(SEARCH_CREDENTIAL_CIPHER);
+            cipher.init(
+                    Cipher.DECRYPT_MODE,
+                    key,
+                    new GCMParameterSpec(SEARCH_CREDENTIAL_GCM_TAG_BITS, iv));
+            byte[] plaintext = cipher.doFinal(ciphertext);
+            if (plaintext.length == 0 || plaintext.length > MAX_SEARCH_CREDENTIAL_BYTES) {
+                throw new IOException("search credential plaintext is invalid");
+            }
+            return new String(plaintext, StandardCharsets.UTF_8);
+        } catch (IOException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new IOException("search credential could not be decrypted", error);
+        }
+    }
+
+    private static String encryptSearchCredential(String value) throws Exception {
+        byte[] plaintext = value.getBytes(StandardCharsets.UTF_8);
+        if (plaintext.length == 0 || plaintext.length > MAX_SEARCH_CREDENTIAL_BYTES) {
+            throw new IOException("search credential plaintext is invalid");
+        }
+        SecretKey key = searchCredentialKey();
+        Cipher cipher = Cipher.getInstance(SEARCH_CREDENTIAL_CIPHER);
+        cipher.init(Cipher.ENCRYPT_MODE, key);
+        byte[] iv = cipher.getIV();
+        byte[] ciphertext = cipher.doFinal(plaintext);
+        if (iv == null || iv.length < 12 || iv.length > 32) {
+            throw new IOException("search credential IV is invalid");
+        }
+        ByteBuffer blob = ByteBuffer
+                .allocate(1 + iv.length + ciphertext.length)
+                .order(ByteOrder.BIG_ENDIAN);
+        blob.put((byte) iv.length);
+        blob.put(iv);
+        blob.put(ciphertext);
+        return Base64.encodeToString(blob.array(), Base64.NO_WRAP);
+    }
+
+    private static SecretKey searchCredentialKey() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+        keyStore.load(null);
+        java.security.Key existing = keyStore.getKey(SEARCH_CREDENTIAL_KEY_ALIAS, null);
+        if (existing instanceof SecretKey) {
+            return (SecretKey) existing;
+        }
+        KeyGenerator generator =
+                KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        generator.init(
+                new KeyGenParameterSpec.Builder(
+                                SEARCH_CREDENTIAL_KEY_ALIAS,
+                                KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                        .setRandomizedEncryptionRequired(true)
+                        .build());
+        return generator.generateKey();
     }
 
     private static void putBytes(ByteBuffer buffer, byte[] bytes) {
