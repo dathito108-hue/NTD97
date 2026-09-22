@@ -655,11 +655,14 @@ Assistant:"
 
         assert_eq!(result.evidence.len(), 1);
         assert_eq!(result.reports.len(), 1);
-        assert!(result.synthesis_prompt.contains("observed battery"));
+        assert_eq!(result.evidence[0].summary, "observed battery");
+        assert!(result.evidence[0]
+            .evidence
+            .iter()
+            .any(|item| item == "verified:device-local"));
+        assert!(result.synthesis_prompt.contains("device.observe"));
         assert!(result.synthesis_prompt.contains("battery=77"));
-        assert!(result
-            .synthesis_prompt
-            .contains("evidence: verified:device-local"));
+        assert!(!result.synthesis_prompt.contains("verified:device-local"));
     }
 
     struct RetryAdapter;
