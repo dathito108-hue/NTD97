@@ -2694,14 +2694,18 @@ fn terminal_chat_event(request_id: u64) -> Option<Vec<u8>> {
     match session.status {
         NativeChatSessionStatus::Running => None,
         NativeChatSessionStatus::WaitingApproval => {
-            let (capability, rationale, _) = guard
-                .conversation
-                .chat_approval_for_task(session.task_id)?;
-            Some(encode_chat_event(
-                CHAT_EVENT_APPROVAL_REQUIRED,
-                None,
-                &format!("{capability}\n{rationale}"),
-            ))
+            match guard.conversation.chat_approval_for_task(session.task_id) {
+                Some((capability, rationale, _)) => Some(encode_chat_event(
+                    CHAT_EVENT_APPROVAL_REQUIRED,
+                    None,
+                    &format!("{capability}\n{rationale}"),
+                )),
+                None => Some(encode_chat_event(
+                    CHAT_EVENT_ERROR,
+                    None,
+                    "pending approval state is missing",
+                )),
+            }
         }
         NativeChatSessionStatus::Complete => Some(encode_chat_event(CHAT_EVENT_COMPLETE, None, "")),
         NativeChatSessionStatus::Cancelled => {
