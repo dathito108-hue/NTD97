@@ -234,7 +234,7 @@ impl TypedAction {
         match self {
             Self::WebSearch { .. } | Self::WebFetch { .. } | Self::ArtifactDownload { .. } => {
                 CapabilityDomain::Web
-            },
+            }
             Self::BrowserObserve { .. } | Self::BrowserInteract { .. } => CapabilityDomain::Browser,
             Self::FileRead { .. } | Self::FileWrite { .. } => CapabilityDomain::File,
             Self::DeviceObserve { .. } | Self::DeviceInteract { .. } => CapabilityDomain::Device,
@@ -259,7 +259,7 @@ impl TypedAction {
             Self::ArtifactDownload { url, path } => {
                 nonempty(url)?;
                 nonempty(path)?;
-            },
+            }
             Self::BrowserObserve { target } => nonempty(target)?,
             Self::BrowserInteract {
                 target, operation, ..
