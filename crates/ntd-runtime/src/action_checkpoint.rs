@@ -12,7 +12,7 @@ use crate::{
 
 pub const TAF97_MAGIC: [u8; 6] = *b"TAF97\0";
 pub const TAF97_MAJOR: u16 = 0;
-pub const TAF97_MINOR: u16 = 3;
+pub const TAF97_MINOR: u16 = 4;
 pub const TAF97_HEADER_LEN: usize = 24;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -323,6 +323,11 @@ fn encode_typed_action(
             push_string(out, url)?;
             push_string(out, path)?;
         }
+        TypedAction::ArtifactUpload { url, path } => {
+            push_u8(out, 16);
+            push_string(out, url)?;
+            push_string(out, path)?;
+        }
     }
     Ok(())
 }
@@ -388,6 +393,10 @@ fn decode_typed_action(cursor: &mut Cursor<'_>) -> Result<TypedAction, ActionChe
             bytes: cursor.bytes()?.to_vec(),
         }),
         15 => Ok(TypedAction::ArtifactDownload {
+            url: cursor.string()?,
+            path: cursor.string()?,
+        }),
+        16 => Ok(TypedAction::ArtifactUpload {
             url: cursor.string()?,
             path: cursor.string()?,
         }),
@@ -789,6 +798,62 @@ mod tests {
                         resume_token: Some(vec![1, 2, 3, 4]),
                         rollback_token: None,
                         last_error: Some("download staged".into()),
+                    }],
+                },
+            )]),
+        };
+
+        let encoded = encode_action_fabric_checkpoint(&registry, &state).expect("encode");
+        assert_eq!(
+            decode_action_fabric_checkpoint(&registry, &encoded).expect("decode"),
+            state
+        );
+    }
+
+    #[test]
+    fn artifact_upload_round_trips_with_resume_state() {
+        let mut registry = CapabilityRegistry::new();
+        let mut descriptor = CapabilityDescriptor::new(
+            CapabilityId("artifact.upload".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("descriptor");
+        descriptor.resumable = true;
+        descriptor.required_scopes = vec![
+            AuthorityScope::new("network.write").expect("network scope"),
+            AuthorityScope::new("file.app_private").expect("file scope"),
+        ];
+        registry.register(descriptor).expect("register");
+
+        let state = ActionFabricState {
+            next_plan_id: 2,
+            next_action_id: 2,
+            plans: BTreeMap::from([(
+                1,
+                ActionPlanState {
+                    id: ActionPlanId(1),
+                    task_id: 17,
+                    cursor: 0,
+                    status: ActionPlanStatus::Suspended,
+                    actions: vec![PlannedAction {
+                        id: ActionId(1),
+                        node_id: 1,
+                        capability: CapabilityId("artifact.upload".into()),
+                        capability_version: 1,
+                        side_effect: SideEffectClass::ExternalWrite,
+                        verification_required: true,
+                        action: TypedAction::ArtifactUpload {
+                            url: "https://example.com/upload".into(),
+                            path: "artifacts/report.bin".into(),
+                        },
+                        status: ActionStatus::Suspended,
+                        attempts: 1,
+                        output: None,
+                        resume_token: Some(vec![1, 9, 7]),
+                        rollback_token: None,
+                        last_error: Some("upload prepared".into()),
                     }],
                 },
             )]),
