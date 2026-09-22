@@ -380,13 +380,20 @@ Current implementation:
 - selected reasoning budget, complexity/uncertainty signals and retained-memory count are persisted in cognitive world state and survive NCS97 restore;
 - the selected budget now drives the canonical CognitiveRuntime planner/executor/verifier loop before answer generation: Reflex=1, Standard=2, Deep=4, Recovery=3 verified NIR97 forward iterations;
 - each reasoning iteration extends a private scratch-token prefix from real native logits; scratch tokens are discarded before answer streaming while verified iteration evidence is persisted in NCS97 cognitive state;
-- Android real-model acceptance requires exact budget-to-iteration equality before and after NCS97 restore, adaptive reasoning selection, nonzero memory recall on an overlapping follow-up turn, cancellation and lifecycle/reboot regression.
+- Android real-model acceptance requires exact budget-to-iteration equality before and after NCS97 restore, adaptive reasoning selection, nonzero memory recall on an overlapping follow-up turn, cancellation and lifecycle/reboot regression;
+- strict native action protocol parsing now materializes canonical non-empty TaskGraph + TypedAction payloads only for allowlisted read-only actions; malformed, non-canonical, write or irreversible requests fail closed;
+- canonical action protocol text is persisted beside the cognitive task graph in NCS97 so typed payloads can be deterministically reconstructed after process death;
+- a hidden native planning pass runs after verified reasoning and records direct/actions/invalid outcome without exposing planner scratch output in the transcript;
+- Android production action execution currently supports model-grounded `device.observe` through the existing ActionFabric, a local ResourceSnapshot adapter and evidence-checking verifier;
+- generic verified-action coordination prepares the cognitive task through ActionFabric, refuses suspended/retryable/failed plans, and permits answer synthesis only from Completed plans whose actions are all Committed;
+- verified action results replace the active answer prompt only after evidence collection, while direct/invalid planner output creates no task-graph side effects;
+- Android acceptance checks fail-closed planner invariants and preserves planner/action evidence across NCS97 restore.
 
 Still required before M12 completion:
 
-- materialize model-grounded non-empty task graphs when governed actions are required;
-- synthesize final assistant answers from verified action results;
-- end-to-end offline acceptance covering native reasoning + memory + task graph + verified response in one user turn.
+- demonstrate a representative real native assistant model that emits a valid non-empty action protocol end-to-end rather than the current TinyStories fixture normally taking the direct/invalid fail-closed path;
+- extend production Android adapters beyond the initial safe read-only `device.observe` path as required by supported assistant tasks;
+- end-to-end offline acceptance covering native reasoning + memory + model-grounded TaskGraph + verified governed action + synthesized response in one user turn.
 
 Exit: the canonical APK can hold a useful local conversation, reason through the native model, remember relevant state and resume interrupted work without any external AI backend.
 

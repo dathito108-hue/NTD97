@@ -62,12 +62,12 @@ public final class NtdRealModelProbeActivity extends Activity {
     private String runChatApiProbe() throws IOException {
         NtdNativeRuntimeHost host = NtdNativeRuntimeHost.create(this);
         if (host == null || !host.chatReady()) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         long requestId = host.submitChat("Once upon a time", 4);
         if (requestId < 0) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         int tokenCount = 0;
@@ -82,7 +82,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 completed = true;
                 break;
             }
-            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         boolean statusOk = completed && tokenCount > 0 && host.chatStatus(requestId) == 2;
@@ -90,6 +90,8 @@ public final class NtdRealModelProbeActivity extends Activity {
         int firstIterations = host.chatReasoningIterations(requestId);
         boolean reasoningOk = firstBudget >= 1 && firstBudget <= 4;
         boolean reasoningLoopOk = firstIterations == expectedReasoningIterations(firstBudget);
+        boolean actionPlannerOk = actionPlannerStatusKnown(host, requestId);
+        boolean actionSafetyOk = actionPlannerInvariantHolds(host, requestId);
 
         long checkpointRequest = host.submitChat("Once upon a time resume this response", 4);
         boolean restoreOk = false;
@@ -104,6 +106,10 @@ public final class NtdRealModelProbeActivity extends Activity {
                 memoryOk = memoryItems > 0 && checkpointBudget >= 1 && checkpointBudget <= 4;
                 reasoningLoopOk = reasoningLoopOk
                         && checkpointIterations == expectedReasoningIterations(checkpointBudget);
+                actionPlannerOk = actionPlannerOk
+                        && actionPlannerStatusKnown(host, checkpointRequest);
+                actionSafetyOk = actionSafetyOk
+                        && actionPlannerInvariantHolds(host, checkpointRequest);
                 NtdRuntimeHost.ChatEvent first = host.nextChatEvent(checkpointRequest);
                 byte[] checkpoint = host.chatCheckpoint();
                 if (first.kind == NtdRuntimeHost.ChatEvent.TOKEN && checkpoint.length > 0) {
@@ -132,6 +138,8 @@ public final class NtdRealModelProbeActivity extends Activity {
                                 && restoredBudget <= 4
                                 && restoredIterations == expectedReasoningIterations(restoredBudget)
                                 && restoredMemory > 0
+                                && actionPlannerStatusKnown(host, restoredRequest)
+                                && actionPlannerInvariantHolds(host, restoredRequest)
                                 && host.chatTranscript().contains("resume this response");
                     }
                 }
@@ -150,11 +158,30 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_stream=" + (completed && tokenCount > 0 ? "ok" : "failed") + "\n"
                 + "chat_reasoning=" + (reasoningOk ? "ok" : "failed") + "\n"
                 + "chat_reasoning_loop=" + (reasoningLoopOk ? "ok" : "failed") + "\n"
+                + "chat_action_planner=" + (actionPlannerOk ? "ok" : "failed") + "\n"
+                + "chat_action_safety=" + (actionSafetyOk ? "ok" : "failed") + "\n"
                 + "chat_memory=" + (memoryOk ? "ok" : "failed") + "\n"
                 + "chat_restore=" + (restoreOk ? "ok" : "failed") + "\n"
                 + "chat_store=" + (storeOk ? "ok" : "failed") + "\n"
                 + "chat_cancel=" + (cancelOk ? "ok" : "failed") + "\n"
                 + "chat_status=" + (statusOk ? "ok" : "failed") + "\n";
+    }
+
+    private boolean actionPlannerStatusKnown(NtdRuntimeHost host, long requestId) {
+        int status = host.chatActionPlannerStatus(requestId);
+        return status >= 1 && status <= 3;
+    }
+
+    private boolean actionPlannerInvariantHolds(NtdRuntimeHost host, long requestId) {
+        int status = host.chatActionPlannerStatus(requestId);
+        int actionCount = host.chatActionCount(requestId);
+        int verifiedCount = host.chatVerifiedActionCount(requestId);
+        if (status == 2) {
+            return actionCount > 0 && verifiedCount == actionCount;
+        }
+        return (status == 1 || status == 3)
+                && actionCount == 0
+                && verifiedCount == 0;
     }
 
     private int expectedReasoningIterations(int budget) {
