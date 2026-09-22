@@ -56,6 +56,18 @@ M13 binds the pre-existing PCF97 fabric into the same production Android ActionF
 - read-only PC observation/artifact read never grants write authority; process execution and artifact write require the same sovereign ExternalWrite approval/reconfirm path as other M13 writes;
 - missing or invalid pairing profiles fail closed and do not fall back to a cloud or mock execution backend.
 
+## Phone-side pairing profile lifecycle
+
+M13 also exposes a user-facing Android provisioning surface for the production PCF97 profile already consumed by ActionFabric:
+
+- Java UI never writes `.pcp97` files directly; provisioning, describe, list and revoke all cross the native bridge and reuse the canonical Rust validator;
+- the phone signing seed is generated from the OS CSPRNG inside native code and remains only in app-private storage;
+- the UI receives only a public receipt containing the phone peer id and Ed25519 verify key for exchange with the desktop;
+- alias replacement is create-only: an existing alias must be explicitly revoked before a new identity can be installed, including under file-race conditions;
+- the target profile is created with filesystem no-replacement semantics (`create_new`), file + directory state are synced, then the canonical loader reloads and revalidates it before success is returned; any write/sync/reload mismatch rolls the target back;
+- list returns only profiles that still pass the canonical loader, while revoke rejects symlink/path escape and syncs the profile directory after removal;
+- provisioning a profile does not grant any PC execution authority; `pc.execute` and `pc.artifact.write` remain governed ExternalWrite actions requiring sovereign approval.
+
 ## Acceptance
 
 The block is covered by regression tests for:
@@ -70,6 +82,9 @@ The block is covered by regression tests for:
 - TAF97 paired-PC action checkpoint round-trip;
 - production TCP handshake codec and authenticated loopback action execution;
 - strict Android pairing-profile parsing and pinned-identity validation;
-- Android default-authority denial for PC execution and fail-closed missing-profile behavior.
+- Android default-authority denial for PC execution and fail-closed missing-profile behavior;
+- native provision/describe/list/revoke round-trip without exposing `local_seed`;
+- invalid socket address and mismatched pinned identity rejection;
+- emulator create/list/public-identity/revoke lifecycle against the real app-private profile path.
 
 Canonical Rust verification and the Android native/APK/lifecycle regression gate both passed before merge.

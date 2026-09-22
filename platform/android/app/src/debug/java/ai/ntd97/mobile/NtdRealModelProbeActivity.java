@@ -25,7 +25,8 @@ public final class NtdRealModelProbeActivity extends Activity {
     private static final String RUNTIME_ROOT = "ntd97-real-model";
     private static final String RESULT_FILE = "ntd97-real-model-probe.txt";
 
-    private static final int MAX_PRODUCTION_FOCUS_ATTEMPTS = 48;
+    private static final int MAX_PRODUCTION_FOCUS_ATTEMPTS = 120;
+    private static final int FOREGROUND_REASSERT_INTERVAL = 12;
     private static final long PRODUCTION_FOCUS_RETRY_MS = 250L;
     private static final long PRODUCTION_FOCUS_SETTLE_MS = 750L;
 
@@ -171,6 +172,12 @@ public final class NtdRealModelProbeActivity extends Activity {
             finish();
             return;
         }
+        if (chatFocusAttempts % FOREGROUND_REASSERT_INTERVAL == 0) {
+            Intent foreground = new Intent(this, NtdRealModelProbeActivity.class);
+            foreground.addFlags(
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(foreground);
+        }
         getWindow().getDecorView().postDelayed(
                 this::scheduleChatProbeWhenFocused,
                 PRODUCTION_FOCUS_RETRY_MS);
@@ -240,6 +247,12 @@ public final class NtdRealModelProbeActivity extends Activity {
             finish();
             return;
         }
+        if (productionFocusAttempts % FOREGROUND_REASSERT_INTERVAL == 0) {
+            Intent foreground = new Intent(this, NtdRealModelProbeActivity.class);
+            foreground.addFlags(
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(foreground);
+        }
         getWindow().getDecorView().postDelayed(
                 this::scheduleProductionCapabilityProbe,
                 PRODUCTION_FOCUS_RETRY_MS);
@@ -297,6 +310,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                     throw new IOException("accessibility UI effect verification failed");
                 }
                 result = result + "app_accessibility_ui_effect=ok\n";
+                result = result + runPairedPcProvisioningProbe();
             } catch (Exception error) {
                 String message = error.getMessage();
                 if (message == null || message.isEmpty()) {
@@ -315,6 +329,89 @@ public final class NtdRealModelProbeActivity extends Activity {
         }, "ntd97-production-capabilities");
         probeThread.setDaemon(true);
         probeThread.start();
+    }
+
+    private String runPairedPcProvisioningProbe() throws IOException {
+        final String alias = "ci-workstation";
+        final String remotePeerId = "5bb32dad65c4ac01f19a986e6ec3cdda";
+        final String remoteVerifyKey =
+                "d4eec1869fb1b8a4e817516ad5a931557cb56805c3eb16e8f3a803d647df7869";
+        String existing = NtdNativeRuntimeHost.listPcPairs(this);
+        if (existing.startsWith("ERROR:")) {
+            throw new IOException("paired-PC list before provision failed: " + existing);
+        }
+        if (Arrays.asList(existing.split("\\n")).contains(alias)) {
+            String cleanup = NtdNativeRuntimeHost.revokePcPair(this, alias);
+            if (!"OK".equals(cleanup)) {
+                throw new IOException("paired-PC stale profile cleanup failed: " + cleanup);
+            }
+        }
+
+        String receipt = NtdNativeRuntimeHost.provisionPcPair(
+                this,
+                alias,
+                "127.0.0.1:45970",
+                remotePeerId,
+                remoteVerifyKey);
+        if (receipt.startsWith("ERROR:")) {
+            throw new IOException(
+                    "paired-PC provision failed: " + safeDiagnostic(receipt));
+        }
+        boolean receiptPrefix = receipt.startsWith("NTD97_PC_PAIR_RECEIPT_V1\n");
+        boolean receiptPeerId = receipt.contains("local_peer_id=");
+        boolean receiptVerifyKey = receipt.contains("local_verify_key=");
+        boolean receiptSecret = receipt.contains("local_seed");
+        if (!receiptPrefix || receiptSecret || !receiptPeerId || !receiptVerifyKey) {
+            throw new IOException(
+                    "paired-PC public provisioning receipt framing invalid"
+                            + " length=" + receipt.length()
+                            + " prefix=" + receiptPrefix
+                            + " peer_id=" + receiptPeerId
+                            + " verify_key=" + receiptVerifyKey
+                            + " secret=" + receiptSecret);
+        }
+
+        File profile = new File(
+                new File(new File(getFilesDir(), "ntd97-capability-files"), "pc-pairs"),
+                alias + ".pcp97");
+        if (!profile.isFile()) {
+            throw new IOException("paired-PC profile was not committed");
+        }
+
+        String listed = NtdNativeRuntimeHost.listPcPairs(this);
+        if (listed.startsWith("ERROR:")
+                || !Arrays.asList(listed.split("\\n")).contains(alias)) {
+            throw new IOException("paired-PC profile did not appear in native list");
+        }
+        String described = NtdNativeRuntimeHost.describePcPair(this, alias);
+        if (!receipt.equals(described) || described.contains("local_seed")) {
+            throw new IOException("paired-PC public identity describe mismatch");
+        }
+
+        String duplicate = NtdNativeRuntimeHost.provisionPcPair(
+                this,
+                alias,
+                "127.0.0.1:45970",
+                remotePeerId,
+                remoteVerifyKey);
+        if (!duplicate.startsWith("ERROR:")) {
+            throw new IOException("paired-PC duplicate alias replacement was not denied");
+        }
+
+        String revoke = NtdNativeRuntimeHost.revokePcPair(this, alias);
+        if (!"OK".equals(revoke)) {
+            throw new IOException("paired-PC revoke failed: " + revoke);
+        }
+        String after = NtdNativeRuntimeHost.listPcPairs(this);
+        if (after.startsWith("ERROR:")
+                || Arrays.asList(after.split("\\n")).contains(alias)
+                || profile.exists()) {
+            throw new IOException("paired-PC revoked profile remained active");
+        }
+
+        return "pc_pair_provision=ok\n"
+                + "pc_pair_public_identity=ok\n"
+                + "pc_pair_revoke=ok\n";
     }
 
     private String runChatApiProbe() throws IOException {

@@ -480,6 +480,11 @@ Current implementation:
 - `pc.observe` and `pc.artifact.read` are read-only scoped actions; `pc.execute` and `pc.artifact.write` are ExternalWrite actions requiring explicit chat approval and dedicated scopes;
 - Android verifier only accepts PC outputs carrying bridge-added `pcf97-authenticated`, exact peer and exact remote-capability evidence after PCF97 request/result binding has passed; unpaired profiles and default external-write authority are required to fail closed in emulator acceptance;
 - Rust acceptance uses the production TCP connector and desktop agent loopback to prove mutual authentication, encrypted request/result exchange and typed remote observation without a mock ActionFabric adapter;
+- Android now exposes a user-facing paired-PC settings surface backed by native provision/describe/list/revoke operations over the exact production `.pcp97` profile format; Java never writes or parses the secret-bearing profile directly;
+- phone signing seeds are generated from OS CSPRNG inside native code, stored only under app-private capability storage and never returned to Java; the UI receives only the phone public peer id + verify key receipt needed by the desktop;
+- paired aliases are create-only until explicit revoke using race-safe filesystem no-replacement creation; profile bytes and directory state are synced, reloaded through the production validator and only then reported successful, with rollback on write/sync/reload failure;
+- profile provisioning does not confer execution authority: `pc.execute` and `pc.artifact.write` remain ExternalWrite operations gated by their existing scopes, persisted chat approval and reconfirm semantics;
+- emulator acceptance provisions a real app-private PC profile through JNI, verifies public identity retrieval without `local_seed`, lists the alias, rejects implicit replacement, revokes it and proves the profile is gone;
 - production `app.action` now also supports accessibility-assisted `accessibility.click` and `accessibility.set_text` operations without introducing a second app-automation action type;
 - Android AccessibilityService remains user-controlled through system Accessibility Settings, uses `BIND_ACCESSIBILITY_SERVICE`, retrieves window content only for explicit commands and exposes no autonomous event-driven action loop;
 - accessibility interaction is restricted to the exact foreground package and a unique `view_id` selector; click requires a clickable node, set_text requires an editable node plus post-action text read-back, while missing/ambiguous selectors and package mismatch fail closed;
@@ -500,7 +505,7 @@ Still required before M13 completion:
 - successful SAF read/write acceptance on representative physical phones/providers, including grant revocation/reselection and provider-specific edge cases;
 - representative-phone process-death acceptance for resumable upload and SAF provider state, including retryable network loss after the durable TAF97 checkpoint;
 - representative-phone accessibility acceptance against third-party apps, including user enable/disable/revocation, package transitions and OEM accessibility-service behavior beyond the initial exact-view-id click/set_text foundation;
-- user-facing paired-PC provisioning/revocation UI and representative-phone pairing against a real desktop agent;
+- representative-phone paired-PC provisioning against a real desktop agent, including public-identity exchange, reconnect and revoke/re-pair behavior;
 - real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
 
 Exit: NTD97 can complete useful multi-surface tasks on a real phone with verifiable results and no mock adapter in the canonical path.

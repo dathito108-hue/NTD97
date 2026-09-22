@@ -113,6 +113,9 @@ for REQUIRED in \
   storage_grant_write_missing_block=ok \
   pc_pair_missing_block=ok \
   pc_execute_authority_block=ok \
+  pc_pair_provision=ok \
+  pc_pair_public_identity=ok \
+  pc_pair_revoke=ok \
   artifact_download_suspend=ok \
   artifact_download_resume=ok \
   artifact_download_rollback=ok \
