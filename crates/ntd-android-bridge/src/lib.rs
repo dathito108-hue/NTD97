@@ -2678,7 +2678,10 @@ fn execute_android_verified_actions(
         "browser.interact",
         "file.read",
         "file.write",
+        "file.grant.read",
+        "file.grant.write",
         "artifact.download",
+        "artifact.upload",
         "device.interact",
         "app.action",
     ];
@@ -2787,6 +2790,36 @@ fn execute_android_verified_actions(
                 }
                 descriptor
             }
+            "file.grant.read" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("file.grant.read".into()),
+                    1,
+                    CapabilityDomain::File,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.user_grant.read")
+                            .map_err(|error| format!("granted file read scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "file.grant.write" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("file.grant.write".into()),
+                    1,
+                    CapabilityDomain::File,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.user_grant.write")
+                            .map_err(|error| format!("granted file write scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
             "file.write" => {
                 let mut descriptor = CapabilityDescriptor::new(
                     CapabilityId("file.write".into()),
@@ -2816,6 +2849,26 @@ fn execute_android_verified_actions(
                     descriptor.required_scopes.push(
                         AuthorityScope::new("network.read")
                             .map_err(|error| format!("network scope: {error:?}"))?,
+                    );
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.app_private")
+                            .map_err(|error| format!("file scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "artifact.upload" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("artifact.upload".into()),
+                    1,
+                    CapabilityDomain::Web,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.resumable = true;
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("network.write")
+                            .map_err(|error| format!("network write scope: {error:?}"))?,
                     );
                     descriptor.required_scopes.push(
                         AuthorityScope::new("file.app_private")
@@ -2902,6 +2955,22 @@ fn execute_android_verified_actions(
             )
             .map_err(|error| format!("register Android browser interaction adapter: {error:?}"))?;
     }
+    if fabric_capabilities.contains("file.grant.read") {
+        fabric
+            .register_adapter(
+                CapabilityId("file.grant.read".into()),
+                AndroidUserGrantedFileAdapter,
+            )
+            .map_err(|error| format!("register user-granted file.read adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("file.grant.write") {
+        fabric
+            .register_adapter(
+                CapabilityId("file.grant.write".into()),
+                AndroidUserGrantedFileAdapter,
+            )
+            .map_err(|error| format!("register user-granted file.write adapter: {error:?}"))?;
+    }
     if fabric_capabilities.contains("file.read") || fabric_capabilities.contains("file.write") {
         let adapter = AndroidScopedFileAdapter::new(model.capability_root.clone())?;
         if fabric_capabilities.contains("file.read") {
@@ -2922,6 +2991,14 @@ fn execute_android_verified_actions(
                 AndroidArtifactDownloadAdapter::new(model.capability_root.clone())?,
             )
             .map_err(|error| format!("register artifact download adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("artifact.upload") {
+        fabric
+            .register_adapter(
+                CapabilityId("artifact.upload".into()),
+                AndroidArtifactUploadAdapter::new(model.capability_root.clone())?,
+            )
+            .map_err(|error| format!("register artifact upload adapter: {error:?}"))?;
     }
     if fabric_capabilities.contains("device.interact") {
         fabric
@@ -2952,6 +3029,12 @@ fn execute_android_verified_actions(
                 .map_err(|error| format!("browser observe authority scope: {error:?}"))?,
         );
     }
+    if fabric_capabilities.contains("file.grant.read") {
+        authority = authority.with_scope(
+            AuthorityScope::new("file.user_grant.read")
+                .map_err(|error| format!("granted file read authority scope: {error:?}"))?,
+        );
+    }
     if action_plan
         .graph
         .actions
@@ -2962,6 +3045,18 @@ fn execute_android_verified_actions(
             return Err("external-write action requires explicit chat approval".into());
         }
         authority.allow_external_write = true;
+        if fabric_capabilities.contains("artifact.upload") {
+            authority = authority.with_scope(
+                AuthorityScope::new("network.write")
+                    .map_err(|error| format!("network write authority scope: {error:?}"))?,
+            );
+        }
+        if fabric_capabilities.contains("file.grant.write") {
+            authority = authority.with_scope(
+                AuthorityScope::new("file.user_grant.write")
+                    .map_err(|error| format!("granted file write authority scope: {error:?}"))?,
+            );
+        }
         if fabric_capabilities.contains("browser.interact") {
             authority = authority.with_scope(
                 AuthorityScope::new("browser.interact")
