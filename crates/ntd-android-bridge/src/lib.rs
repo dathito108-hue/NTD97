@@ -5314,7 +5314,10 @@ mod tests {
             value: ActionValue::Fields(BTreeMap::from([
                 ("url".into(), "https://example.com/upload".into()),
                 ("status".into(), "200".into()),
-                ("sha256".into(), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()),
+                (
+                    "sha256".into(),
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+                ),
                 ("bytes".into(), "5".into()),
             ])),
             evidence: vec![
@@ -5336,7 +5339,10 @@ mod tests {
             value: ActionValue::Fields(BTreeMap::from([
                 ("url".into(), "https://example.com/upload".into()),
                 ("status".into(), "200".into()),
-                ("sha256".into(), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()),
+                (
+                    "sha256".into(),
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+                ),
                 ("bytes".into(), "5".into()),
             ])),
             evidence: vec![
