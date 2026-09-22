@@ -99,6 +99,10 @@ public interface NtdRuntimeHost {
         return 0;
     }
 
+    default boolean chatVerifiedSynthesisReady(long requestId) {
+        return false;
+    }
+
     default byte[] chatCheckpoint() {
         return new byte[0];
     }
