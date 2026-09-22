@@ -269,6 +269,12 @@ impl ActionVerifier for ProductionWebVerifier {
             };
         }
 
+        if !output.evidence.iter().any(|item| item == "web.receipt.v1") {
+            return ActionVerification::Reject {
+                reason: "missing production web receipt marker".into(),
+            };
+        }
+
         let status = evidence_value(&output.evidence, "status")
             .and_then(|value| value.parse::<u16>().ok());
         let Some(status) = status else {
@@ -716,6 +722,59 @@ mod tests {
             verifier.verify(&descriptor("web.search"), &action, &output),
             ActionVerification::Accept
         );
+    }
+
+    #[test]
+    fn action_fabric_denies_without_network_scope_then_commits_with_authority() {
+        use ntd_runtime::{
+            ActionFabric, ActionNode, ActionPlanStatus, AuthorityGrant, AuthorityScope,
+            CapabilityRegistry, TaskGraph,
+        };
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let endpoint = local_server("<html><body>Governed web</body></html>", Arc::clone(&calls));
+        let capability = CapabilityId("web.fetch".into());
+
+        let mut web_descriptor = descriptor("web.fetch");
+        web_descriptor
+            .required_scopes
+            .push(AuthorityScope::new("network.read").expect("scope"));
+        let mut registry = CapabilityRegistry::new();
+        registry.register(web_descriptor).expect("register");
+
+        let mut fabric = ActionFabric::new(registry);
+        fabric
+            .register_adapter(
+                capability.clone(),
+                ProductionWebAdapter::new(test_config(endpoint.clone())).expect("adapter"),
+            )
+            .expect("adapter register");
+        let graph = TaskGraph {
+            actions: vec![ActionNode {
+                id: 1,
+                capability: capability.clone(),
+                side_effect: SideEffectClass::ReadOnly,
+                verification_required: true,
+            }],
+        };
+        let action = TypedAction::WebFetch { url: endpoint };
+        let plan = fabric
+            .prepare_plan(77, &graph, BTreeMap::from([(1, action)]))
+            .expect("prepare");
+        let mut verifier = ProductionWebVerifier;
+
+        assert!(fabric
+            .execute_next(plan, &AuthorityGrant::new(), &mut verifier)
+            .is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let authority = AuthorityGrant::new()
+            .with_scope(AuthorityScope::new("network.read").expect("scope"));
+        let report = fabric
+            .execute_next(plan, &authority, &mut verifier)
+            .expect("execute");
+        assert_eq!(report.plan_status, ActionPlanStatus::Completed);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
