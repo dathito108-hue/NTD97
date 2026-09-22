@@ -223,6 +223,7 @@ public final class NtdRealModelProbeActivity extends Activity {
         boolean storeOk = false;
         boolean memoryOk = false;
         int checkpointMemoryItems = 0;
+        int checkpointMemoryRecords = 0;
         int checkpointBudget = 0;
         int checkpointIterations = 0;
         int checkpointFirstKind = 0;
@@ -231,16 +232,16 @@ public final class NtdRealModelProbeActivity extends Activity {
         int restoredBudget = 0;
         int restoredIterations = 0;
         int restoredMemory = 0;
+        int restoredMemoryRecords = 0;
         int restoredStatus = 0;
         NtdConversationStore store = new NtdConversationStore(this);
         try {
             if (checkpointRequest >= 0) {
                 checkpointMemoryItems = host.chatRecalledMemoryItems(checkpointRequest);
+                checkpointMemoryRecords = host.chatMemoryRecordCount(checkpointRequest);
                 checkpointBudget = host.chatReasoningBudget(checkpointRequest);
                 checkpointIterations = host.chatReasoningIterations(checkpointRequest);
-                memoryOk = checkpointMemoryItems > 0
-                        && checkpointBudget >= 1
-                        && checkpointBudget <= 4;
+                memoryOk = checkpointMemoryRecords > 0;
                 reasoningLoopOk = reasoningLoopOk
                         && checkpointIterations == expectedReasoningIterations(checkpointBudget);
                 actionPlannerOk = actionPlannerOk
@@ -272,13 +273,15 @@ public final class NtdRealModelProbeActivity extends Activity {
                         restoredBudget = host.chatReasoningBudget(restoredRequest);
                         restoredIterations = host.chatReasoningIterations(restoredRequest);
                         restoredMemory = host.chatRecalledMemoryItems(restoredRequest);
+                        restoredMemoryRecords = host.chatMemoryRecordCount(restoredRequest);
                         restoredStatus = host.chatStatus(restoredRequest);
                         restoreOk = restoredComplete
                                 && restoredStatus == 2
                                 && restoredBudget >= 1
                                 && restoredBudget <= 4
                                 && restoredIterations == expectedReasoningIterations(restoredBudget)
-                                && restoredMemory > 0
+                                && restoredMemoryRecords > 0
+                                && restoredMemoryRecords == checkpointMemoryRecords
                                 && actionPlannerStatusKnown(host, restoredRequest)
                                 && actionPlannerInvariantHolds(host, restoredRequest)
                                 && host.chatTranscript().contains("Once resume this response");
@@ -360,6 +363,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "governed_final_status=" + governedFinalStatus + "\n"
                 + "checkpoint_request_id=" + checkpointRequest + "\n"
                 + "checkpoint_memory_items=" + checkpointMemoryItems + "\n"
+                + "checkpoint_memory_records=" + checkpointMemoryRecords + "\n"
                 + "checkpoint_budget=" + checkpointBudget + "\n"
                 + "checkpoint_iterations=" + checkpointIterations + "\n"
                 + "checkpoint_first_kind=" + checkpointFirstKind + "\n"
@@ -368,6 +372,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "restored_budget=" + restoredBudget + "\n"
                 + "restored_iterations=" + restoredIterations + "\n"
                 + "restored_memory_items=" + restoredMemory + "\n"
+                + "restored_memory_records=" + restoredMemoryRecords + "\n"
                 + "restored_status=" + restoredStatus + "\n"
                 + "chat_memory=" + (memoryOk ? "ok" : "failed") + "\n"
                 + "chat_restore=" + (restoreOk ? "ok" : "failed") + "\n"
