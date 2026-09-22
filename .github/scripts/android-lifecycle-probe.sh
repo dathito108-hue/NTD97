@@ -72,6 +72,9 @@ for REQUIRED in \
   file_write=ok \
   file_read=ok \
   file_rollback=ok \
+  artifact_download_suspend=ok \
+  artifact_download_resume=ok \
+  artifact_download_rollback=ok \
   device_clipboard_authority_block=ok \
   device_clipboard_write=ok \
   app_launch_authority_block=ok \
