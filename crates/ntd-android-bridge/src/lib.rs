@@ -736,7 +736,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         return Err("max_new_tokens must be greater than zero".into());
     }
 
-    let (model, history, prior_failure, resources) = {
+    let (model, history, prior_failure, resources, platform_vm) = {
         let mut guard = lock_state();
         if guard.chat_submit_in_progress
             || guard
@@ -756,6 +756,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
             guard.conversation.turns().to_vec(),
             guard.conversation.prior_conversation_failure(),
             guard.resources,
+            guard.platform_vm.clone(),
         )
     };
 
@@ -764,6 +765,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         &history,
         prior_failure,
         resources,
+        platform_vm,
         user_message,
         max_new_tokens,
     );
@@ -989,6 +991,7 @@ fn execute_android_verified_actions(
     user_message: &str,
     prompt_limit: usize,
     resources: ResourceSnapshot,
+    platform_vm: Option<Arc<JavaVM>>,
     action_plan: &AssistantActionPlan,
 ) -> Result<(), String> {
     if action_plan
@@ -1074,6 +1077,7 @@ fn submit_chat_reserved(
     history: &[ntd_runtime::ConversationTurn],
     prior_failure: bool,
     resources: ResourceSnapshot,
+    platform_vm: Option<Arc<JavaVM>>,
     user_message: &str,
     max_new_tokens: usize,
 ) -> Result<u64, String> {
@@ -1193,6 +1197,7 @@ fn submit_chat_reserved(
                 user_message,
                 prompt_limit,
                 resources,
+                platform_vm.clone(),
                 &action_plan,
             )?;
         }
@@ -1686,6 +1691,9 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeSubmitCha
     let Ok(max_new_tokens) = usize::try_from(max_new_tokens) else {
         return -1;
     };
+    if let Ok(vm) = env.get_java_vm() {
+        lock_state().platform_vm = Some(Arc::new(vm));
+    }
     submit_chat(&prompt, max_new_tokens)
         .ok()
         .and_then(|request_id| i64::try_from(request_id).ok())
