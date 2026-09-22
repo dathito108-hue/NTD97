@@ -2264,6 +2264,126 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatTrans
     java_bytes(&env, chat_transcript().as_bytes())
 }
 
+fn android_web_fetch_probe(url: &str, expected_sha256: &str) -> Result<String, String> {
+    if expected_sha256.len() != 64
+        || !expected_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("expected web fixture SHA-256 is invalid".into());
+    }
+    let bridge = lock_state()
+        .platform_web
+        .clone()
+        .ok_or_else(|| "Android web transport is not installed".to_owned())?;
+
+    let canonical = format!("{NATIVE_ACTION_PROTOCOL_V1}\n1|web.fetch|{url}\nEND");
+    let action_plan = match parse_native_action_plan(&canonical)
+        .map_err(|error| format!("parse web fetch probe plan: {error:?}"))?
+    {
+        AssistantPlanDecision::Actions(plan) => plan,
+        AssistantPlanDecision::Direct => return Err("web fetch probe became DIRECT".into()),
+    };
+
+    let mut descriptor = CapabilityDescriptor::new(
+        CapabilityId("web.fetch".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("build web.fetch descriptor: {error:?}"))?;
+    descriptor.required_scopes.push(
+        AuthorityScope::new("network.read")
+            .map_err(|error| format!("build network.read scope: {error:?}"))?,
+    );
+    let mut registry = CapabilityRegistry::new();
+    registry
+        .register(descriptor)
+        .map_err(|error| format!("register web.fetch probe capability: {error:?}"))?;
+    let mut fabric = ActionFabric::new(registry);
+    fabric
+        .register_adapter(
+            CapabilityId("web.fetch".into()),
+            AndroidWebFetchAdapter { bridge },
+        )
+        .map_err(|error| format!("register web.fetch probe adapter: {error:?}"))?;
+    let plan_id = fabric
+        .prepare_plan(1, &action_plan.graph, action_plan.payloads)
+        .map_err(|error| format!("prepare web.fetch probe plan: {error:?}"))?;
+    let authority = AuthorityGrant::new().with_scope(
+        AuthorityScope::new("network.read")
+            .map_err(|error| format!("grant network.read probe scope: {error:?}"))?,
+    );
+    let report = fabric
+        .execute_next(plan_id, &authority, &mut AndroidWebVerifier)
+        .map_err(|error| format!("execute web.fetch probe: {error:?}"))?;
+    if report.plan_status != ntd_runtime::ActionPlanStatus::Completed
+        || report.action_status != Some(ntd_runtime::ActionStatus::Committed)
+    {
+        return Err(format!(
+            "web.fetch probe did not commit: plan={:?} action={:?}",
+            report.plan_status, report.action_status
+        ));
+    }
+
+    let plan = fabric
+        .state()
+        .plans
+        .get(&plan_id.0)
+        .ok_or_else(|| "web.fetch probe plan disappeared".to_owned())?;
+    let output = plan
+        .actions
+        .first()
+        .and_then(|action| action.output.as_ref())
+        .ok_or_else(|| "web.fetch probe has no verified output".to_owned())?;
+    let evidence = output
+        .evidence
+        .iter()
+        .filter_map(|item| item.split_once('='))
+        .collect::<BTreeMap<_, _>>();
+    if evidence.get("sha256") != Some(&expected_sha256) {
+        return Err(format!(
+            "web.fetch probe digest mismatch: expected={expected_sha256} actual={}",
+            evidence.get("sha256").copied().unwrap_or("missing")
+        ));
+    }
+
+    Ok(format!(
+        "web_fetch=PASS\nweb_fetch_status={}\nweb_fetch_bytes={}\nweb_fetch_sha256={}\nweb_fetch_redirects={}\n",
+        evidence.get("http_status").copied().unwrap_or("missing"),
+        evidence.get("bytes").copied().unwrap_or("missing"),
+        evidence.get("sha256").copied().unwrap_or("missing"),
+        evidence.get("redirects").copied().unwrap_or("missing"),
+    ))
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeWebFetchProbe(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    url: JString<'_>,
+    expected_sha256: JString<'_>,
+) -> jbyteArray {
+    let Some(url) = java_string(&mut env, &url) else {
+        return java_bytes(&env, b"web_fetch=failed\nerror=invalid URL\n");
+    };
+    let Some(expected_sha256) = java_string(&mut env, &expected_sha256) else {
+        return java_bytes(
+            &env,
+            b"web_fetch=failed\nerror=invalid expected digest\n",
+        );
+    };
+
+    match android_web_fetch_probe(&url, &expected_sha256) {
+        Ok(result) => java_bytes(&env, result.as_bytes()),
+        Err(error) => java_bytes(
+            &env,
+            format!("web_fetch=failed\nerror={error}\n").as_bytes(),
+        ),
+    }
+}
+
 fn real_model_probe(
     capsule_path: &str,
     shard_root: &str,
