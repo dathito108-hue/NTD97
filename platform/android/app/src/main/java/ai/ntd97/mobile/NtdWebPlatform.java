@@ -637,11 +637,25 @@ final class NtdWebPlatform {
             String template,
             String encodedQuery,
             int maxResults) throws IOException {
+        String language = URLEncoder.encode(
+                                Locale.getDefault().toLanguageTag(),
+                                StandardCharsets.UTF_8.name())
+                        .replace("+", "%20");
         String rendered = template
                 .replace("{searchTerms}", encodedQuery)
                 .replace("{searchTerms?}", encodedQuery)
                 .replace("{count}", Integer.toString(maxResults))
-                .replace("{count?}", Integer.toString(maxResults));
+                .replace("{count?}", Integer.toString(maxResults))
+                .replace("{startIndex}", "0")
+                .replace("{startIndex?}", "0")
+                .replace("{startPage}", "1")
+                .replace("{startPage?}", "1")
+                .replace("{language}", language)
+                .replace("{language?}", language)
+                .replace("{inputEncoding}", "UTF-8")
+                .replace("{inputEncoding?}", "UTF-8")
+                .replace("{outputEncoding}", "UTF-8")
+                .replace("{outputEncoding?}", "UTF-8");
         if (rendered.indexOf('{') >= 0 || rendered.indexOf('}') >= 0) {
             throw new IOException("OpenSearch template contains unsupported parameters");
         }
