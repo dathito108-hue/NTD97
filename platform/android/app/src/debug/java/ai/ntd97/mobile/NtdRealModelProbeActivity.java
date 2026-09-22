@@ -4,6 +4,12 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.res.AssetManager;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -23,6 +29,9 @@ public final class NtdRealModelProbeActivity extends Activity {
     private static final long PRODUCTION_FOCUS_RETRY_MS = 250L;
     private static final long PRODUCTION_FOCUS_SETTLE_MS = 750L;
 
+    private static volatile int accessibilityProbeClicks;
+    private static volatile String accessibilityProbeText = "";
+
     private String pendingResult;
     private boolean productionProbeStarted;
     private boolean productionCapabilityProbeStarted;
@@ -35,6 +44,7 @@ public final class NtdRealModelProbeActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        installAccessibilityProbeUi();
 
         String result;
         try {
@@ -70,6 +80,55 @@ public final class NtdRealModelProbeActivity extends Activity {
             writeResult(result);
             finish();
         }
+    }
+
+    private void installAccessibilityProbeUi() {
+        accessibilityProbeClicks = 0;
+        accessibilityProbeText = "";
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        Button button = new Button(this);
+        button.setId(R.id.ntd_accessibility_probe_button);
+        button.setText("NTD97 accessibility probe");
+        button.setOnClickListener(view -> accessibilityProbeClicks++);
+
+        EditText text = new EditText(this);
+        text.setId(R.id.ntd_accessibility_probe_text);
+        text.setSingleLine(true);
+        text.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(
+                    CharSequence value,
+                    int start,
+                    int count,
+                    int after) {}
+
+            @Override
+            public void onTextChanged(
+                    CharSequence value,
+                    int start,
+                    int before,
+                    int count) {
+                accessibilityProbeText = value == null ? "" : value.toString();
+            }
+
+            @Override
+            public void afterTextChanged(Editable value) {}
+        });
+
+        layout.addView(button);
+        layout.addView(text);
+        setContentView(layout);
+    }
+
+    private static boolean accessibilityUiEffectsVerified() {
+        return accessibilityProbeClicks == 1
+                && "NTD97-accessibility".equals(accessibilityProbeText);
     }
 
     @Override
@@ -218,6 +277,10 @@ public final class NtdRealModelProbeActivity extends Activity {
                 result = result + new String(
                         NtdNativeRuntimeHost.runProductionCapabilityProbe(this),
                         StandardCharsets.UTF_8);
+                if (!accessibilityUiEffectsVerified()) {
+                    throw new IOException("accessibility UI effect verification failed");
+                }
+                result = result + "app_accessibility_ui_effect=ok\n";
             } catch (Exception error) {
                 String message = error.getMessage();
                 if (message == null || message.isEmpty()) {
