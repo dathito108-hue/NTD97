@@ -993,6 +993,7 @@ fn open_chat_model(
     shard_root: &str,
     verify_key: &[u8],
     context_limit: usize,
+    platform_web: Arc<AndroidPlatformWebBridge>,
 ) -> Result<(), String> {
     if asset_id.trim().is_empty() || version == 0 || context_limit == 0 {
         return Err("invalid native chat model identity or context limit".into());
@@ -1035,6 +1036,7 @@ fn open_chat_model(
         tokenizer,
         context_limit,
     }));
+    guard.platform_web = Some(platform_web);
     Ok(())
 }
 
@@ -1945,6 +1947,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
     shard_root: JString<'_>,
     verify_key: JByteArray<'_>,
     context_limit: jint,
+    platform_web: JObject<'_>,
 ) -> jboolean {
     let Some(asset_id) = java_string(&mut env, &asset_id) else {
         return 0;
@@ -1965,6 +1968,10 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
         Ok(bytes) => bytes,
         Err(_) => return 0,
     };
+    let platform_web = match AndroidPlatformWebBridge::new(&env, platform_web) {
+        Ok(bridge) => Arc::new(bridge),
+        Err(_) => return 0,
+    };
 
     u8::from(
         open_chat_model(
@@ -1974,6 +1981,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
             &shard_root,
             &verify_key,
             context_limit,
+            platform_web,
         )
         .is_ok(),
     )
