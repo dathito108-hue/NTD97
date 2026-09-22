@@ -463,7 +463,9 @@ impl CapabilityAdapter for AndroidBrowserInteractAdapter {
         if operation == "click" && value.is_some() {
             return Err("browser click must not carry a value".into());
         }
-        if operation == "set_value" && value.as_ref().is_none_or(String::is_empty) {
+        if operation == "set_value"
+            && !value.as_ref().is_some_and(|value| !value.is_empty())
+        {
             return Err("browser set_value requires a value".into());
         }
 
@@ -476,8 +478,8 @@ impl CapabilityAdapter for AndroidBrowserInteractAdapter {
             output: ActionOutput {
                 summary: format!("verified Android browser {operation} interaction"),
                 value: ActionValue::Fields(BTreeMap::from([
-                    ("operation".into(), operation.clone()),
-                    ("target".into(), target.clone()),
+                    ("operation".into(), operation.to_owned()),
+                    ("target".into(), target.to_owned()),
                     ("receipt".into(), receipt.clone()),
                     ("platform".into(), result),
                 ])),
