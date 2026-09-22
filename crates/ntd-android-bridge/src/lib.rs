@@ -221,8 +221,12 @@ fn provision_pc_pair_profile(
 
     let pairs = canonical_pc_pair_directory(root, true)?;
     let target = pairs.join(format!("{peer}.pcp97"));
-    if fs::symlink_metadata(&target).is_ok() {
-        return Err("paired-PC profile already exists; revoke it before replacement".into());
+    match fs::symlink_metadata(&target) {
+        Ok(_) => {
+            return Err("paired-PC profile already exists; revoke it before replacement".into());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("inspect paired-PC target profile: {error}")),
     }
 
     let local_seed = os_random::<32>()?;
@@ -246,8 +250,10 @@ fn provision_pc_pair_profile(
         file.sync_all()
             .map_err(|error| format!("sync paired-PC staged profile: {error}"))?;
         drop(file);
-        fs::rename(&staged, &target)
-            .map_err(|error| format!("commit paired-PC profile: {error}"))?;
+        fs::hard_link(&staged, &target)
+            .map_err(|error| format!("commit paired-PC profile without replacement: {error}"))?;
+        fs::remove_file(&staged)
+            .map_err(|error| format!("remove paired-PC staged profile: {error}"))?;
         fs::File::open(&pairs)
             .and_then(|directory| directory.sync_all())
             .map_err(|error| format!("sync paired-PC profile directory: {error}"))?;
