@@ -45,6 +45,16 @@ public final class NtdRealModelProbeActivity extends Activity {
                 result = "android_real_model=failed\nerror=empty native result\n";
             }
             result = result + runChatApiProbe();
+            String webFetchUrl = getIntent().getStringExtra("web_fetch_url");
+            String webFetchSha = getIntent().getStringExtra("web_fetch_sha256");
+            if (webFetchUrl != null && webFetchSha != null) {
+                NtdNativeRuntimeHost host = NtdNativeRuntimeHost.create(this);
+                result = result + (host == null
+                        ? "web_fetch=failed\nerror=native host unavailable\n"
+                        : host.webFetchProbe(webFetchUrl, webFetchSha));
+            } else {
+                result = result + "web_fetch=failed\nerror=missing fixture metadata\n";
+            }
         } catch (Exception error) {
             String message = error.getMessage();
             if (message == null || message.isEmpty()) {
