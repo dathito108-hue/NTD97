@@ -664,6 +664,232 @@ impl CapabilityAdapter for AndroidScopedFileAdapter {
     }
 }
 
+
+#[derive(Debug, Clone)]
+struct AndroidArtifactDownloadAdapter {
+    file: AndroidScopedFileAdapter,
+}
+
+impl AndroidArtifactDownloadAdapter {
+    fn new(root: PathBuf) -> Result<Self, String> {
+        Ok(Self {
+            file: AndroidScopedFileAdapter::new(root)?,
+        })
+    }
+
+    fn rollback_snapshot(&self, relative: &str) -> Result<Vec<u8>, String> {
+        let target = self.file.scoped_path(relative)?;
+        match fs::read(&target) {
+            Ok(previous) => {
+                if previous.len() > MAX_PLATFORM_TEXT_BYTES {
+                    return Err("existing artifact exceeds rollback limit".into());
+                }
+                let mut token = Vec::with_capacity(previous.len() + 5);
+                token.push(1);
+                token.extend_from_slice(
+                    &u32::try_from(previous.len())
+                        .map_err(|_| "artifact rollback length overflow".to_owned())?
+                        .to_le_bytes(),
+                );
+                token.extend_from_slice(&previous);
+                Ok(token)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(vec![0]),
+            Err(error) => Err(format!("snapshot artifact for rollback: {error}")),
+        }
+    }
+
+    fn stage_path(&self, action_id: ntd_runtime::ActionId) -> Result<PathBuf, String> {
+        let staging = self.file.root.join(".ntd97-download");
+        fs::create_dir_all(&staging)
+            .map_err(|error| format!("create artifact staging directory: {error}"))?;
+        let canonical = fs::canonicalize(&staging)
+            .map_err(|error| format!("canonicalize artifact staging directory: {error}"))?;
+        if !canonical.starts_with(&self.file.root) {
+            return Err("artifact staging escaped capability root".into());
+        }
+        Ok(canonical.join(format!("{}.part", action_id.0)))
+    }
+
+    fn write_staging(
+        &self,
+        action_id: ntd_runtime::ActionId,
+        body: &[u8],
+    ) -> Result<PathBuf, String> {
+        if body.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("artifact exceeds native download limit".into());
+        }
+        let stage = self.stage_path(action_id)?;
+        let mut output = fs::File::create(&stage)
+            .map_err(|error| format!("create artifact staging file: {error}"))?;
+        output
+            .write_all(body)
+            .map_err(|error| format!("write artifact staging file: {error}"))?;
+        output
+            .sync_all()
+            .map_err(|error| format!("sync artifact staging file: {error}"))?;
+        Ok(stage)
+    }
+
+    fn commit_staging(
+        &self,
+        action_id: ntd_runtime::ActionId,
+        relative: &str,
+        expected_hash: &[u8; 32],
+    ) -> Result<(usize, [u8; 32]), String> {
+        let stage = self.stage_path(action_id)?;
+        let bytes = fs::read(&stage)
+            .map_err(|error| format!("read staged artifact: {error}"))?;
+        let digest = sha256(&bytes);
+        if &digest != expected_hash {
+            return Err("staged artifact hash mismatch".into());
+        }
+
+        let target = self.file.scoped_path(relative)?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| "artifact path has no parent".to_owned())?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create artifact target directory: {error}"))?;
+        let canonical_parent = fs::canonicalize(parent)
+            .map_err(|error| format!("canonicalize artifact target directory: {error}"))?;
+        if !canonical_parent.starts_with(&self.file.root) {
+            return Err("artifact target escaped capability root".into());
+        }
+
+        fs::rename(&stage, &target)
+            .map_err(|error| format!("commit staged artifact: {error}"))?;
+        fs::File::open(&canonical_parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("sync artifact directory: {error}"))?;
+        Ok((bytes.len(), digest))
+    }
+}
+
+fn encode_artifact_resume_token(
+    digest: &[u8; 32],
+    rollback: &[u8],
+    final_url: &str,
+) -> Result<Vec<u8>, String> {
+    let rollback_len =
+        u32::try_from(rollback.len()).map_err(|_| "artifact rollback token overflow".to_owned())?;
+    let url = final_url.as_bytes();
+    let url_len =
+        u32::try_from(url.len()).map_err(|_| "artifact final URL overflow".to_owned())?;
+    let mut out = Vec::with_capacity(1 + 32 + 4 + rollback.len() + 4 + url.len());
+    out.push(1);
+    out.extend_from_slice(digest);
+    out.extend_from_slice(&rollback_len.to_le_bytes());
+    out.extend_from_slice(rollback);
+    out.extend_from_slice(&url_len.to_le_bytes());
+    out.extend_from_slice(url);
+    Ok(out)
+}
+
+fn decode_artifact_resume_token(
+    token: &[u8],
+) -> Result<([u8; 32], Vec<u8>, String), String> {
+    if token.len() < 1 + 32 + 4 + 4 || token[0] != 1 {
+        return Err("invalid artifact resume token".into());
+    }
+    let mut digest = [0u8; 32];
+    digest.copy_from_slice(&token[1..33]);
+    let rollback_len = u32::from_le_bytes([token[33], token[34], token[35], token[36]]) as usize;
+    let rollback_start = 37usize;
+    let rollback_end = rollback_start
+        .checked_add(rollback_len)
+        .ok_or_else(|| "artifact resume token overflow".to_owned())?;
+    let url_len_end = rollback_end
+        .checked_add(4)
+        .ok_or_else(|| "artifact resume token overflow".to_owned())?;
+    if url_len_end > token.len() {
+        return Err("truncated artifact resume token".into());
+    }
+    let url_len = u32::from_le_bytes([
+        token[rollback_end],
+        token[rollback_end + 1],
+        token[rollback_end + 2],
+        token[rollback_end + 3],
+    ]) as usize;
+    let url_end = url_len_end
+        .checked_add(url_len)
+        .ok_or_else(|| "artifact resume token overflow".to_owned())?;
+    if url_end != token.len() {
+        return Err("non-canonical artifact resume token".into());
+    }
+    let final_url = String::from_utf8(token[url_len_end..url_end].to_vec())
+        .map_err(|_| "artifact resume URL is not UTF-8".to_owned())?;
+    Ok((digest, token[rollback_start..rollback_end].to_vec(), final_url))
+}
+
+impl CapabilityAdapter for AndroidArtifactDownloadAdapter {
+    fn execute(
+        &mut self,
+        action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::ArtifactDownload { url, path } = action else {
+            return Err("Android artifact adapter received wrong action".into());
+        };
+        let result = android_https_fetch(url)?;
+        if result.body.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("artifact download exceeds native limit".into());
+        }
+
+        let rollback = self.rollback_snapshot(path)?;
+        self.write_staging(action_id, &result.body)?;
+        let digest = sha256(&result.body);
+        let resume_token = encode_artifact_resume_token(&digest, &rollback, &result.final_url)?;
+        Ok(AdapterResult::Suspended {
+            resume_token,
+            note: "artifact downloaded and staged for verified commit".into(),
+        })
+    }
+
+    fn resume(
+        &mut self,
+        action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+        resume_token: &[u8],
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::ArtifactDownload { path, .. } = action else {
+            return Err("Android artifact adapter received wrong resume action".into());
+        };
+        let (expected_hash, rollback, final_url) =
+            decode_artifact_resume_token(resume_token)?;
+        let (size, digest) = self.commit_staging(action_id, path, &expected_hash)?;
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified artifact download committed: {path}"),
+                value: ActionValue::Fields(BTreeMap::from([
+                    ("path".into(), path.clone()),
+                    ("bytes".into(), size.to_string()),
+                    ("sha256".into(), digest_hex(&digest)),
+                    ("url".into(), final_url),
+                ])),
+                evidence: vec![
+                    "android-artifact-download".into(),
+                    "operation:download".into(),
+                    format!("sha256:{}", digest_hex(&digest)),
+                ],
+            },
+            rollback_token: Some(rollback),
+        })
+    }
+
+    fn rollback(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+        rollback_token: &[u8],
+    ) -> Result<(), String> {
+        let TypedAction::ArtifactDownload { path, .. } = action else {
+            return Err("artifact rollback received wrong action".into());
+        };
+        self.file.rollback_write(path, rollback_token)
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 struct AndroidProductionVerifier;
 
@@ -702,6 +928,20 @@ impl ActionVerifier for AndroidProductionVerifier {
                     .iter()
                     .any(|item| item == "android-app-private-file")
                     && output.evidence.iter().any(|item| item == "operation:write")
+            },
+            ("artifact.download", TypedAction::ArtifactDownload { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-artifact-download")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "operation:download")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("sha256:"))
             }
             (
                 "device.interact",
@@ -1550,7 +1790,13 @@ fn execute_android_verified_actions(
     resources: ResourceSnapshot,
     action_plan: &AssistantActionPlan,
 ) -> Result<(), String> {
-    let supported = ["device.observe", "web.fetch", "file.read", "file.write"];
+    let supported = [
+        "device.observe",
+        "web.fetch",
+        "file.read",
+        "file.write",
+        "artifact.download",
+    ];
     if action_plan
         .graph
         .actions
@@ -1626,6 +1872,27 @@ fn execute_android_verified_actions(
                     );
                 }
                 descriptor
+            },
+            "artifact.download" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("artifact.download".into()),
+                    1,
+                    CapabilityDomain::Web,
+                    SideEffectClass::Reversible,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.rollback_supported = true;
+                    descriptor.resumable = true;
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                    );
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.app_private")
+                            .map_err(|error| format!("file scope: {error:?}"))?,
+                    );
+                }
+                descriptor
             }
             _ => unreachable!("unsupported capabilities rejected above"),
         }
@@ -1666,6 +1933,14 @@ fn execute_android_verified_actions(
                 .register_adapter(CapabilityId("file.write".into()), adapter)
                 .map_err(|error| format!("register app-private file.write adapter: {error:?}"))?;
         }
+    }
+    if fabric_capabilities.contains("artifact.download") {
+        fabric
+            .register_adapter(
+                CapabilityId("artifact.download".into()),
+                AndroidArtifactDownloadAdapter::new(model.capability_root.clone())?,
+            )
+            .map_err(|error| format!("register artifact download adapter: {error:?}"))?;
     }
 
     let authority = AuthorityGrant::new()
