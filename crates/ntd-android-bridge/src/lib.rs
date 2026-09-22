@@ -1781,6 +1781,94 @@ fn run_constrained_device_planner(
     })
 }
 
+fn governed_external_action_plan(
+    user_message: &str,
+) -> Result<Option<AssistantActionPlan>, String> {
+    let trimmed = user_message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    let canonical = if lower.starts_with("set clipboard to ") {
+        let value = trimmed
+            .get("set clipboard to ".len()..)
+            .ok_or_else(|| "clipboard command boundary failed".to_owned())?;
+        if value.trim().is_empty() || value.contains(['\r', '\n', '|', '\t']) {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|device.interact|clipboard\tset_text\t{value}\nEND"
+        ))
+    } else if lower.starts_with("open app ") {
+        let package = trimmed
+            .get("open app ".len()..)
+            .ok_or_else(|| "app command boundary failed".to_owned())?;
+        if package.trim().is_empty()
+            || package.contains(['\r', '\n', '|', '\t', ' '])
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|app.action|{package}\tlaunch\nEND"
+        ))
+    } else {
+        None
+    };
+
+    let Some(canonical) = canonical else {
+        return Ok(None);
+    };
+    Ok(match parse_native_action_plan(&canonical) {
+        Ok(AssistantPlanDecision::Actions(plan)) => Some(plan),
+        _ => None,
+    })
+}
+
+fn external_write_approval(
+    action_plan: &AssistantActionPlan,
+) -> Result<Option<(String, String)>, String> {
+    let mut capabilities = BTreeSet::new();
+    let mut rationales = Vec::new();
+
+    for node in &action_plan.graph.actions {
+        if node.side_effect != SideEffectClass::ExternalWrite {
+            continue;
+        }
+        let action = action_plan
+            .payloads
+            .get(&node.id)
+            .ok_or_else(|| "external-write action payload is missing".to_owned())?;
+        match action {
+            TypedAction::DeviceInteract {
+                surface,
+                operation,
+                argument,
+            } if surface == "clipboard"
+                && operation == "set_text"
+                && argument.as_ref().is_some_and(|value| !value.is_empty()) =>
+            {
+                capabilities.insert("device.interact".to_owned());
+                rationales.push("write text to the Android clipboard".to_owned());
+            }
+            TypedAction::AppAction {
+                app,
+                action,
+                payload,
+            } if action == "launch" && payload.is_empty() && !app.trim().is_empty() => {
+                capabilities.insert("app.action".to_owned());
+                rationales.push(format!("launch Android app package {app}"));
+            }
+            _ => return Err("unsupported external-write action requested".into()),
+        }
+    }
+
+    if capabilities.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((
+        capabilities.into_iter().collect::<Vec<_>>().join(","),
+        rationales.join("; "),
+    )))
+}
+
 fn execute_android_verified_actions(
     conversation: &mut SovereignConversationState,
     model: &NativeChatModel,
@@ -1789,6 +1877,7 @@ fn execute_android_verified_actions(
     prompt_limit: usize,
     resources: ResourceSnapshot,
     action_plan: &AssistantActionPlan,
+    external_approved: bool,
 ) -> Result<(), String> {
     let supported = [
         "device.observe",
@@ -1796,6 +1885,8 @@ fn execute_android_verified_actions(
         "file.read",
         "file.write",
         "artifact.download",
+        "device.interact",
+        "app.action",
     ];
     if action_plan
         .graph
@@ -1808,10 +1899,6 @@ fn execute_android_verified_actions(
             .map_err(|error| format!("record unsupported action plan: {error:?}"))?;
         return Err("model requested a capability without a production Android adapter".into());
     }
-
-    conversation
-        .install_action_plan(task_id, action_plan)
-        .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
 
     let mut registry = CapabilityRegistry::new();
     let mut fabric_capabilities = std::collections::BTreeSet::new();
@@ -1894,6 +1981,36 @@ fn execute_android_verified_actions(
                 }
                 descriptor
             }
+            "device.interact" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("device.interact".into()),
+                    1,
+                    CapabilityDomain::Device,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("device.clipboard.write")
+                            .map_err(|error| format!("clipboard scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "app.action" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("app.action".into()),
+                    1,
+                    CapabilityDomain::App,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("app.launch")
+                            .map_err(|error| format!("app scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
             _ => unreachable!("unsupported capabilities rejected above"),
         }
         .map_err(|error| format!("build Android capability descriptor: {error:?}"))?;
@@ -1942,8 +2059,21 @@ fn execute_android_verified_actions(
             )
             .map_err(|error| format!("register artifact download adapter: {error:?}"))?;
     }
+    if fabric_capabilities.contains("device.interact") {
+        fabric
+            .register_adapter(
+                CapabilityId("device.interact".into()),
+                AndroidDeviceInteractAdapter,
+            )
+            .map_err(|error| format!("register device interaction adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("app.action") {
+        fabric
+            .register_adapter(CapabilityId("app.action".into()), AndroidAppActionAdapter)
+            .map_err(|error| format!("register app action adapter: {error:?}"))?;
+    }
 
-    let authority = AuthorityGrant::new()
+    let mut authority = AuthorityGrant::new()
         .with_scope(
             AuthorityScope::new("network.read")
                 .map_err(|error| format!("network authority scope: {error:?}"))?,
@@ -1952,6 +2082,29 @@ fn execute_android_verified_actions(
             AuthorityScope::new("file.app_private")
                 .map_err(|error| format!("file authority scope: {error:?}"))?,
         );
+    if action_plan
+        .graph
+        .actions
+        .iter()
+        .any(|node| node.side_effect == SideEffectClass::ExternalWrite)
+    {
+        if !external_approved {
+            return Err("external-write action requires explicit chat approval".into());
+        }
+        authority.allow_external_write = true;
+        if fabric_capabilities.contains("device.interact") {
+            authority = authority.with_scope(
+                AuthorityScope::new("device.clipboard.write")
+                    .map_err(|error| format!("clipboard authority scope: {error:?}"))?,
+            );
+        }
+        if fabric_capabilities.contains("app.action") {
+            authority = authority.with_scope(
+                AuthorityScope::new("app.launch")
+                    .map_err(|error| format!("app authority scope: {error:?}"))?,
+            );
+        }
+    }
 
     let task = conversation
         .cognition()
