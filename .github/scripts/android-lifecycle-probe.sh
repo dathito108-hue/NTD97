@@ -103,7 +103,12 @@ for REQUIRED in \
   browser_observe=ok \
   browser_private_block=ok \
   browser_interact_authority_block=ok \
+  browser_selector_ambiguity_block=ok \
+  browser_session_loss_block=ok \
+  browser_session_resume=ok \
   browser_interact=ok \
+  browser_navigate=ok \
+  browser_set_value=ok \
   file_write=ok \
   file_read=ok \
   file_rollback=ok \
