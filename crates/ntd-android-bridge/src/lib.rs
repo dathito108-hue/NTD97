@@ -2691,8 +2691,27 @@ fn external_write_approval(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AndroidActionExecutionOutcome {
     Prepared,
-    Checkpointed(String),
+    Checkpointed {
+        note: String,
+        requires_reconfirm: bool,
+    },
     Completed,
+}
+
+fn action_checkpoint_requires_reconfirm(
+    fabric: &ActionFabric,
+    plan_id: ntd_runtime::ActionPlanId,
+) -> bool {
+    fabric
+        .state()
+        .plans
+        .get(&plan_id.0)
+        .and_then(|plan| plan.actions.get(plan.cursor))
+        .is_some_and(|action| {
+            action.side_effect == SideEffectClass::ExternalWrite
+                && action.status == ActionStatus::Retryable
+                && action.resume_token.is_none()
+        })
 }
 
 struct AndroidActionExecutionContext<'a> {
@@ -3199,8 +3218,12 @@ fn execute_android_verified_actions(
         }) if plan_status == ActionPlanStatus::Suspended
             || matches!(action_status, Some(ActionStatus::Retryable | ActionStatus::Suspended)) =>
         {
+            let requires_reconfirm = action_checkpoint_requires_reconfirm(&fabric, plan_id);
             persist_fabric(conversation, &fabric)?;
-            return Ok(AndroidActionExecutionOutcome::Checkpointed(summary));
+            return Ok(AndroidActionExecutionOutcome::Checkpointed {
+                note: summary,
+                requires_reconfirm,
+            });
         }
         Err(error) => {
             return Err(format!("execute verified Android action plan: {error:?}"));
@@ -3848,7 +3871,17 @@ fn advance_pending_chat_actions(request_id: u64) -> Result<Option<Vec<u8>>, Stri
         AndroidActionExecutionOutcome::Prepared => {
             return Err("running action execution returned to prepare-only boundary".into())
         }
-        AndroidActionExecutionOutcome::Checkpointed(note) => note,
+        AndroidActionExecutionOutcome::Checkpointed {
+            note,
+            requires_reconfirm,
+        } => {
+            if requires_reconfirm {
+                advanced
+                    .set_chat_approval_status(task_id, "reconfirm")
+                    .map_err(|error| format!("require reconfirmation before external retry: {error:?}"))?;
+            }
+            note
+        }
         AndroidActionExecutionOutcome::Completed => {
             if external_write {
                 advanced
@@ -3871,6 +3904,19 @@ fn advance_pending_chat_actions(request_id: u64) -> Result<Option<Vec<u8>>, Stri
         return Err("chat request changed during action continuation".into());
     }
     guard.conversation = advanced;
+    if guard
+        .conversation
+        .chat_approval_for_task(task_id)
+        .is_some_and(|(_, _, status)| status == "reconfirm")
+    {
+        if let Some(session) = guard
+            .chat_session
+            .as_mut()
+            .filter(|session| session.request_id == request_id)
+        {
+            session.status = NativeChatSessionStatus::WaitingApproval;
+        }
+    }
     Ok(Some(encode_chat_event(
         CHAT_EVENT_ACTION_CHECKPOINTED,
         None,
