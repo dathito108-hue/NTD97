@@ -70,6 +70,7 @@ for REQUIRED in \
   chat_action_safety=ok \
   chat_governed_e2e=ok \
   chat_external_approval=ok \
+  chat_upload_continuity=ok \
   chat_memory=ok \
   chat_restore=ok \
   chat_store=ok \

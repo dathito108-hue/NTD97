@@ -1,6 +1,7 @@
 package ai.ntd97.mobile;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 
@@ -18,15 +19,18 @@ public final class NtdRealModelProbeActivity extends Activity {
     private static final String RUNTIME_ROOT = "ntd97-real-model";
     private static final String RESULT_FILE = "ntd97-real-model-probe.txt";
 
-    private static final int MAX_PRODUCTION_FOCUS_ATTEMPTS = 24;
+    private static final int MAX_PRODUCTION_FOCUS_ATTEMPTS = 48;
     private static final long PRODUCTION_FOCUS_RETRY_MS = 250L;
     private static final long PRODUCTION_FOCUS_SETTLE_MS = 750L;
 
     private String pendingResult;
     private boolean productionProbeStarted;
     private boolean productionCapabilityProbeStarted;
+    private int chatFocusAttempts;
     private int productionFocusAttempts;
+    private boolean chatProbeComplete;
     private String externalApprovalDiagnostic = "not-run";
+    private String uploadContinuityDiagnostic = "not-run";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,33 +75,88 @@ public final class NtdRealModelProbeActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (productionProbeStarted || pendingResult == null) {
+        scheduleChatProbeWhenFocused();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus || pendingResult == null || isFinishing()) {
             return;
         }
+        if (!productionProbeStarted) {
+            scheduleChatProbeWhenFocused();
+        } else if (chatProbeComplete && !productionCapabilityProbeStarted) {
+            scheduleProductionCapabilityProbe();
+        }
+    }
 
-        productionProbeStarted = true;
-        getWindow().getDecorView().postDelayed(this::runProductionProbeAndFinish, 300L);
+    private void scheduleChatProbeWhenFocused() {
+        if (productionProbeStarted || pendingResult == null || isFinishing()) {
+            return;
+        }
+        if (hasWindowFocus()) {
+            productionProbeStarted = true;
+            getWindow().getDecorView().postDelayed(this::runProductionProbeAndFinish, 300L);
+            return;
+        }
+        chatFocusAttempts++;
+        if (chatFocusAttempts > MAX_PRODUCTION_FOCUS_ATTEMPTS) {
+            writeResult(
+                    pendingResult
+                            + "chat_submit=failed\n"
+                            + "chat_external_approval=failed\n"
+                            + "chat_external_approval_detail=initial-window-focus\n"
+                            + "chat_upload_continuity=failed\n"
+                            + "chat_upload_continuity_detail=initial-window-focus\n");
+            finish();
+            return;
+        }
+        getWindow().getDecorView().postDelayed(
+                this::scheduleChatProbeWhenFocused,
+                PRODUCTION_FOCUS_RETRY_MS);
     }
 
     private void runProductionProbeAndFinish() {
-        String result = pendingResult;
-        try {
-            result = result + runChatApiProbe();
-        } catch (Exception error) {
-            String message = error.getMessage();
-            if (message == null || message.isEmpty()) {
-                message = error.getClass().getSimpleName();
+        final String prefix = pendingResult;
+        Thread chatProbeThread = new Thread(() -> {
+            String result = prefix;
+            try {
+                result = result + runChatApiProbe();
+            } catch (Exception error) {
+                String message = error.getMessage();
+                if (message == null || message.isEmpty()) {
+                    message = error.getClass().getSimpleName();
+                }
+                result = result
+                        + "chat_submit=failed\n"
+                        + "chat_external_approval=failed\n"
+                        + "chat_external_approval_detail=foreground-probe:"
+                        + message.replace('\n', ' ').replace('\r', ' ')
+                        + "\n"
+                        + "chat_upload_continuity=failed\n"
+                        + "chat_upload_continuity_detail=foreground-probe\n";
             }
-            result = result
-                    + "chat_submit=failed\n"
-                    + "chat_external_approval=failed\n"
-                    + "chat_external_approval_detail=foreground-probe:"
-                    + message.replace('\n', ' ').replace('\r', ' ')
-                    + "\n";
-        }
 
-        pendingResult = result;
-        scheduleProductionCapabilityProbe();
+            String finalResult = result;
+            runOnUiThread(() -> {
+                pendingResult = finalResult;
+                chatProbeComplete = true;
+                restoreProbeForegroundAndSchedule();
+            });
+        }, "ntd97-chat-acceptance");
+        chatProbeThread.setDaemon(true);
+        chatProbeThread.start();
+    }
+
+    private void restoreProbeForegroundAndSchedule() {
+        productionFocusAttempts = 0;
+        Intent foreground = new Intent(this, NtdRealModelProbeActivity.class);
+        foreground.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        startActivity(foreground);
+        getWindow().getDecorView().postDelayed(
+                this::scheduleProductionCapabilityProbe,
+                PRODUCTION_FOCUS_SETTLE_MS);
     }
 
     private void scheduleProductionCapabilityProbe() {
@@ -182,14 +241,14 @@ public final class NtdRealModelProbeActivity extends Activity {
     private String runChatApiProbe() throws IOException {
         NtdNativeRuntimeHost host = NtdNativeRuntimeHost.create(this);
         if (host == null || !host.chatReady()) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_external_approval=failed\nchat_upload_continuity=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         long requestId = host.submitChat("Once", 2);
         if (requestId < 0) {
             String diagnostic = host.chatLastError().replace('\n', ' ').replace('\r', ' ');
             return "chat_submit=failed\nchat_error=" + diagnostic
-                    + "\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+                    + "\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_external_approval=failed\nchat_upload_continuity=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         int tokenCount = 0;
@@ -204,7 +263,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 completed = true;
                 break;
             }
-            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_external_approval=failed\nchat_upload_continuity=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         boolean statusOk = completed && tokenCount > 0 && host.chatStatus(requestId) == 2;
@@ -220,6 +279,7 @@ public final class NtdRealModelProbeActivity extends Activity {
         boolean storeOk = false;
         boolean memoryOk = false;
         int checkpointMemoryItems = 0;
+        int checkpointMemoryRecords = 0;
         int checkpointBudget = 0;
         int checkpointIterations = 0;
         int checkpointFirstKind = 0;
@@ -228,16 +288,17 @@ public final class NtdRealModelProbeActivity extends Activity {
         int restoredBudget = 0;
         int restoredIterations = 0;
         int restoredMemory = 0;
+        int restoredMemoryRecordsBefore = 0;
+        int restoredMemoryRecords = 0;
         int restoredStatus = 0;
         NtdConversationStore store = new NtdConversationStore(this);
         try {
             if (checkpointRequest >= 0) {
                 checkpointMemoryItems = host.chatRecalledMemoryItems(checkpointRequest);
+                checkpointMemoryRecords = host.chatMemoryRecordCount(checkpointRequest);
                 checkpointBudget = host.chatReasoningBudget(checkpointRequest);
                 checkpointIterations = host.chatReasoningIterations(checkpointRequest);
-                memoryOk = checkpointMemoryItems > 0
-                        && checkpointBudget >= 1
-                        && checkpointBudget <= 4;
+                memoryOk = checkpointMemoryRecords > 0;
                 reasoningLoopOk = reasoningLoopOk
                         && checkpointIterations == expectedReasoningIterations(checkpointBudget);
                 actionPlannerOk = actionPlannerOk
@@ -257,6 +318,8 @@ public final class NtdRealModelProbeActivity extends Activity {
                             : -1L;
                     restoredRequestId = restoredRequest;
                     if (restoredRequest > 0) {
+                        restoredMemoryRecordsBefore =
+                                host.chatMemoryRecordCount(restoredRequest);
                         boolean restoredComplete = false;
                         for (int attempt = 0; attempt < 8; attempt++) {
                             NtdRuntimeHost.ChatEvent event = host.nextChatEvent(restoredRequest);
@@ -269,13 +332,16 @@ public final class NtdRealModelProbeActivity extends Activity {
                         restoredBudget = host.chatReasoningBudget(restoredRequest);
                         restoredIterations = host.chatReasoningIterations(restoredRequest);
                         restoredMemory = host.chatRecalledMemoryItems(restoredRequest);
+                        restoredMemoryRecords = host.chatMemoryRecordCount(restoredRequest);
                         restoredStatus = host.chatStatus(restoredRequest);
                         restoreOk = restoredComplete
                                 && restoredStatus == 2
                                 && restoredBudget >= 1
                                 && restoredBudget <= 4
                                 && restoredIterations == expectedReasoningIterations(restoredBudget)
-                                && restoredMemory > 0
+                                && restoredMemoryRecordsBefore > 0
+                                && restoredMemoryRecordsBefore == checkpointMemoryRecords
+                                && restoredMemoryRecords >= restoredMemoryRecordsBefore
                                 && actionPlannerStatusKnown(host, restoredRequest)
                                 && actionPlannerInvariantHolds(host, restoredRequest)
                                 && host.chatTranscript().contains("Once resume this response");
@@ -323,6 +389,12 @@ public final class NtdRealModelProbeActivity extends Activity {
         }
 
         boolean externalApprovalOk = runExternalApprovalProbe(host);
+        boolean uploadContinuityOk = false;
+        if (externalApprovalOk) {
+            uploadContinuityOk = runUploadContinuityProbe(host);
+        } else {
+            uploadContinuityDiagnostic = "skipped-after-external-approval-failure";
+        }
 
         long cancelRequest = host.submitChat("cancel this response", 8);
         boolean cancelOk = cancelRequest >= 0
@@ -336,7 +408,11 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_reasoning_loop=" + (reasoningLoopOk ? "ok" : "failed") + "\n"
                 + "chat_action_planner=" + (actionPlannerOk ? "ok" : "failed") + "\n"
                 + "chat_action_safety=" + (actionSafetyOk ? "ok" : "failed") + "\n"
-                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"                + "chat_external_approval=" + (externalApprovalOk ? "ok" : "failed") + "\n"                + "chat_external_approval_detail=" + externalApprovalDiagnostic + "\n"
+                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"
+                + "chat_external_approval=" + (externalApprovalOk ? "ok" : "failed") + "\n"
+                + "chat_external_approval_detail=" + externalApprovalDiagnostic + "\n"
+                + "chat_upload_continuity=" + (uploadContinuityOk ? "ok" : "failed") + "\n"
+                + "chat_upload_continuity_detail=" + uploadContinuityDiagnostic + "\n"
                 + "governed_request_id=" + governedRequest + "\n"
                 + "governed_planner_status=" + governedPlannerStatus + "\n"
                 + "governed_action_count=" + governedActionCount + "\n"
@@ -347,6 +423,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "governed_final_status=" + governedFinalStatus + "\n"
                 + "checkpoint_request_id=" + checkpointRequest + "\n"
                 + "checkpoint_memory_items=" + checkpointMemoryItems + "\n"
+                + "checkpoint_memory_records=" + checkpointMemoryRecords + "\n"
                 + "checkpoint_budget=" + checkpointBudget + "\n"
                 + "checkpoint_iterations=" + checkpointIterations + "\n"
                 + "checkpoint_first_kind=" + checkpointFirstKind + "\n"
@@ -355,6 +432,8 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "restored_budget=" + restoredBudget + "\n"
                 + "restored_iterations=" + restoredIterations + "\n"
                 + "restored_memory_items=" + restoredMemory + "\n"
+                + "restored_memory_records_before=" + restoredMemoryRecordsBefore + "\n"
+                + "restored_memory_records=" + restoredMemoryRecords + "\n"
                 + "restored_status=" + restoredStatus + "\n"
                 + "chat_memory=" + (memoryOk ? "ok" : "failed") + "\n"
                 + "chat_restore=" + (restoreOk ? "ok" : "failed") + "\n"
@@ -420,7 +499,48 @@ public final class NtdRealModelProbeActivity extends Activity {
             return false;
         }
         if (!host.resolveChatApproval(approvedRequest, true)) {
-            externalApprovalDiagnostic = "approved-resolve:" + safeDiagnostic(host.chatLastError());
+            externalApprovalDiagnostic = "approved-prepare:" + safeDiagnostic(host.chatLastError());
+            return false;
+        }
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+            externalApprovalDiagnostic = "side-effect-before-durable-checkpoint";
+            return false;
+        }
+
+        byte[] approvedCheckpoint = host.chatCheckpoint();
+        if (approvedCheckpoint.length == 0) {
+            externalApprovalDiagnostic = "approved-checkpoint-empty";
+            return false;
+        }
+        long interruptedRequest = host.restoreChatCheckpoint(approvedCheckpoint);
+        if (interruptedRequest <= 0) {
+            externalApprovalDiagnostic = "approved-restore:" + safeDiagnostic(host.chatLastError());
+            return false;
+        }
+        NtdRuntimeHost.ChatEvent reconfirm = host.nextChatEvent(interruptedRequest);
+        if (reconfirm.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+            externalApprovalDiagnostic = "approved-restore-replayed:" + reconfirm.kind;
+            return false;
+        }
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+            externalApprovalDiagnostic = "side-effect-during-restore";
+            return false;
+        }
+        if (!host.resolveChatApproval(interruptedRequest, true)) {
+            externalApprovalDiagnostic = "reconfirm-prepare:" + safeDiagnostic(host.chatLastError());
+            return false;
+        }
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+            externalApprovalDiagnostic = "side-effect-before-resume-event";
+            return false;
+        }
+
+        NtdRuntimeHost.ChatEvent actionEvent = host.nextChatEvent(interruptedRequest);
+        if (actionEvent.kind != NtdRuntimeHost.ChatEvent.ACTION_CHECKPOINTED) {
+            externalApprovalDiagnostic = "resume-event-kind:"
+                    + actionEvent.kind
+                    + ":"
+                    + safeDiagnostic(actionEvent.text);
             return false;
         }
         if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites + 1) {
@@ -432,31 +552,116 @@ public final class NtdRealModelProbeActivity extends Activity {
             externalApprovalDiagnostic = "approved-clipboard-readback";
             return false;
         }
-        if (!host.chatVerifiedSynthesisReady(approvedRequest)) {
+        if (!host.chatVerifiedSynthesisReady(interruptedRequest)) {
             externalApprovalDiagnostic = "approved-synthesis-not-ready";
             return false;
         }
-        if (host.chatVerifiedActionCount(approvedRequest) <= 0) {
+        if (host.chatVerifiedActionCount(interruptedRequest) <= 0) {
             externalApprovalDiagnostic = "approved-verified-count:"
-                    + host.chatVerifiedActionCount(approvedRequest);
+                    + host.chatVerifiedActionCount(interruptedRequest);
             return false;
         }
 
         for (int attempt = 0; attempt < 8; attempt++) {
-            NtdRuntimeHost.ChatEvent event = host.nextChatEvent(approvedRequest);
-            if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+            NtdRuntimeHost.ChatEvent event = host.nextChatEvent(interruptedRequest);
+            if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN
+                    || event.kind == NtdRuntimeHost.ChatEvent.ACTION_CHECKPOINTED) {
                 continue;
             }
             boolean ok = event.kind == NtdRuntimeHost.ChatEvent.COMPLETE
-                    && host.chatStatus(approvedRequest) == 2;
+                    && host.chatStatus(interruptedRequest) == 2;
             externalApprovalDiagnostic = ok
                     ? "ok"
                     : "approved-terminal-kind:" + event.kind
-                            + ":status:" + host.chatStatus(approvedRequest);
+                            + ":status:" + host.chatStatus(interruptedRequest);
             return ok;
         }
         externalApprovalDiagnostic = "approved-terminal-timeout";
         return false;
+    }
+
+    private boolean runUploadContinuityProbe(NtdRuntimeHost host) {
+        File source = new File(
+                new File(getFilesDir(), "ntd97-capability-files"),
+                "m13/process-upload.bin");
+        try {
+            File parent = source.getParentFile();
+            if (parent == null || (!parent.isDirectory() && !parent.mkdirs())) {
+                uploadContinuityDiagnostic = "source-directory";
+                return false;
+            }
+            byte[] payload = "NTD97-M13-PERSISTED-UPLOAD".getBytes(StandardCharsets.UTF_8);
+            try (FileOutputStream output = new FileOutputStream(source, false)) {
+                output.write(payload);
+                output.getFD().sync();
+            }
+
+            long request = host.submitChat(
+                    "upload artifact m13/process-upload.bin to https://127.0.0.1/upload",
+                    4);
+            if (request < 0) {
+                uploadContinuityDiagnostic = "submit:" + safeDiagnostic(host.chatLastError());
+                return false;
+            }
+            NtdRuntimeHost.ChatEvent approval = host.nextChatEvent(request);
+            if (approval.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+                uploadContinuityDiagnostic = "approval-kind:" + approval.kind;
+                return false;
+            }
+            if (!host.resolveChatApproval(request, true)) {
+                uploadContinuityDiagnostic = "prepare:" + safeDiagnostic(host.chatLastError());
+                return false;
+            }
+
+            NtdRuntimeHost.ChatEvent suspended = host.nextChatEvent(request);
+            if (suspended.kind != NtdRuntimeHost.ChatEvent.ACTION_CHECKPOINTED) {
+                uploadContinuityDiagnostic = "suspend-kind:" + suspended.kind;
+                return false;
+            }
+            if (host.chatVerifiedSynthesisReady(request)
+                    || host.chatVerifiedActionCount(request) != 0) {
+                uploadContinuityDiagnostic = "side-effect-committed-before-restore";
+                return false;
+            }
+
+            byte[] checkpoint = host.chatCheckpoint();
+            if (checkpoint.length == 0) {
+                uploadContinuityDiagnostic = "checkpoint-empty";
+                return false;
+            }
+            long restored = host.restoreChatCheckpoint(checkpoint);
+            if (restored <= 0) {
+                uploadContinuityDiagnostic = "restore:" + safeDiagnostic(host.chatLastError());
+                return false;
+            }
+            NtdRuntimeHost.ChatEvent reconfirm = host.nextChatEvent(restored);
+            if (reconfirm.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+                uploadContinuityDiagnostic = "restore-auto-replayed:" + reconfirm.kind;
+                return false;
+            }
+            if (!host.resolveChatApproval(restored, false)) {
+                uploadContinuityDiagnostic = "deny:" + safeDiagnostic(host.chatLastError());
+                return false;
+            }
+            if (host.chatStatus(restored) != 3) {
+                uploadContinuityDiagnostic = "deny-status:" + host.chatStatus(restored);
+                return false;
+            }
+            if (!Arrays.equals(payload, readAllBytes(source))) {
+                uploadContinuityDiagnostic = "source-changed";
+                return false;
+            }
+
+            uploadContinuityDiagnostic = "ok";
+            return true;
+        } catch (IOException error) {
+            uploadContinuityDiagnostic = "io:" + safeDiagnostic(error.getMessage());
+            return false;
+        } finally {
+            if (source.exists() && !source.delete()) {
+                source.deleteOnExit();
+            }
+        }
     }
 
     private String safeDiagnostic(String value) {

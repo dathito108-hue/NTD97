@@ -29,17 +29,18 @@ use ntd_mobile_shell::{
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
 use ntd_runtime::{
-    choose_reasoning_budget, decode_conversation_checkpoint, encode_conversation_checkpoint,
-    execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
+    choose_reasoning_budget, continue_verified_assistant_plan, decode_action_fabric_checkpoint,
+    decode_conversation_checkpoint, encode_action_fabric_checkpoint,
+    encode_conversation_checkpoint, memory_recall_limit_for_budget, model_inference_signals,
     parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
-    ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
-    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope, CapabilityAdapter,
-    CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
-    CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
-    GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
-    NativeChatPromptCompiler, NativeReasoningProbe, ResourceSnapshot, SamplingMode,
-    SideEffectClass, SovereignConversationState, TaskStatus, ThermalState, TypedAction,
-    NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
+    ActionOutput, ActionPlanStatus, ActionStatus, ActionValue, ActionVerification, ActionVerifier,
+    AdapterResult, AssistantActionPlan, AssistantActionRunError, AssistantPlanDecision,
+    AuthorityGrant, AuthorityScope, CapabilityAdapter, CapabilityDescriptor, CapabilityDomain,
+    CapabilityId, CapabilityRegistry, CognitiveContext, CognitiveIdentity, CognitiveObservation,
+    CpuReferenceProvider, DistributionKind, GenerationConfig, GenerationControl, GraphGenerator,
+    LlamaSpmConfig, LlamaSpmTokenizer, NativeChatPromptCompiler, NativeReasoningProbe,
+    ResourceSnapshot, SamplingMode, SideEffectClass, SovereignConversationState, TaskStatus,
+    ThermalState, TypedAction, NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
@@ -53,6 +54,7 @@ const CHAT_EVENT_COMPLETE: u8 = 2;
 const CHAT_EVENT_CANCELLED: u8 = 3;
 const CHAT_EVENT_ERROR: u8 = 4;
 const CHAT_EVENT_APPROVAL_REQUIRED: u8 = 5;
+const CHAT_EVENT_ACTION_CHECKPOINTED: u8 = 6;
 const CHAT_STATUS_MISSING: i32 = 0;
 const CHAT_STATUS_RUNNING: i32 = 1;
 const CHAT_STATUS_COMPLETE: i32 = 2;
@@ -706,7 +708,6 @@ impl CapabilityAdapter for AndroidDeviceInteractAdapter {
                 value: ActionValue::Fields(BTreeMap::from([
                     ("surface".into(), "clipboard".into()),
                     ("operation".into(), "set_text".into()),
-                    ("receipt".into(), receipt.clone()),
                 ])),
                 evidence: vec![
                     "android-clipboard-write".into(),
@@ -1606,9 +1607,16 @@ impl ActionVerifier for AndroidProductionVerifier {
             (
                 "device.interact",
                 TypedAction::DeviceInteract {
-                    surface, operation, ..
+                    surface,
+                    operation,
+                    argument,
                 },
-            ) => {
+            ) => argument.as_ref().is_some_and(|text| {
+                let expected_receipt = format!(
+                    "clipboard-set:{}:{}",
+                    text.len(),
+                    digest_hex(&sha256(text.as_bytes()))
+                );
                 surface == "clipboard"
                     && operation == "set_text"
                     && output
@@ -1619,7 +1627,8 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .evidence
                         .iter()
                         .any(|item| item == "operation:set_text")
-            }
+                    && output.evidence.iter().any(|item| item == &expected_receipt)
+            }),
             ("app.action", TypedAction::AppAction { action, .. }) => {
                 action == "launch"
                     && output
@@ -2558,6 +2567,33 @@ fn governed_explicit_action_plan(
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|file.grant.write|{path}\t{text}\nEND"
         ))
+    } else if lower.starts_with("upload artifact ") {
+        let rest = trimmed
+            .get("upload artifact ".len()..)
+            .ok_or_else(|| "artifact upload command boundary failed".to_owned())?;
+        let Some((path, url)) = rest.rsplit_once(" to ") else {
+            return Ok(None);
+        };
+        let path = path.trim();
+        let url = url.trim();
+        let path_value = Path::new(path);
+        if path.is_empty()
+            || url.is_empty()
+            || !url.to_ascii_lowercase().starts_with("https://")
+            || path_value.is_absolute()
+            || path_value
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+            || path
+                .chars()
+                .chain(url.chars())
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|artifact.upload|{url}\t{path}\nEND"
+        ))
     } else if lower.starts_with("set clipboard to ") {
         let value = trimmed
             .get("set clipboard to ".len()..)
@@ -2685,6 +2721,32 @@ fn external_write_approval(
     )))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AndroidActionExecutionOutcome {
+    Prepared,
+    Checkpointed {
+        note: String,
+        requires_reconfirm: bool,
+    },
+    Completed,
+}
+
+fn action_checkpoint_requires_reconfirm(
+    fabric: &ActionFabric,
+    plan_id: ntd_runtime::ActionPlanId,
+) -> bool {
+    fabric
+        .state()
+        .plans
+        .get(&plan_id.0)
+        .and_then(|plan| plan.actions.get(plan.cursor))
+        .is_some_and(|action| {
+            action.side_effect == SideEffectClass::ExternalWrite
+                && action.status == ActionStatus::Retryable
+                && action.resume_token.is_none()
+        })
+}
+
 struct AndroidActionExecutionContext<'a> {
     model: &'a NativeChatModel,
     task_id: u64,
@@ -2692,13 +2754,14 @@ struct AndroidActionExecutionContext<'a> {
     prompt_limit: usize,
     resources: ResourceSnapshot,
     external_approved: bool,
+    prepare_only: bool,
 }
 
 fn execute_android_verified_actions(
     conversation: &mut SovereignConversationState,
     action_plan: &AssistantActionPlan,
     context: AndroidActionExecutionContext<'_>,
-) -> Result<(), String> {
+) -> Result<AndroidActionExecutionOutcome, String> {
     let AndroidActionExecutionContext {
         model,
         task_id,
@@ -2706,6 +2769,7 @@ fn execute_android_verified_actions(
         prompt_limit,
         resources,
         external_approved,
+        prepare_only,
     } = context;
     let supported = [
         "device.observe",
@@ -2955,7 +3019,18 @@ fn execute_android_verified_actions(
             .map_err(|error| format!("register Android capability: {error:?}"))?;
     }
 
-    let mut fabric = ActionFabric::new(registry);
+    let restored_state = conversation
+        .action_fabric_checkpoint_for_task(task_id)
+        .map(|checkpoint| {
+            decode_action_fabric_checkpoint(&registry, checkpoint)
+                .map_err(|error| format!("decode persisted TAF97 action state: {error:?}"))
+        })
+        .transpose()?;
+    let mut fabric = match restored_state {
+        Some(state) => ActionFabric::from_state(registry, state)
+            .map_err(|error| format!("restore persisted ActionFabric state: {error:?}"))?,
+        None => ActionFabric::new(registry),
+    };
     if fabric_capabilities.contains("device.observe") {
         fabric
             .register_adapter(
@@ -3121,15 +3196,79 @@ fn execute_android_verified_actions(
         .get(&task_id)
         .cloned()
         .ok_or_else(|| "model-grounded cognitive task disappeared".to_owned())?;
-    let run = execute_verified_assistant_plan(
+    let plan_id = if conversation
+        .action_fabric_checkpoint_for_task(task_id)
+        .is_some()
+    {
+        if fabric.state().plans.len() != 1 {
+            return Err("persisted ActionFabric must contain exactly one chat plan".into());
+        }
+        let plan = fabric
+            .state()
+            .plans
+            .values()
+            .next()
+            .ok_or_else(|| "persisted ActionFabric plan is missing".to_owned())?;
+        if plan.task_id != task_id {
+            return Err("persisted ActionFabric task identity mismatch".into());
+        }
+        plan.id
+    } else {
+        fabric
+            .prepare_cognitive_task(&task, action_plan.payloads.clone())
+            .map_err(|error| format!("prepare Android ActionFabric plan: {error:?}"))?
+    };
+
+    let persist_fabric = |conversation: &mut SovereignConversationState,
+                          fabric: &ActionFabric|
+     -> Result<(), String> {
+        let checkpoint = encode_action_fabric_checkpoint(fabric.registry(), fabric.state())
+            .map_err(|error| format!("encode TAF97 action state: {error:?}"))?;
+        conversation
+            .install_action_fabric_checkpoint(task_id, checkpoint)
+            .map_err(|error| format!("persist TAF97 in NCS97: {error:?}"))
+    };
+
+    persist_fabric(conversation, &fabric)?;
+    if prepare_only {
+        return Ok(AndroidActionExecutionOutcome::Prepared);
+    }
+
+    let run = match continue_verified_assistant_plan(
         &mut fabric,
+        plan_id,
         &task,
         action_plan,
         &authority,
         &mut AndroidProductionVerifier,
         user_message,
-    )
-    .map_err(|error| format!("execute verified Android action plan: {error:?}"))?;
+    ) {
+        Ok(run) => run,
+        Err(AssistantActionRunError::Incomplete {
+            plan_status,
+            action_status,
+            summary,
+        }) if plan_status == ActionPlanStatus::Suspended
+            || matches!(
+                action_status,
+                Some(ActionStatus::Retryable | ActionStatus::Suspended)
+            ) =>
+        {
+            let requires_reconfirm = action_checkpoint_requires_reconfirm(&fabric, plan_id);
+            persist_fabric(conversation, &fabric)?;
+            return Ok(AndroidActionExecutionOutcome::Checkpointed {
+                note: summary,
+                requires_reconfirm,
+            });
+        }
+        Err(error) => {
+            return Err(format!("execute verified Android action plan: {error:?}"));
+        }
+    };
+
+    conversation
+        .clear_action_fabric_checkpoint(task_id)
+        .map_err(|error| format!("clear completed TAF97 action state: {error:?}"))?;
 
     let synthesis_tokens = model
         .tokenizer
@@ -3151,7 +3290,7 @@ fn execute_android_verified_actions(
     conversation
         .record_action_planner_status(task_id, "actions")
         .map_err(|error| format!("record action planner status: {error:?}"))?;
-    Ok(())
+    Ok(AndroidActionExecutionOutcome::Completed)
 }
 
 fn submit_chat_reserved(
@@ -3301,6 +3440,7 @@ fn submit_chat_reserved(
                         prompt_limit,
                         resources,
                         external_approved: false,
+                        prepare_only: false,
                     },
                 )?;
             }
@@ -3403,22 +3543,6 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
         .set_chat_approval_status(task_id, "approved-executing")
         .map_err(|error| format!("record executing chat approval: {error:?}"))?;
 
-    {
-        let mut guard = lock_state();
-        let session = guard
-            .chat_session
-            .as_ref()
-            .filter(|session| {
-                session.request_id == request_id
-                    && session.status == NativeChatSessionStatus::WaitingApproval
-            })
-            .ok_or_else(|| "chat request changed before approved execution".to_owned())?;
-        if session.task_id != task_id {
-            return Err("chat task changed before approved execution".into());
-        }
-        guard.conversation = conversation.clone();
-    }
-
     let active = conversation
         .active()
         .cloned()
@@ -3445,9 +3569,8 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
         .context_limit
         .saturating_sub(active.max_new_tokens)
         .max(1);
-    let mut executed = conversation.clone();
-    let execution = execute_android_verified_actions(
-        &mut executed,
+    let prepared = execute_android_verified_actions(
+        &mut conversation,
         &action_plan,
         AndroidActionExecutionContext {
             model: &model,
@@ -3456,47 +3579,34 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
             prompt_limit,
             resources,
             external_approved: true,
+            prepare_only: true,
         },
-    );
-
-    match execution {
-        Ok(()) => {
-            executed
-                .set_chat_approval_status(task_id, "approved")
-                .map_err(|error| format!("record approved chat execution: {error:?}"))?;
-            let mut guard = lock_state();
-            if guard.conversation != conversation {
-                return Err("sovereign conversation changed during approved execution".into());
-            }
-            if !guard.chat_session.as_ref().is_some_and(|session| {
-                session.request_id == request_id
-                    && session.status == NativeChatSessionStatus::WaitingApproval
-            }) {
-                return Err("chat request changed during approved execution".into());
-            }
-            guard.conversation = executed;
-            if let Some(session) = guard
-                .chat_session
-                .as_mut()
-                .filter(|session| session.request_id == request_id)
-            {
-                session.status = NativeChatSessionStatus::Running;
-            }
-            Ok(true)
-        }
-        Err(error) => {
-            let mut guard = lock_state();
-            if guard.conversation == conversation {
-                guard
-                    .conversation
-                    .set_chat_approval_status(task_id, "reconfirm")
-                    .map_err(|state_error| {
-                        format!("record approval reconfirmation: {state_error:?}")
-                    })?;
-            }
-            Err(error)
-        }
+    )?;
+    if prepared != AndroidActionExecutionOutcome::Prepared {
+        return Err("approved external write did not stop at durable prepare boundary".into());
     }
+
+    let mut guard = lock_state();
+    let session = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| {
+            session.request_id == request_id
+                && session.status == NativeChatSessionStatus::WaitingApproval
+        })
+        .ok_or_else(|| "chat request changed before durable action preparation".to_owned())?;
+    if session.task_id != task_id {
+        return Err("chat task changed before durable action preparation".into());
+    }
+    guard.conversation = conversation;
+    if let Some(session) = guard
+        .chat_session
+        .as_mut()
+        .filter(|session| session.request_id == request_id)
+    {
+        session.status = NativeChatSessionStatus::Running;
+    }
+    Ok(true)
 }
 
 fn chat_status(request_id: u64) -> i32 {
@@ -3553,6 +3663,19 @@ fn chat_recalled_memory_items(request_id: u64) -> i32 {
         .and_then(|value| i32::try_from(value).ok())
         .unwrap_or(0)
 }
+
+fn chat_memory_record_count(request_id: u64) -> i32 {
+    let guard = lock_state();
+    if !guard
+        .chat_session
+        .as_ref()
+        .is_some_and(|session| session.request_id == request_id)
+    {
+        return 0;
+    }
+    i32::try_from(guard.conversation.sovereign_memory_record_count()).unwrap_or(i32::MAX)
+}
+
 fn chat_reasoning_iterations(request_id: u64) -> i32 {
     let guard = lock_state();
     let Some(session) = guard
@@ -3718,8 +3841,145 @@ fn terminal_chat_event(request_id: u64) -> Option<Vec<u8>> {
     }
 }
 
+fn advance_pending_chat_actions(request_id: u64) -> Result<Option<Vec<u8>>, String> {
+    let (task_id, model, resources, conversation) = {
+        let guard = lock_state();
+        let session = guard
+            .chat_session
+            .as_ref()
+            .filter(|session| {
+                session.request_id == request_id
+                    && session.status == NativeChatSessionStatus::Running
+            })
+            .ok_or_else(|| "chat request is not running".to_owned())?;
+        if guard
+            .conversation
+            .action_fabric_checkpoint_for_task(session.task_id)
+            .is_none()
+        {
+            return Ok(None);
+        }
+        (
+            session.task_id,
+            guard
+                .chat_model
+                .clone()
+                .ok_or_else(|| "native chat model is not loaded".to_owned())?,
+            guard.resources,
+            guard.conversation.clone(),
+        )
+    };
+
+    let active = conversation
+        .active()
+        .cloned()
+        .ok_or_else(|| "persisted action state has no active turn".to_owned())?;
+    if active.task_id != task_id {
+        return Err("persisted action state task identity mismatch".into());
+    }
+    let protocol = conversation
+        .action_plan_protocol_for_task(task_id)
+        .ok_or_else(|| "persisted action state has no canonical action protocol".to_owned())?;
+    let action_plan = match parse_native_action_plan(protocol)
+        .map_err(|error| format!("reconstruct persisted action plan: {error:?}"))?
+    {
+        AssistantPlanDecision::Actions(plan) => plan,
+        AssistantPlanDecision::Direct => {
+            return Err("persisted action protocol unexpectedly resolved to DIRECT".into())
+        }
+    };
+    let external_write = external_write_approval(&action_plan)?.is_some();
+    let approval_status = conversation
+        .chat_approval_for_task(task_id)
+        .map(|(_, _, status)| status);
+    let external_approved = approval_status == Some("approved-executing");
+    if external_write && !external_approved {
+        return Err("persisted external-write plan requires reconfirmation before resume".into());
+    }
+
+    let prompt_limit = model
+        .context_limit
+        .saturating_sub(active.max_new_tokens)
+        .max(1);
+    let mut advanced = conversation.clone();
+    let outcome = execute_android_verified_actions(
+        &mut advanced,
+        &action_plan,
+        AndroidActionExecutionContext {
+            model: &model,
+            task_id,
+            user_message: &active.user_message,
+            prompt_limit,
+            resources,
+            external_approved,
+            prepare_only: false,
+        },
+    )?;
+
+    let note = match outcome {
+        AndroidActionExecutionOutcome::Prepared => {
+            return Err("running action execution returned to prepare-only boundary".into())
+        }
+        AndroidActionExecutionOutcome::Checkpointed {
+            note,
+            requires_reconfirm,
+        } => {
+            if requires_reconfirm {
+                advanced
+                    .set_chat_approval_status(task_id, "reconfirm")
+                    .map_err(|error| {
+                        format!("require reconfirmation before external retry: {error:?}")
+                    })?;
+            }
+            note
+        }
+        AndroidActionExecutionOutcome::Completed => {
+            if external_write {
+                advanced
+                    .set_chat_approval_status(task_id, "approved")
+                    .map_err(|error| format!("commit approved action status: {error:?}"))?;
+            }
+            "verified action execution committed".to_owned()
+        }
+    };
+
+    let mut guard = lock_state();
+    if guard.conversation != conversation {
+        return Err("sovereign conversation changed during action continuation".into());
+    }
+    if !guard.chat_session.as_ref().is_some_and(|session| {
+        session.request_id == request_id
+            && session.task_id == task_id
+            && session.status == NativeChatSessionStatus::Running
+    }) {
+        return Err("chat request changed during action continuation".into());
+    }
+    guard.conversation = advanced;
+    if guard
+        .conversation
+        .chat_approval_for_task(task_id)
+        .is_some_and(|(_, _, status)| status == "reconfirm")
+    {
+        if let Some(session) = guard
+            .chat_session
+            .as_mut()
+            .filter(|session| session.request_id == request_id)
+        {
+            session.status = NativeChatSessionStatus::WaitingApproval;
+        }
+    }
+    Ok(Some(encode_chat_event(
+        CHAT_EVENT_ACTION_CHECKPOINTED,
+        None,
+        &note,
+    )))
+}
+
 fn next_chat_event(request_id: u64) -> Result<Vec<u8>, String> {
     if let Some(event) = terminal_chat_event(request_id) {
+        return Ok(event);
+    }
+    if let Some(event) = advance_pending_chat_actions(request_id)? {
         return Ok(event);
     }
 
@@ -4078,6 +4338,20 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatRecal
     };
     chat_recalled_memory_items(request_id)
 }
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatMemoryRecordCount(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jint {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    chat_memory_record_count(request_id)
+}
+
 #[allow(unsafe_code)]
 #[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatReasoningIterations(
@@ -5115,6 +5389,137 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeEn
 mod tests {
     use super::*;
 
+    struct AmbiguousExternalRetryAdapter;
+
+    impl CapabilityAdapter for AmbiguousExternalRetryAdapter {
+        fn execute(
+            &mut self,
+            _action_id: ntd_runtime::ActionId,
+            _action: &TypedAction,
+        ) -> Result<AdapterResult, String> {
+            Err("external transport outcome is ambiguous".into())
+        }
+    }
+
+    struct ResumableExternalRetryAdapter;
+
+    impl CapabilityAdapter for ResumableExternalRetryAdapter {
+        fn execute(
+            &mut self,
+            _action_id: ntd_runtime::ActionId,
+            _action: &TypedAction,
+        ) -> Result<AdapterResult, String> {
+            Ok(AdapterResult::Retryable {
+                reason: "retry with durable token".into(),
+                resume_token: Some(vec![1, 2, 3]),
+            })
+        }
+    }
+
+    #[test]
+    fn ambiguous_external_retry_requires_reconfirmation_but_resumable_token_does_not() {
+        let mut browser_registry = CapabilityRegistry::new();
+        browser_registry
+            .register(
+                CapabilityDescriptor::new(
+                    CapabilityId("browser.interact".into()),
+                    1,
+                    CapabilityDomain::Browser,
+                    SideEffectClass::ExternalWrite,
+                )
+                .expect("browser descriptor"),
+            )
+            .expect("register browser");
+        let mut browser_fabric = ActionFabric::new(browser_registry);
+        browser_fabric
+            .register_adapter(
+                CapabilityId("browser.interact".into()),
+                AmbiguousExternalRetryAdapter,
+            )
+            .expect("browser adapter");
+        let browser_graph = ntd_runtime::TaskGraph {
+            actions: vec![ntd_runtime::ActionNode {
+                id: 1,
+                capability: CapabilityId("browser.interact".into()),
+                side_effect: SideEffectClass::ExternalWrite,
+                verification_required: true,
+            }],
+        };
+        let browser_plan = browser_fabric
+            .prepare_plan(
+                1,
+                &browser_graph,
+                BTreeMap::from([(
+                    1,
+                    TypedAction::BrowserInteract {
+                        target: "body".into(),
+                        operation: "click".into(),
+                        value: None,
+                    },
+                )]),
+            )
+            .expect("browser plan");
+        let mut authority = AuthorityGrant::new();
+        authority.allow_external_write = true;
+        let report = browser_fabric
+            .execute_next(browser_plan, &authority, &mut AndroidProductionVerifier)
+            .expect("browser retry report");
+        assert_eq!(report.action_status, Some(ActionStatus::Retryable));
+        assert!(action_checkpoint_requires_reconfirm(
+            &browser_fabric,
+            browser_plan
+        ));
+
+        let mut upload_registry = CapabilityRegistry::new();
+        let mut upload_descriptor = CapabilityDescriptor::new(
+            CapabilityId("artifact.upload".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("upload descriptor");
+        upload_descriptor.resumable = true;
+        upload_registry
+            .register(upload_descriptor)
+            .expect("register upload");
+        let mut upload_fabric = ActionFabric::new(upload_registry);
+        upload_fabric
+            .register_adapter(
+                CapabilityId("artifact.upload".into()),
+                ResumableExternalRetryAdapter,
+            )
+            .expect("upload adapter");
+        let upload_graph = ntd_runtime::TaskGraph {
+            actions: vec![ntd_runtime::ActionNode {
+                id: 1,
+                capability: CapabilityId("artifact.upload".into()),
+                side_effect: SideEffectClass::ExternalWrite,
+                verification_required: true,
+            }],
+        };
+        let upload_plan = upload_fabric
+            .prepare_plan(
+                2,
+                &upload_graph,
+                BTreeMap::from([(
+                    1,
+                    TypedAction::ArtifactUpload {
+                        url: "https://example.com/upload".into(),
+                        path: "artifacts/report.bin".into(),
+                    },
+                )]),
+            )
+            .expect("upload plan");
+        let report = upload_fabric
+            .execute_next(upload_plan, &authority, &mut AndroidProductionVerifier)
+            .expect("upload retry report");
+        assert_eq!(report.action_status, Some(ActionStatus::Retryable));
+        assert!(!action_checkpoint_requires_reconfirm(
+            &upload_fabric,
+            upload_plan
+        ));
+    }
+
     #[test]
     fn governed_device_policy_routes_live_evidence() {
         assert_eq!(
@@ -5252,6 +5657,23 @@ mod tests {
             .expect("write approval")
             .expect("write approval required");
         assert_eq!(write_approval.0, "file.grant.write");
+
+        let explicit_upload = governed_explicit_action_plan(
+            "upload artifact artifacts/report.bin to https://example.com/upload",
+        )
+        .expect("explicit upload plan")
+        .expect("explicit upload action");
+        assert_eq!(
+            explicit_upload.payloads.get(&1),
+            Some(&TypedAction::ArtifactUpload {
+                url: "https://example.com/upload".into(),
+                path: "artifacts/report.bin".into(),
+            })
+        );
+        assert_eq!(
+            explicit_upload.graph.actions[0].side_effect,
+            SideEffectClass::ExternalWrite
+        );
 
         let upload = match parse_native_action_plan(
             "NTD97_ACTIONS_V1\n1|artifact.upload|https://example.com/upload\tartifacts/report.bin\nEND",
@@ -5416,18 +5838,39 @@ mod tests {
             operation: "set_text".into(),
             argument: Some("NTD97".into()),
         };
+        let device_receipt = format!(
+            "clipboard-set:{}:{}",
+            "NTD97".len(),
+            digest_hex(&sha256(b"NTD97"))
+        );
         let accepted_device = ActionOutput {
             summary: "clipboard written".into(),
             value: ActionValue::None,
             evidence: vec![
                 "android-clipboard-write".into(),
                 "operation:set_text".into(),
+                device_receipt,
             ],
         };
         assert_eq!(
             verifier.verify(&device_descriptor, &device_action, &accepted_device),
             ActionVerification::Accept
         );
+
+        let mismatched_device = ActionOutput {
+            summary: "clipboard receipt mismatch".into(),
+            value: ActionValue::None,
+            evidence: vec![
+                "android-clipboard-write".into(),
+                "operation:set_text".into(),
+                "clipboard-set:5:0000000000000000000000000000000000000000000000000000000000000000"
+                    .into(),
+            ],
+        };
+        assert!(matches!(
+            verifier.verify(&device_descriptor, &device_action, &mismatched_device),
+            ActionVerification::Reject { .. }
+        ));
 
         let app_descriptor = CapabilityDescriptor::new(
             CapabilityId("app.action".into()),

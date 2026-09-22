@@ -520,34 +520,68 @@ where
     }
 
     let plan_id = fabric.prepare_cognitive_task(task, action_plan.payloads.clone())?;
+    continue_verified_assistant_plan(
+        fabric,
+        plan_id,
+        task,
+        action_plan,
+        authority,
+        verifier,
+        user_message,
+    )
+}
+
+pub fn continue_verified_assistant_plan<V>(
+    fabric: &mut ActionFabric,
+    plan_id: ActionPlanId,
+    task: &CognitiveTask,
+    action_plan: &AssistantActionPlan,
+    authority: &AuthorityGrant,
+    verifier: &mut V,
+    user_message: &str,
+) -> Result<VerifiedAssistantActionRun, AssistantActionRunError>
+where
+    V: ActionVerifier,
+{
+    if task.graph.actions.is_empty() || task.graph != action_plan.graph {
+        return Err(AssistantActionRunError::TaskGraphMismatch);
+    }
+
+    let initial = fabric
+        .state()
+        .plans
+        .get(&plan_id.0)
+        .ok_or(AssistantActionRunError::MissingPlan)?;
+    if initial.task_id != task.id
+        || initial.actions.len() != action_plan.graph.actions.len()
+        || initial
+            .actions
+            .iter()
+            .zip(&action_plan.graph.actions)
+            .any(|(stored, planned)| {
+                stored.node_id != planned.id
+                    || stored.capability != planned.capability
+                    || stored.side_effect != planned.side_effect
+                    || stored.verification_required != planned.verification_required
+                    || action_plan.payloads.get(&planned.id) != Some(&stored.action)
+            })
+    {
+        return Err(AssistantActionRunError::TaskGraphMismatch);
+    }
+
     let mut reports = Vec::with_capacity(action_plan.graph.actions.len());
+    if initial.status != ActionPlanStatus::Completed {
+        for _ in 0..action_plan.graph.actions.len() {
+            let report = fabric.execute_next(plan_id, authority, verifier)?;
+            let status = report.plan_status;
+            let action_status = report.action_status;
+            reports.push(report);
 
-    for _ in 0..action_plan.graph.actions.len() {
-        let report = fabric.execute_next(plan_id, authority, verifier)?;
-        let status = report.plan_status;
-        let action_status = report.action_status;
-        reports.push(report);
-
-        match status {
-            ActionPlanStatus::Completed => break,
-            ActionPlanStatus::Failed
-            | ActionPlanStatus::RolledBack
-            | ActionPlanStatus::Suspended => {
-                let summary = reports
-                    .last()
-                    .map(|report| report.summary.clone())
-                    .unwrap_or_default();
-                return Err(AssistantActionRunError::Incomplete {
-                    plan_status: status,
-                    action_status,
-                    summary,
-                });
-            }
-            ActionPlanStatus::Ready => {
-                if matches!(
-                    action_status,
-                    Some(ActionStatus::Retryable | ActionStatus::Suspended)
-                ) {
+            match status {
+                ActionPlanStatus::Completed => break,
+                ActionPlanStatus::Failed
+                | ActionPlanStatus::RolledBack
+                | ActionPlanStatus::Suspended => {
                     let summary = reports
                         .last()
                         .map(|report| report.summary.clone())
@@ -557,6 +591,22 @@ where
                         action_status,
                         summary,
                     });
+                }
+                ActionPlanStatus::Ready => {
+                    if matches!(
+                        action_status,
+                        Some(ActionStatus::Retryable | ActionStatus::Suspended)
+                    ) {
+                        let summary = reports
+                            .last()
+                            .map(|report| report.summary.clone())
+                            .unwrap_or_default();
+                        return Err(AssistantActionRunError::Incomplete {
+                            plan_status: status,
+                            action_status,
+                            summary,
+                        });
+                    }
                 }
             }
         }
@@ -1035,6 +1085,109 @@ Assistant:"
                 summary,
             }) if summary == "not ready"
         ));
+    }
+
+    struct RetryThenDeviceAdapter {
+        retry: bool,
+    }
+
+    impl crate::CapabilityAdapter for RetryThenDeviceAdapter {
+        fn execute(
+            &mut self,
+            _action_id: crate::ActionId,
+            action: &TypedAction,
+        ) -> Result<crate::AdapterResult, String> {
+            if self.retry {
+                self.retry = false;
+                return Ok(crate::AdapterResult::Retryable {
+                    reason: "checkpoint first".into(),
+                    resume_token: None,
+                });
+            }
+            match action {
+                TypedAction::DeviceObserve { surface } => Ok(crate::AdapterResult::Completed {
+                    output: ActionOutput {
+                        summary: format!("observed {surface} after resume"),
+                        value: ActionValue::Text("77".into()),
+                        evidence: vec!["verified:device-local".into()],
+                    },
+                    rollback_token: None,
+                }),
+                _ => Err("unexpected action".into()),
+            }
+        }
+    }
+
+    #[test]
+    fn persisted_plan_continues_without_creating_a_second_plan() {
+        let parsed = parse_native_action_plan("NTD97_ACTIONS_V1\n1|device.observe|battery\nEND")
+            .expect("parse");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+
+        let mut registry = crate::CapabilityRegistry::new();
+        registry
+            .register(
+                crate::CapabilityDescriptor::new(
+                    CapabilityId("device.observe".into()),
+                    1,
+                    crate::CapabilityDomain::Device,
+                    SideEffectClass::ReadOnly,
+                )
+                .expect("descriptor"),
+            )
+            .expect("register");
+        let mut fabric = ActionFabric::new(registry);
+        fabric
+            .register_adapter(
+                CapabilityId("device.observe".into()),
+                RetryThenDeviceAdapter { retry: true },
+            )
+            .expect("adapter");
+
+        let mut cognition =
+            crate::CognitiveRuntime::new(crate::CognitiveIdentity(*b"NTD97-ACTIONRUN1"));
+        let task_id = cognition
+            .state_mut()
+            .submit_task(
+                ntd_core::Intent::new("battery status"),
+                plan.graph.clone(),
+                None,
+            )
+            .expect("task");
+        let task = cognition.state().tasks.get(&task_id).expect("task").clone();
+
+        assert!(matches!(
+            execute_verified_assistant_plan(
+                &mut fabric,
+                &task,
+                &plan,
+                &AuthorityGrant::new(),
+                &mut AcceptVerifier,
+                "battery status",
+            ),
+            Err(AssistantActionRunError::Incomplete {
+                action_status: Some(ActionStatus::Retryable),
+                ..
+            })
+        ));
+        assert_eq!(fabric.state().plans.len(), 1);
+
+        let resumed = continue_verified_assistant_plan(
+            &mut fabric,
+            crate::ActionPlanId(1),
+            &task,
+            &plan,
+            &AuthorityGrant::new(),
+            &mut AcceptVerifier,
+            "battery status",
+        )
+        .expect("resume");
+
+        assert_eq!(fabric.state().plans.len(), 1);
+        assert_eq!(resumed.evidence.len(), 1);
+        assert!(resumed.synthesis_prompt.contains("battery"));
     }
 
     #[test]

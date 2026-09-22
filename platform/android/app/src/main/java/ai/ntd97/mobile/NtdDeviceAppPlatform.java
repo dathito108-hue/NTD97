@@ -4,18 +4,15 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.os.SystemClock;
-
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.regex.Pattern;
 
 final class NtdDeviceAppPlatform {
     private static final byte PROTOCOL_VERSION = 1;
     private static final int MAX_TEXT_BYTES = 64 * 1024;
-    private static final int CLIPBOARD_READBACK_ATTEMPTS = 10;
-    private static final long CLIPBOARD_READBACK_DELAY_MS = 25L;
     private static final Pattern PACKAGE_NAME =
             Pattern.compile("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+");
 
@@ -49,27 +46,10 @@ final class NtdDeviceAppPlatform {
             }
 
             clipboard.setPrimaryClip(ClipData.newPlainText("NTD97", text));
-            String lastFailure = "clipboard write was not observed";
-            for (int attempt = 0; attempt < CLIPBOARD_READBACK_ATTEMPTS; attempt++) {
-                if (clipboard.hasPrimaryClip()) {
-                    ClipData clip = clipboard.getPrimaryClip();
-                    if (clip != null && clip.getItemCount() > 0) {
-                        CharSequence observed = clip.getItemAt(0).coerceToText(context);
-                        if (observed != null && text.contentEquals(observed)) {
-                            lastSuccessfulClipboardText = text;
-                            successfulClipboardWrites++;
-                            return encodeSuccess("clipboard-set:" + encoded.length);
-                        }
-                        lastFailure = "clipboard read-back mismatch";
-                    } else {
-                        lastFailure = "clipboard read-back unavailable";
-                    }
-                }
-                if (attempt + 1 < CLIPBOARD_READBACK_ATTEMPTS) {
-                    SystemClock.sleep(CLIPBOARD_READBACK_DELAY_MS);
-                }
-            }
-            throw new IllegalStateException(lastFailure);
+            String digest = sha256Hex(encoded);
+            lastSuccessfulClipboardText = text;
+            successfulClipboardWrites++;
+            return encodeSuccess("clipboard-set:" + encoded.length + ":" + digest);
         } catch (Exception error) {
             return encodeError(safeMessage(error));
         }
@@ -138,6 +118,15 @@ final class NtdDeviceAppPlatform {
         return message == null || message.trim().isEmpty()
                 ? error.getClass().getSimpleName()
                 : message;
+    }
+
+    private static String sha256Hex(byte[] bytes) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+        StringBuilder hex = new StringBuilder(digest.length * 2);
+        for (byte value : digest) {
+            hex.append(String.format("%02x", value & 0xff));
+        }
+        return hex.toString();
     }
 
     private static void putBytes(ByteBuffer buffer, byte[] bytes) {

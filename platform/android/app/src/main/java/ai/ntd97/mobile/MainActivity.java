@@ -302,6 +302,19 @@ public final class MainActivity extends Activity {
                 finishChatUi("Native response complete", true);
                 return;
             }
+            if (event.kind == NtdRuntimeHost.ChatEvent.ACTION_CHECKPOINTED) {
+                conversationRestored = true;
+                if (!NtdSessionController.checkpointConversation(this)) {
+                    finishChatUi("Durable action checkpoint failed", true);
+                    return;
+                }
+                String detail = event.text.replace('\n', ' ').trim();
+                runOnUiThread(() -> statusView.setText(
+                        detail.isEmpty()
+                                ? "Action state checkpointed"
+                                : "Action checkpointed: " + detail));
+                continue;
+            }
             if (event.kind == NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
                 pendingChatApprovalRequestId = requestId;
                 conversationRestored = true;
