@@ -537,7 +537,10 @@ public final class NtdRealModelProbeActivity extends Activity {
 
         NtdRuntimeHost.ChatEvent actionEvent = host.nextChatEvent(interruptedRequest);
         if (actionEvent.kind != NtdRuntimeHost.ChatEvent.ACTION_CHECKPOINTED) {
-            externalApprovalDiagnostic = "resume-event-kind:" + actionEvent.kind;
+            externalApprovalDiagnostic = "resume-event-kind:"
+                    + actionEvent.kind
+                    + ":"
+                    + safeDiagnostic(actionEvent.text);
             return false;
         }
         if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites + 1) {
