@@ -33,6 +33,17 @@ public final class NtdLifecycleProbeActivity extends Activity {
                 ? "build_attestation=ok"
                 : "build_attestation=failed");
 
+        byte[] accessibilityDefault = NtdDeviceAppPlatform.accessibilityInteract(
+                getPackageName(),
+                "accessibility.click",
+                "view_id\t" + getPackageName() + ":id/ntd_accessibility_probe_button");
+        boolean accessibilityDefaultBlocked = accessibilityDefault.length >= 2
+                && accessibilityDefault[0] == 1
+                && accessibilityDefault[1] == 0;
+        results.add(accessibilityDefaultBlocked
+                ? "accessibility_default_block=ok"
+                : "accessibility_default_block=failed");
+
         NtdRuntimeHost host = NtdSessionController.runtime();
 
         if (host == null) {
