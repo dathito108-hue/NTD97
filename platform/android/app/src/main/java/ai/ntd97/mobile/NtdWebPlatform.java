@@ -333,6 +333,22 @@ final class NtdWebPlatform {
         }
     }
 
+    static boolean probeSearchCredentialStorageForTest(
+            Context context,
+            String plaintext) {
+        if (!BuildConfig.DEBUG || plaintext == null || plaintext.isEmpty()) {
+            return false;
+        }
+        SharedPreferences preferences = context
+                .getApplicationContext()
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String encoded = preferences.getString(SEARCH_CREDENTIAL_VALUE_KEY, "");
+        return encoded != null
+                && !encoded.isEmpty()
+                && !encoded.contains(plaintext)
+                && !encoded.equals(plaintext);
+    }
+
     static boolean probeSearchCredentialHeaderForTest() {
         if (!BuildConfig.DEBUG) {
             return false;
