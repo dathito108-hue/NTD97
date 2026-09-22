@@ -3656,6 +3656,19 @@ fn chat_recalled_memory_items(request_id: u64) -> i32 {
         .and_then(|value| i32::try_from(value).ok())
         .unwrap_or(0)
 }
+
+fn chat_memory_record_count(request_id: u64) -> i32 {
+    let guard = lock_state();
+    if !guard
+        .chat_session
+        .as_ref()
+        .is_some_and(|session| session.request_id == request_id)
+    {
+        return 0;
+    }
+    i32::try_from(guard.conversation.sovereign_memory_record_count()).unwrap_or(i32::MAX)
+}
+
 fn chat_reasoning_iterations(request_id: u64) -> i32 {
     let guard = lock_state();
     let Some(session) = guard
@@ -4318,6 +4331,20 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatRecal
     };
     chat_recalled_memory_items(request_id)
 }
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatMemoryRecordCount(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jint {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    chat_memory_record_count(request_id)
+}
+
 #[allow(unsafe_code)]
 #[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatReasoningIterations(
