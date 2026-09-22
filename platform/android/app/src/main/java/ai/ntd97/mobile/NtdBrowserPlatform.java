@@ -45,6 +45,7 @@ final class NtdBrowserPlatform {
     private static final int MAX_OBSERVED_TEXT_CHARS = 64 * 1024;
     private static final String PREFS_NAME = "ntd97-browser";
     private static final String LAST_VERIFIED_URL_KEY = "last-verified-url";
+    private static final String LAST_VERIFIED_ORIGIN_KEY = "last-verified-origin";
     private static final String SESSION_TARGET = "session";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final AtomicBoolean BUSY = new AtomicBoolean();
@@ -76,12 +77,14 @@ final class NtdBrowserPlatform {
             Context context = requireContext();
             String requestedTarget = normalizeObserveTarget(rawTarget);
             URL target = resolveObserveTarget(context, requestedTarget);
+            String expectedOrigin = browserOrigin(target);
             AtomicReference<byte[]> result = new AtomicReference<>();
             CountDownLatch latch = new CountDownLatch(1);
             MAIN.post(() -> performObserve(
                     context,
                     requestedTarget,
                     target.toExternalForm(),
+                    expectedOrigin,
                     result,
                     latch));
             if (!latch.await(OPERATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
@@ -140,12 +143,13 @@ final class NtdBrowserPlatform {
             Context context,
             String requestedTarget,
             String target,
+            String expectedOrigin,
             AtomicReference<byte[]> result,
             CountDownLatch latch) {
         try {
             WebView view = ensureWebView(context);
             AtomicBoolean completed = new AtomicBoolean();
-            view.setWebViewClient(new GuardedClient(result, latch, completed) {
+            view.setWebViewClient(new GuardedClient(result, latch, completed, expectedOrigin) {
                 @Override
                 public void onPageFinished(WebView finishedView, String url) {
                     if (completed.get()) {
@@ -153,6 +157,14 @@ final class NtdBrowserPlatform {
                     }
                     try {
                         URL finalUrl = validatePublicHttps(url);
+                        if (!browserOrigin(finalUrl).equals(expectedOrigin)) {
+                            finish(
+                                    completed,
+                                    result,
+                                    latch,
+                                    encodeError("browser main-frame origin changed during observation"));
+                            return;
+                        }
                         String script = "(function(){"
                                 + "var t=document.body?document.body.innerText:'';"
                                 + "if(t.length>" + MAX_OBSERVED_TEXT_CHARS + "){t=t.slice(0,"
@@ -224,8 +236,10 @@ final class NtdBrowserPlatform {
         try {
             if ("navigate".equals(operation)) {
                 URL destination = validatePublicHttps(target);
+                String expectedOrigin = browserOrigin(destination);
                 WebView view = ensureWebView(context);
-                view.setWebViewClient(new GuardedClient(result, latch, completed) {
+                view.setWebViewClient(new GuardedClient(
+                        result, latch, completed, expectedOrigin) {
                     @Override
                     public void onPageFinished(WebView finishedView, String url) {
                         if (completed.get()) {
@@ -233,6 +247,14 @@ final class NtdBrowserPlatform {
                         }
                         try {
                             URL finalUrl = validatePublicHttps(url);
+                            if (!browserOrigin(finalUrl).equals(expectedOrigin)) {
+                                finish(
+                                        completed,
+                                        result,
+                                        latch,
+                                        encodeError("browser navigation changed origin"));
+                                return;
+                            }
                             persistVerifiedSessionUrl(context, finalUrl);
                             long receiptId = RECEIPT_COUNTER.incrementAndGet();
                             String receipt = browserReceipt(
@@ -269,7 +291,10 @@ final class NtdBrowserPlatform {
                 finish(completed, result, latch, encodeError("browser has no active page"));
                 return;
             }
-            validatePublicHttps(current);
+            URL currentUrl = validatePublicHttps(current);
+            String expectedOrigin = browserOrigin(currentUrl);
+            view.setWebViewClient(new GuardedClient(
+                    result, latch, completed, expectedOrigin));
 
             String selector = JSONObject.quote(target);
             String uniquePrefix = "try{var m=document.querySelectorAll(" + selector + ");"
@@ -332,6 +357,9 @@ final class NtdBrowserPlatform {
                                 throw new IOException("browser interaction lost active URL");
                             }
                             URL verifiedFinalUrl = validatePublicHttps(finalUrl);
+                            if (!browserOrigin(verifiedFinalUrl).equals(expectedOrigin)) {
+                                throw new IOException("browser interaction changed origin");
+                            }
                             persistVerifiedSessionUrl(context, verifiedFinalUrl);
                             long receiptId = RECEIPT_COUNTER.incrementAndGet();
                             String receipt = browserReceipt(
@@ -456,27 +484,50 @@ final class NtdBrowserPlatform {
         SharedPreferences preferences =
                 context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String stored = preferences.getString(LAST_VERIFIED_URL_KEY, "");
-        if (stored == null || stored.isEmpty()) {
-            throw new IOException("browser session has no persisted URL");
+        String storedOrigin = preferences.getString(LAST_VERIFIED_ORIGIN_KEY, "");
+        if (stored == null || stored.isEmpty() || storedOrigin == null || storedOrigin.isEmpty()) {
+            throw new IOException("browser session has no persisted verified location");
         }
         try {
-            return validatePublicHttps(stored);
+            URL verified = validatePublicHttps(stored);
+            if (!browserOrigin(verified).equals(storedOrigin)) {
+                throw new IOException("persisted browser session origin mismatch");
+            }
+            return verified;
         } catch (IOException error) {
-            preferences.edit().remove(LAST_VERIFIED_URL_KEY).commit();
-            throw new IOException("persisted browser session URL is invalid", error);
+            preferences.edit()
+                    .remove(LAST_VERIFIED_URL_KEY)
+                    .remove(LAST_VERIFIED_ORIGIN_KEY)
+                    .commit();
+            throw new IOException("persisted browser session location is invalid", error);
         }
     }
 
     private static void persistVerifiedSessionUrl(Context context, URL url) throws IOException {
         URL verified = validatePublicHttps(url.toExternalForm());
+        String origin = browserOrigin(verified);
         boolean committed = context
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putString(LAST_VERIFIED_URL_KEY, verified.toExternalForm())
+                .putString(LAST_VERIFIED_ORIGIN_KEY, origin)
                 .commit();
         if (!committed) {
-            throw new IOException("browser session URL persistence failed");
+            throw new IOException("browser session location persistence failed");
         }
+    }
+
+    private static String browserOrigin(URL url) throws IOException {
+        if (!"https".equalsIgnoreCase(url.getProtocol())
+                || url.getHost() == null
+                || url.getHost().isEmpty()) {
+            throw new IOException("browser origin is not HTTPS");
+        }
+        int port = url.getPort() == -1 ? url.getDefaultPort() : url.getPort();
+        if (port <= 0) {
+            port = 443;
+        }
+        return "https://" + url.getHost().toLowerCase(java.util.Locale.ROOT) + ":" + port;
     }
 
     private static String browserReceipt(
@@ -651,20 +702,32 @@ final class NtdBrowserPlatform {
         private final AtomicReference<byte[]> result;
         private final CountDownLatch latch;
         private final AtomicBoolean completed;
+        private final String expectedMainFrameOrigin;
 
         GuardedClient(
                 AtomicReference<byte[]> result,
                 CountDownLatch latch,
-                AtomicBoolean completed) {
+                AtomicBoolean completed,
+                String expectedMainFrameOrigin) {
             this.result = result;
             this.latch = latch;
             this.completed = completed;
+            this.expectedMainFrameOrigin = expectedMainFrameOrigin;
         }
 
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             try {
-                validatePublicHttps(request.getUrl().toString());
+                URL verified = validatePublicHttps(request.getUrl().toString());
+                if (request.isForMainFrame()
+                        && !browserOrigin(verified).equals(expectedMainFrameOrigin)) {
+                    finish(
+                            completed,
+                            result,
+                            latch,
+                            encodeError("blocked cross-origin browser navigation"));
+                    return true;
+                }
                 return false;
             } catch (Exception error) {
                 finish(completed, result, latch, encodeError("blocked browser navigation"));
