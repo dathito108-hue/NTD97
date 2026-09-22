@@ -2983,23 +2983,17 @@ fn production_capability_probe(
     }
     let downloaded = fs::read(root.join("m13/download.html"))
         .map_err(|error| format!("read committed artifact download: {error}"))?;
-    if downloaded.is_empty()
-        || sha256(&downloaded)
-            != match &artifact_output.value {
-                ActionValue::Fields(fields) => {
-                    let expected = fields
-                        .get("sha256")
-                        .ok_or_else(|| "artifact output missing sha256".to_owned())?;
-                    let actual = digest_hex(&sha256(&downloaded));
-                    if &actual != expected {
-                        return Err("artifact output hash does not match committed bytes".into());
-                    }
-                    sha256(&downloaded)
-                }
-                _ => return Err("artifact output did not contain field evidence".into()),
-            }
-    {
-        return Err("artifact committed bytes failed hash verification".into());
+    if downloaded.is_empty() {
+        return Err("artifact committed empty content".into());
+    }
+    let ActionValue::Fields(fields) = &artifact_output.value else {
+        return Err("artifact output did not contain field evidence".into());
+    };
+    let expected_hash = fields
+        .get("sha256")
+        .ok_or_else(|| "artifact output missing sha256".to_owned())?;
+    if digest_hex(&sha256(&downloaded)) != *expected_hash {
+        return Err("artifact output hash does not match committed bytes".into());
     }
     artifact
         .rollback(
