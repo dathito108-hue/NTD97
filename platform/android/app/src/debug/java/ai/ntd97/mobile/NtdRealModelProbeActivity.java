@@ -295,7 +295,14 @@ public final class NtdRealModelProbeActivity extends Activity {
                         "snippet",
                         "X-NTD97-Probe",
                         "NTD97-CREDENTIAL-PROBE");
-                if (!credentialConfigured
+                if (!credentialConfigured) {
+                    throw new IOException("failed to configure WebSearch credential probe");
+                }
+                NtdWebPlatform.initialize(this);
+                NtdWebPlatform.SearchConfiguration credentialConfiguration =
+                        NtdWebPlatform.searchConfiguration();
+                if (!credentialConfiguration.hasCredential()
+                        || !"X-NTD97-Probe".equals(credentialConfiguration.credentialHeaderName)
                         || !NtdWebPlatform.probeSearchCredentialHeaderForTest()) {
                     throw new IOException("WebSearch credential header was not delivered");
                 }
@@ -319,6 +326,14 @@ public final class NtdRealModelProbeActivity extends Activity {
                         "");
                 if (!openSearchConfigured) {
                     throw new IOException("failed to configure OpenSearch discovery probe");
+                }
+                NtdWebPlatform.initialize(this);
+                NtdWebPlatform.SearchConfiguration openSearchConfiguration =
+                        NtdWebPlatform.searchConfiguration();
+                if (!NtdWebPlatform.SEARCH_MODE_OPENSEARCH.equals(openSearchConfiguration.mode)
+                        || openSearchConfiguration.hasCredential()
+                        || openSearchConfiguration.openSearchDescription.isEmpty()) {
+                    throw new IOException("OpenSearch profile did not persist/reload");
                 }
                 byte[] openSearchResult = NtdWebPlatform.search("NTD97", 3);
                 if (normalizedSearchResultCount(openSearchResult) <= 0) {
