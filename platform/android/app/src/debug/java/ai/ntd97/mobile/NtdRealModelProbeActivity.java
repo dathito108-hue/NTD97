@@ -99,7 +99,7 @@ public final class NtdRealModelProbeActivity extends Activity {
             return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
-        long requestId = host.submitChat("Once upon a time", 1);
+        long requestId = host.submitChat("Once", 2);
         if (requestId < 0) {
             return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
@@ -127,7 +127,7 @@ public final class NtdRealModelProbeActivity extends Activity {
         boolean actionPlannerOk = actionPlannerStatusKnown(host, requestId);
         boolean actionSafetyOk = actionPlannerInvariantHolds(host, requestId);
 
-        long checkpointRequest = host.submitChat("Once upon a time resume this response", 4);
+        long checkpointRequest = host.submitChat("Once resume this response", 4);
         boolean restoreOk = false;
         boolean storeOk = false;
         boolean memoryOk = false;
@@ -190,7 +190,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                                 && restoredMemory > 0
                                 && actionPlannerStatusKnown(host, restoredRequest)
                                 && actionPlannerInvariantHolds(host, restoredRequest)
-                                && host.chatTranscript().contains("resume this response");
+                                && host.chatTranscript().contains("Once resume this response");
                     }
                 }
             }
