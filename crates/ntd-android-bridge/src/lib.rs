@@ -2215,7 +2215,10 @@ fn execute_android_verified_actions(
     } = context;
     let supported = [
         "device.observe",
+        "web.search",
         "web.fetch",
+        "browser.observe",
+        "browser.interact",
         "file.read",
         "file.write",
         "artifact.download",
@@ -2248,6 +2251,21 @@ fn execute_android_verified_actions(
                 CapabilityDomain::Device,
                 SideEffectClass::ReadOnly,
             ),
+            "web.search" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("web.search".into()),
+                    1,
+                    CapabilityDomain::Web,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
             "web.fetch" => {
                 let mut descriptor = CapabilityDescriptor::new(
                     CapabilityId("web.fetch".into()),
@@ -2260,6 +2278,40 @@ fn execute_android_verified_actions(
                         AuthorityScope::new("network.read")
                             .map_err(|error| format!("network scope: {error:?}"))?,
                     );
+                }
+                descriptor
+            }
+            "browser.observe" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("browser.observe".into()),
+                    1,
+                    CapabilityDomain::Browser,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.extend([
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                        AuthorityScope::new("browser.observe")
+                            .map_err(|error| format!("browser observe scope: {error:?}"))?,
+                    ]);
+                }
+                descriptor
+            }
+            "browser.interact" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("browser.interact".into()),
+                    1,
+                    CapabilityDomain::Browser,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.extend([
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                        AuthorityScope::new("browser.interact")
+                            .map_err(|error| format!("browser interaction scope: {error:?}"))?,
+                    ]);
                 }
                 descriptor
             }
@@ -2367,10 +2419,31 @@ fn execute_android_verified_actions(
             )
             .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
     }
+    if fabric_capabilities.contains("web.search") {
+        fabric
+            .register_adapter(CapabilityId("web.search".into()), AndroidWebSearchAdapter)
+            .map_err(|error| format!("register Android WebSearch adapter: {error:?}"))?;
+    }
     if fabric_capabilities.contains("web.fetch") {
         fabric
             .register_adapter(CapabilityId("web.fetch".into()), AndroidWebFetchAdapter)
             .map_err(|error| format!("register Android HTTPS adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("browser.observe") {
+        fabric
+            .register_adapter(
+                CapabilityId("browser.observe".into()),
+                AndroidBrowserObserveAdapter,
+            )
+            .map_err(|error| format!("register Android browser observe adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("browser.interact") {
+        fabric
+            .register_adapter(
+                CapabilityId("browser.interact".into()),
+                AndroidBrowserInteractAdapter,
+            )
+            .map_err(|error| format!("register Android browser interaction adapter: {error:?}"))?;
     }
     if fabric_capabilities.contains("file.read") || fabric_capabilities.contains("file.write") {
         let adapter = AndroidScopedFileAdapter::new(model.capability_root.clone())?;
@@ -2416,6 +2489,12 @@ fn execute_android_verified_actions(
             AuthorityScope::new("file.app_private")
                 .map_err(|error| format!("file authority scope: {error:?}"))?,
         );
+    if fabric_capabilities.contains("browser.observe") {
+        authority = authority.with_scope(
+            AuthorityScope::new("browser.observe")
+                .map_err(|error| format!("browser observe authority scope: {error:?}"))?,
+        );
+    }
     if action_plan
         .graph
         .actions
@@ -2426,6 +2505,12 @@ fn execute_android_verified_actions(
             return Err("external-write action requires explicit chat approval".into());
         }
         authority.allow_external_write = true;
+        if fabric_capabilities.contains("browser.interact") {
+            authority = authority.with_scope(
+                AuthorityScope::new("browser.interact")
+                    .map_err(|error| format!("browser interaction authority scope: {error:?}"))?,
+            );
+        }
         if fabric_capabilities.contains("device.interact") {
             authority = authority.with_scope(
                 AuthorityScope::new("device.clipboard.write")
