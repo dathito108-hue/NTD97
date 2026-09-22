@@ -1512,7 +1512,9 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .any(|item| item == "android-user-granted-file")
                     && output.evidence.iter().any(|item| item == "operation:read")
             }
-            ("file.grant.write", TypedAction::FileWrite { path, .. }) => {
+            ("file.grant.write", TypedAction::FileWrite { path, bytes }) => {
+                let digest = digest_hex(&sha256(bytes));
+                let receipt_suffix = format!(":{}:{digest}", bytes.len());
                 let path_matches = granted_file_parts(path)
                     .map(|(alias, relative)| {
                         output
@@ -1534,7 +1536,16 @@ impl ActionVerifier for AndroidProductionVerifier {
                     && output
                         .evidence
                         .iter()
-                        .any(|item| item.starts_with("receipt:grant-write:"))
+                        .filter_map(|item| item.strip_prefix("receipt:grant-write:"))
+                        .any(|receipt| receipt.ends_with(&receipt_suffix))
+                    && matches!(
+                        &output.value,
+                        ActionValue::Fields(fields)
+                            if fields.get("bytes") == Some(&bytes.len().to_string())
+                                && fields
+                                    .get("receipt")
+                                    .is_some_and(|receipt| receipt.ends_with(&receipt_suffix))
+                    )
             }
             ("artifact.download", TypedAction::ArtifactDownload { .. }) => {
                 output
@@ -1551,6 +1562,14 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .any(|item| item.starts_with("sha256:"))
             }
             ("artifact.upload", TypedAction::ArtifactUpload { url, .. }) => {
+                let fields = match &output.value {
+                    ActionValue::Fields(fields) => Some(fields),
+                    _ => None,
+                };
+                let field_url = fields.and_then(|fields| fields.get("url"));
+                let field_status = fields.and_then(|fields| fields.get("status"));
+                let field_hash = fields.and_then(|fields| fields.get("sha256"));
+                let field_bytes = fields.and_then(|fields| fields.get("bytes"));
                 output
                     .evidence
                     .iter()
@@ -1559,14 +1578,27 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .evidence
                         .iter()
                         .any(|item| item == "transport:https-put")
-                    && output
-                        .evidence
-                        .iter()
-                        .any(|item| item.starts_with("status:2"))
-                    && output
-                        .evidence
-                        .iter()
-                        .any(|item| item.starts_with("sha256:"))
+                    && field_url == Some(url)
+                    && field_status.is_some_and(|status| status.starts_with('2'))
+                    && field_hash.is_some_and(|hash| hash.len() == 64)
+                    && field_bytes
+                        .and_then(|bytes| bytes.parse::<usize>().ok())
+                        .is_some_and(|bytes| bytes > 0 && bytes <= MAX_PLATFORM_TEXT_BYTES)
+                    && output.evidence.iter().any(|item| {
+                        field_status.is_some_and(|status| {
+                            item.strip_prefix("status:") == Some(status.as_str())
+                        })
+                    })
+                    && output.evidence.iter().any(|item| {
+                        field_hash.is_some_and(|hash| {
+                            item.strip_prefix("sha256:") == Some(hash.as_str())
+                        })
+                    })
+                    && output.evidence.iter().any(|item| {
+                        field_bytes.is_some_and(|bytes| {
+                            item.strip_prefix("bytes:") == Some(bytes.as_str())
+                        })
+                    })
                     && output
                         .evidence
                         .iter()
