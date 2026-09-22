@@ -1000,6 +1000,168 @@ fn run_constrained_device_planner(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GovernedWebCandidate {
+    label: &'static str,
+    capability: &'static str,
+    payload: String,
+}
+
+fn canonical_action_payload(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if matches!(ch, '|' | '\r' | '\n') { ' ' } else { ch })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn first_web_url(user_message: &str) -> Option<String> {
+    user_message.split_whitespace().find_map(|word| {
+        let candidate = word.trim_matches(|ch: char| {
+            matches!(ch, ',' | ';' | ')' | ']' | '}' | '>' | '"' | '\'')
+        });
+        if candidate.starts_with("https://") || candidate.starts_with("http://") {
+            Some(candidate.to_owned())
+        } else {
+            None
+        }
+    })
+}
+
+fn governed_web_candidates(user_message: &str) -> Vec<GovernedWebCandidate> {
+    let normalized = user_message.to_ascii_lowercase();
+    let mut candidates = Vec::new();
+
+    if let Some(url) = first_web_url(user_message) {
+        candidates.push(GovernedWebCandidate {
+            label: "fetch",
+            capability: "web.fetch",
+            payload: url,
+        });
+    }
+
+    let search_requested = normalized.contains("search")
+        || normalized.contains("look up")
+        || normalized.contains("lookup")
+        || normalized.contains("find online")
+        || normalized.contains("on the web")
+        || normalized.contains("internet")
+        || normalized.contains("online");
+    if search_requested {
+        let query = canonical_action_payload(user_message);
+        if !query.is_empty() {
+            candidates.push(GovernedWebCandidate {
+                label: "search",
+                capability: "web.search",
+                payload: query,
+            });
+        }
+    }
+
+    candidates
+}
+
+fn run_constrained_web_planner(
+    model: &NativeChatModel,
+    user_message: &str,
+    candidates: &[GovernedWebCandidate],
+) -> Result<NativeActionPlanningOutcome, String> {
+    if candidates.is_empty() {
+        return Ok(NativeActionPlanningOutcome::Invalid);
+    }
+
+    let options = candidates
+        .iter()
+        .map(|candidate| candidate.label)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let prompt = format!(
+        "Choose the required read-only web action. Options: {options}. User: {user_message}\nChoice: "
+    );
+    let prompt_tokens = model
+        .tokenizer
+        .encode(&prompt, true)
+        .map_err(|error| format!("encode constrained web planner prompt: {error:?}"))?;
+    if prompt_tokens.is_empty() || prompt_tokens.len() >= model.context_limit {
+        return Ok(NativeActionPlanningOutcome::Invalid);
+    }
+
+    let generator = GraphGenerator::new(
+        model.activation.graph.clone(),
+        CpuReferenceProvider,
+        BTreeMap::new(),
+        model.activation.manifest.token_input,
+        usize::try_from(model.activation.manifest.distribution_output)
+            .map_err(|_| "distribution output does not fit usize".to_owned())?,
+        usize::try_from(model.activation.manifest.vocabulary_size)
+            .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
+    )
+    .map_err(|error| format!("build constrained web planner generator: {error:?}"))?;
+
+    let mut best: Option<(&GovernedWebCandidate, f32)> = None;
+    for candidate in candidates {
+        let candidate_tokens = model
+            .tokenizer
+            .encode(candidate.label, false)
+            .map_err(|error| format!("encode constrained web candidate: {error:?}"))?;
+        let score = generator
+            .score_continuation_with_resolver(
+                &model.resolver,
+                &prompt_tokens,
+                &candidate_tokens,
+                model.context_limit,
+            )
+            .map_err(|error| format!("score constrained web candidate: {error:?}"))?;
+        if !score.is_finite() {
+            return Ok(NativeActionPlanningOutcome::Invalid);
+        }
+        let replace = best
+            .as_ref()
+            .is_none_or(|(_, best_score)| score > *best_score);
+        if replace {
+            best = Some((candidate, score));
+        }
+    }
+
+    let Some((selected, _)) = best else {
+        return Ok(NativeActionPlanningOutcome::Invalid);
+    };
+    let canonical = format!(
+        "{NATIVE_ACTION_PROTOCOL_V1}\n1|{}|{}\nEND",
+        selected.capability, selected.payload
+    );
+    Ok(match parse_native_action_plan(&canonical) {
+        Ok(AssistantPlanDecision::Actions(plan)) => NativeActionPlanningOutcome::Actions(plan),
+        _ => NativeActionPlanningOutcome::Invalid,
+    })
+}
+
+fn web_descriptor(id: &str) -> Result<CapabilityDescriptor, String> {
+    let mut descriptor = CapabilityDescriptor::new(
+        CapabilityId(id.to_owned()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("build {id} descriptor: {error:?}"))?;
+    descriptor
+        .required_scopes
+        .push(AuthorityScope::new("network.read").map_err(|error| {
+            format!("build network.read authority scope: {error:?}")
+        })?);
+    Ok(descriptor)
+}
+
+fn android_web_config() -> WebAdapterConfig {
+    WebAdapterConfig {
+        max_body_bytes: 128 * 1024,
+        max_text_bytes: 4 * 1024,
+        ..WebAdapterConfig::default()
+    }
+}
+
 fn execute_android_verified_actions(
     conversation: &mut SovereignConversationState,
     model: &NativeChatModel,
