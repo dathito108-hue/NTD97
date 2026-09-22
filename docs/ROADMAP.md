@@ -441,6 +441,10 @@ Current implementation:
 - production Android `app.action` currently supports exact-package `launch` through an explicit Android Intent and emits a native evidence receipt without broad package-query permission;
 - both app/device write capabilities require dedicated scopes plus `allow_external_write=true`; default grants are proven to deny execution before the side effect;
 - Android emulator acceptance verifies both default authority rejection and explicit-authority clipboard/app-launch execution.
+- native `artifact.download` is a first-class reversible/resumable Web-domain action persisted in TAF97 0.3 rather than a loose `web.fetch + file.write` composition;
+- Android artifact downloads use the hardened HTTPS boundary, stage bytes under the app-private capability root, persist hash + rollback state in the ActionFabric resume token, then hash-verify and atomic-rename only during resume;
+- completed artifact downloads emit SHA-256/path/byte-count receipts, support rollback to the prior file/absent state and preserve staged state across action checkpoints;
+- Android emulator acceptance requires real HTTPS artifact staging, suspended action state, verified resume/commit and rollback.
 
 Still required before M13 completion:
 
@@ -448,7 +452,7 @@ Still required before M13 completion:
 - browser observe/interact production adapter;
 - broader Android storage surfaces through explicit platform/user grants;
 - connect production app/device external-write adapters to the canonical chat approval/suspend/resume flow; accessibility-assisted interaction remains fail-closed until its explicit-authority adapter is implemented;
-- verified download/upload/artifact handling and resumable network transitions;
+- verified upload handling and broader resumable network transitions beyond bounded artifact downloads;
 - paired-PC integration into the same production mixed TaskGraph;
 - real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
 

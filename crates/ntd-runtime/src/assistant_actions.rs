@@ -131,6 +131,22 @@ fn parse_action_line(
         "web.fetch" => TypedAction::WebFetch {
             url: payload.to_owned(),
         },
+        "artifact.download" => {
+            let (url, path) = payload
+                .split_once('\t')
+                .ok_or(AssistantPlanError::InvalidPayload)?;
+            if url.trim().is_empty()
+                || path.trim().is_empty()
+                || url != url.trim()
+                || path != path.trim()
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::ArtifactDownload {
+                url: url.to_owned(),
+                path: path.to_owned(),
+            }
+        }
         "browser.observe" => TypedAction::BrowserObserve {
             target: payload.to_owned(),
         },
@@ -218,7 +234,7 @@ fn parse_action_line(
 
     let capability_id = CapabilityId(capability.to_owned());
     let side_effect = match capability {
-        "file.write" => SideEffectClass::Reversible,
+        "file.write" | "artifact.download" => SideEffectClass::Reversible,
         "device.interact" | "app.action" => SideEffectClass::ExternalWrite,
         _ => SideEffectClass::ReadOnly,
     };
@@ -507,6 +523,28 @@ END",
             .actions
             .iter()
             .all(|node| node.side_effect == SideEffectClass::ReadOnly));
+    }
+
+    #[test]
+    fn resumable_artifact_download_materializes_reversible_payload() {
+        let parsed = parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|artifact.download|https://example.com/file.bin\tartifacts/file.bin\nEND",
+        )
+        .expect("plan");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+        assert_eq!(
+            plan.graph.actions[0].side_effect,
+            SideEffectClass::Reversible
+        );
+        assert_eq!(
+            plan.payloads.get(&1),
+            Some(&TypedAction::ArtifactDownload {
+                url: "https://example.com/file.bin".into(),
+                path: "artifacts/file.bin".into(),
+            })
+        );
     }
 
     #[test]
