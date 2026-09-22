@@ -965,9 +965,7 @@ fn run_constrained_device_planner(
     let Some((surface, _)) = best else {
         return Ok(NativeActionPlanningOutcome::Invalid);
     };
-    let canonical = format!(
-        "{NATIVE_ACTION_PROTOCOL_V1}\n1|device.observe|{surface}\nEND"
-    );
+    let canonical = format!("{NATIVE_ACTION_PROTOCOL_V1}\n1|device.observe|{surface}\nEND");
     Ok(match parse_native_action_plan(&canonical) {
         Ok(AssistantPlanDecision::Actions(plan)) => NativeActionPlanningOutcome::Actions(plan),
         _ => NativeActionPlanningOutcome::Invalid,
@@ -2095,7 +2093,6 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeEn
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2114,7 +2111,10 @@ mod tests {
             governed_device_surfaces("How much RAM is available?"),
             Some(vec!["memory", "resources"])
         );
-        assert_eq!(governed_device_surfaces("remember our conversation memory"), None);
+        assert_eq!(
+            governed_device_surfaces("remember our conversation memory"),
+            None
+        );
         assert_eq!(governed_device_surfaces("tell me a story"), None);
     }
 
@@ -2143,7 +2143,10 @@ mod tests {
             panic!("expected field evidence");
         };
 
-        assert_eq!(fields.get("battery_percent").map(String::as_str), Some("77"));
+        assert_eq!(
+            fields.get("battery_percent").map(String::as_str),
+            Some("77")
+        );
         assert_eq!(fields.get("charging").map(String::as_str), Some("true"));
         assert_eq!(fields.get("surface").map(String::as_str), Some("battery"));
         assert!(!fields.contains_key("available_ram_bytes"));
