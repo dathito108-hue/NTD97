@@ -672,6 +672,10 @@ impl SovereignConversationState {
             .ok()
     }
 
+    pub fn sovereign_memory_record_count(&self) -> usize {
+        self.cognition.state().memory.len()
+    }
+
     pub fn recall_conversation_context(
         &mut self,
         query: &str,
@@ -1373,10 +1377,12 @@ mod tests {
         state.append_generated(active, 22, "par").expect("append");
         state.append_generated(active, 23, "tial").expect("append");
 
+        assert_eq!(state.sovereign_memory_record_count(), 1);
         let encoded = encode_conversation_checkpoint(&state).expect("encode");
         let restored = decode_conversation_checkpoint(&encoded).expect("decode");
 
         assert_eq!(restored, state);
+        assert_eq!(restored.sovereign_memory_record_count(), 1);
         assert_eq!(
             restored.all_tokens_for_active().expect("tokens"),
             vec![20, 21, 22, 23]
