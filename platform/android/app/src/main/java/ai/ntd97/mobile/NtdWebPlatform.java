@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+import android.util.Xml;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -40,12 +41,8 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.net.ssl.HttpsURLConnection;
-import javax.xml.parsers.DocumentBuilderFactory;
 
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
+import org.xmlpull.v1.XmlPullParser;
 
 final class NtdWebPlatform {
     private static final int CONNECT_TIMEOUT_MS = 10_000;
@@ -636,37 +633,45 @@ final class NtdWebPlatform {
         if (body.length == 0 || body.length > MAX_BODY_BYTES) {
             throw new IOException("OpenSearch description is empty or oversized");
         }
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        factory.setNamespaceAware(true);
-        factory.setXIncludeAware(false);
-        factory.setExpandEntityReferences(false);
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-        factory.setFeature(
-                "http://apache.org/xml/features/nonvalidating/load-external-dtd",
-                false);
-        Document document;
+        XmlPullParser parser = Xml.newPullParser();
+        parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true);
+        parser.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false);
         try (ByteArrayInputStream input = new ByteArrayInputStream(body)) {
-            document = factory.newDocumentBuilder().parse(input);
-        }
-        NodeList urls = document.getElementsByTagNameNS("*", "Url");
-        for (int index = 0; index < urls.getLength(); index++) {
-            Node node = urls.item(index);
-            if (!(node instanceof Element)) {
-                continue;
+            parser.setInput(input, StandardCharsets.UTF_8.name());
+            String fallback = null;
+            int event;
+            while ((event = parser.next()) != XmlPullParser.END_DOCUMENT) {
+                if (event != XmlPullParser.START_TAG || !"Url".equals(parser.getName())) {
+                    continue;
+                }
+                String methodName = parser.getAttributeValue(null, "method");
+                if (methodName != null && !"get".equalsIgnoreCase(methodName.trim())) {
+                    continue;
+                }
+                String template = parser.getAttributeValue(null, "template");
+                if (template == null
+                        || (!template.contains("{searchTerms}")
+                                && !template.contains("{searchTerms?}"))) {
+                    continue;
+                }
+                String type = parser.getAttributeValue(null, "type");
+                if (type == null) {
+                    continue;
+                }
+                String normalizedType = type.trim().toLowerCase(Locale.ROOT);
+                if ("application/x-suggestions+json".equals(normalizedType)) {
+                    String probe = expandOpenSearchTemplate(template, "ntd97", 5);
+                    validateHttpsSyntax(probe);
+                    return template;
+                }
+                if ("application/json".equals(normalizedType) && fallback == null) {
+                    fallback = template;
+                }
             }
-            Element element = (Element) node;
-            String type = element.getAttribute("type").trim().toLowerCase(Locale.ROOT);
-            String template = element.getAttribute("template").trim();
-            if (("application/x-suggestions+json".equals(type)
-                            || "application/json".equals(type))
-                    && !template.isEmpty()
-                    && (template.contains("{searchTerms}")
-                            || template.contains("{searchTerms?}"))) {
-                String probe = expandOpenSearchTemplate(template, "ntd97", 5);
+            if (fallback != null) {
+                String probe = expandOpenSearchTemplate(fallback, "ntd97", 5);
                 validateHttpsSyntax(probe);
-                return template;
+                return fallback;
             }
         }
         throw new IOException("OpenSearch description has no JSON result template");
