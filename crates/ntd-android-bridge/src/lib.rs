@@ -3381,6 +3381,7 @@ fn submit_chat_reserved(
                         prompt_limit,
                         resources,
                         external_approved: false,
+                        prepare_only: false,
                     },
                 )?;
             }
@@ -3483,22 +3484,6 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
         .set_chat_approval_status(task_id, "approved-executing")
         .map_err(|error| format!("record executing chat approval: {error:?}"))?;
 
-    {
-        let mut guard = lock_state();
-        let session = guard
-            .chat_session
-            .as_ref()
-            .filter(|session| {
-                session.request_id == request_id
-                    && session.status == NativeChatSessionStatus::WaitingApproval
-            })
-            .ok_or_else(|| "chat request changed before approved execution".to_owned())?;
-        if session.task_id != task_id {
-            return Err("chat task changed before approved execution".into());
-        }
-        guard.conversation = conversation.clone();
-    }
-
     let active = conversation
         .active()
         .cloned()
@@ -3525,9 +3510,8 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
         .context_limit
         .saturating_sub(active.max_new_tokens)
         .max(1);
-    let mut executed = conversation.clone();
-    let execution = execute_android_verified_actions(
-        &mut executed,
+    let prepared = execute_android_verified_actions(
+        &mut conversation,
         &action_plan,
         AndroidActionExecutionContext {
             model: &model,
@@ -3536,47 +3520,34 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
             prompt_limit,
             resources,
             external_approved: true,
+            prepare_only: true,
         },
-    );
-
-    match execution {
-        Ok(()) => {
-            executed
-                .set_chat_approval_status(task_id, "approved")
-                .map_err(|error| format!("record approved chat execution: {error:?}"))?;
-            let mut guard = lock_state();
-            if guard.conversation != conversation {
-                return Err("sovereign conversation changed during approved execution".into());
-            }
-            if !guard.chat_session.as_ref().is_some_and(|session| {
-                session.request_id == request_id
-                    && session.status == NativeChatSessionStatus::WaitingApproval
-            }) {
-                return Err("chat request changed during approved execution".into());
-            }
-            guard.conversation = executed;
-            if let Some(session) = guard
-                .chat_session
-                .as_mut()
-                .filter(|session| session.request_id == request_id)
-            {
-                session.status = NativeChatSessionStatus::Running;
-            }
-            Ok(true)
-        }
-        Err(error) => {
-            let mut guard = lock_state();
-            if guard.conversation == conversation {
-                guard
-                    .conversation
-                    .set_chat_approval_status(task_id, "reconfirm")
-                    .map_err(|state_error| {
-                        format!("record approval reconfirmation: {state_error:?}")
-                    })?;
-            }
-            Err(error)
-        }
+    )?;
+    if prepared != AndroidActionExecutionOutcome::Prepared {
+        return Err("approved external write did not stop at durable prepare boundary".into());
     }
+
+    let mut guard = lock_state();
+    let session = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| {
+            session.request_id == request_id
+                && session.status == NativeChatSessionStatus::WaitingApproval
+        })
+        .ok_or_else(|| "chat request changed before durable action preparation".to_owned())?;
+    if session.task_id != task_id {
+        return Err("chat task changed before durable action preparation".into());
+    }
+    guard.conversation = conversation;
+    if let Some(session) = guard
+        .chat_session
+        .as_mut()
+        .filter(|session| session.request_id == request_id)
+    {
+        session.status = NativeChatSessionStatus::Running;
+    }
+    Ok(true)
 }
 
 fn chat_status(request_id: u64) -> i32 {
