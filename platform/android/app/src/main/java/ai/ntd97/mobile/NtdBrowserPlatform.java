@@ -398,27 +398,148 @@ final class NtdBrowserPlatform {
 
     private static void validateInteraction(String target, String operation, String value)
             throws IOException {
-        if (target == null || target.trim().isEmpty()) {
-            throw new IOException("empty browser target");
+        if (target == null || target.trim().isEmpty() || !target.equals(target.trim())) {
+            throw new IOException("empty or untrimmed browser target");
         }
         if (target.getBytes(StandardCharsets.UTF_8).length > MAX_TARGET_BYTES
                 || containsControl(target)) {
             throw new IOException("invalid browser target");
         }
-        if (!"click".equals(operation) && !"set_value".equals(operation)) {
+        if (!"click".equals(operation)
+                && !"set_value".equals(operation)
+                && !"submit".equals(operation)
+                && !"navigate".equals(operation)) {
             throw new IOException("unsupported browser operation");
         }
-        if ("click".equals(operation) && value != null && !value.isEmpty()) {
-            throw new IOException("browser click does not accept a value");
+
+        boolean hasValue = value != null && !value.isEmpty();
+        if (("click".equals(operation)
+                        || "submit".equals(operation)
+                        || "navigate".equals(operation))
+                && hasValue) {
+            throw new IOException("browser operation does not accept a value");
+        }
+        if ("navigate".equals(operation)) {
+            validatePublicHttps(target);
+            return;
         }
         if ("set_value".equals(operation)) {
-            if (value == null || value.isEmpty()) {
+            if (!hasValue) {
                 throw new IOException("browser set_value requires a value");
             }
             if (value.getBytes(StandardCharsets.UTF_8).length > MAX_VALUE_BYTES
                     || containsControl(value)) {
                 throw new IOException("invalid browser value");
             }
+        }
+    }
+
+    private static String normalizeObserveTarget(String rawTarget) throws IOException {
+        if (rawTarget == null
+                || rawTarget.isEmpty()
+                || !rawTarget.equals(rawTarget.trim())
+                || rawTarget.getBytes(StandardCharsets.UTF_8).length > MAX_TARGET_BYTES
+                || containsControl(rawTarget)) {
+            throw new IOException("invalid browser observe target");
+        }
+        if (!SESSION_TARGET.equals(rawTarget)) {
+            validatePublicHttps(rawTarget);
+        }
+        return rawTarget;
+    }
+
+    private static URL resolveObserveTarget(Context context, String requestedTarget)
+            throws IOException {
+        if (!SESSION_TARGET.equals(requestedTarget)) {
+            return validatePublicHttps(requestedTarget);
+        }
+        SharedPreferences preferences =
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String stored = preferences.getString(LAST_VERIFIED_URL_KEY, "");
+        if (stored == null || stored.isEmpty()) {
+            throw new IOException("browser session has no persisted URL");
+        }
+        try {
+            return validatePublicHttps(stored);
+        } catch (IOException error) {
+            preferences.edit().remove(LAST_VERIFIED_URL_KEY).commit();
+            throw new IOException("persisted browser session URL is invalid", error);
+        }
+    }
+
+    private static void persistVerifiedSessionUrl(Context context, URL url) throws IOException {
+        URL verified = validatePublicHttps(url.toExternalForm());
+        boolean committed = context
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(LAST_VERIFIED_URL_KEY, verified.toExternalForm())
+                .commit();
+        if (!committed) {
+            throw new IOException("browser session URL persistence failed");
+        }
+    }
+
+    private static String browserReceipt(
+            String operation,
+            String target,
+            String value) throws Exception {
+        return browserReceipt(
+                operation,
+                target,
+                value,
+                RECEIPT_COUNTER.incrementAndGet());
+    }
+
+    private static String browserReceipt(
+            String operation,
+            String target,
+            String value,
+            long receiptId) throws Exception {
+        String canonical = operation + "\n" + target + "\n" + value;
+        return "android-webview:"
+                + operation
+                + ":"
+                + receiptId
+                + ":"
+                + sha256Hex(canonical.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String sha256Hex(byte[] bytes) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+        StringBuilder encoded = new StringBuilder(digest.length * 2);
+        for (byte value : digest) {
+            encoded.append(String.format(java.util.Locale.ROOT, "%02x", value & 0xff));
+        }
+        return encoded.toString();
+    }
+
+    static boolean dropInMemorySessionForTest() {
+        if (!BuildConfig.DEBUG) {
+            return false;
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            destroyInMemoryWebView();
+            return true;
+        }
+        CountDownLatch latch = new CountDownLatch(1);
+        MAIN.post(() -> {
+            destroyInMemoryWebView();
+            latch.countDown();
+        });
+        try {
+            return latch.await(3, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private static void destroyInMemoryWebView() {
+        WebView view = webView;
+        webView = null;
+        if (view != null) {
+            view.stopLoading();
+            view.destroy();
         }
     }
 
