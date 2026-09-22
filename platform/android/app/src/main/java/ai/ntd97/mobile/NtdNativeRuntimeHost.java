@@ -18,6 +18,7 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
 
     private NtdNativeRuntimeHost(Context context) {
         this.context = context.getApplicationContext();
+        NtdDeviceAppPlatform.initialize(this.context);
     }
 
     static NtdNativeRuntimeHost create(Context context) {
@@ -45,6 +46,7 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     }
 
     static byte[] runProductionCapabilityProbe(Context context) {
+        NtdDeviceAppPlatform.initialize(context);
         if (!ensureLoaded()) {
             return "production_capabilities=failed\nerror=native library unavailable\n"
                     .getBytes(StandardCharsets.UTF_8);
