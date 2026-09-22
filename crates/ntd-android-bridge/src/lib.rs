@@ -1050,6 +1050,9 @@ fn execute_android_verified_actions(
         .replace_active_prompt_tokens(task_id, synthesis_tokens)
         .map_err(|error| format!("install verified synthesis prompt: {error:?}"))?;
     conversation
+        .record_verified_synthesis_ready(task_id)
+        .map_err(|error| format!("record verified synthesis provenance: {error:?}"))?;
+    conversation
         .record_verified_action_count(task_id, run.evidence.len())
         .map_err(|error| format!("record verified action count: {error:?}"))?;
     conversation
@@ -1322,6 +1325,20 @@ fn chat_action_count(request_id: u64) -> i32 {
         .action_count_for_task(session.task_id)
         .and_then(|value| i32::try_from(value).ok())
         .unwrap_or(0)
+}
+
+fn chat_verified_synthesis_ready(request_id: u64) -> bool {
+    let guard = lock_state();
+    let Some(session) = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
+    else {
+        return false;
+    };
+    guard
+        .conversation
+        .verified_synthesis_ready_for_task(session.task_id)
 }
 
 fn chat_verified_action_count(request_id: u64) -> i32 {
@@ -1774,6 +1791,19 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatVerif
         return 0;
     };
     chat_verified_action_count(request_id)
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatVerifiedSynthesisReady(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jboolean {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    u8::from(chat_verified_synthesis_ready(request_id))
 }
 
 #[allow(unsafe_code)]
