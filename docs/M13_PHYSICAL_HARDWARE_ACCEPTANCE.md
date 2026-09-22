@@ -130,4 +130,6 @@ The gate requires all ten hardware gates, at least ten verifier-committed action
 
 GitHub Actions/emulator results prove the implementation and fail-closed contracts, but they cannot close M13.
 
-M13 may close only after a representative physical-phone M13E97 record passes the canonical gate with the intended real SAF provider, real accessibility target, real PCF97 peer and real HTTPS upload service. Any failed or missing surface leaves M13 **IN PROGRESS**.
+A passing representative physical-phone M13E97 record is a **necessary mixed-core gate, not a sufficient M13 completion certificate**. It must use the intended real SAF provider, real accessibility target, real PCF97 peer and real HTTPS upload service.
+
+M13 remains **IN PROGRESS** until that record exists **and** the additional representative-phone edge cases listed in the canonical roadmap (credential rotation/restart, browser/session edge cases, SAF revoke/reselect, accessibility enable/disable/OEM behavior, and PC reconnect/re-pair) are also evidenced.
