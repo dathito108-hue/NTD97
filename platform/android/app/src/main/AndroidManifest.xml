@@ -40,6 +40,19 @@
             android:name=".NtdOverlayService"
             android:exported="false" />
 
+        <service
+            android:name=".NtdAccessibilityService"
+            android:exported="true"
+            android:label="NTD97 Accessibility"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/ntd97_accessibility_service" />
+        </service>
+
         <receiver
             android:name=".NtdBootReceiver"
             android:directBootAware="true"
