@@ -6709,6 +6709,73 @@ mod tests {
     }
 
     #[test]
+    fn normalized_web_search_decoder_and_verifier_bind_count_and_digest() {
+        fn push_string(out: &mut Vec<u8>, value: &str) {
+            let bytes = value.as_bytes();
+            out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            out.extend_from_slice(bytes);
+        }
+
+        let mut encoded = vec![PLATFORM_WEB_PROTOCOL_VERSION, 1];
+        encoded.extend_from_slice(&200u32.to_le_bytes());
+        push_string(&mut encoded, "https://api.example.com");
+        encoded.extend_from_slice(&1u32.to_le_bytes());
+        push_string(&mut encoded, "NTD97 result");
+        push_string(&mut encoded, "https://example.com/result");
+        push_string(&mut encoded, "normalized snippet");
+
+        let decoded = decode_android_web_search_result(&encoded).expect("decode search result");
+        assert_eq!(decoded.status, 200);
+        assert_eq!(decoded.source, "https://api.example.com");
+        assert_eq!(decoded.items.len(), 1);
+
+        let items = vec![
+            "NTD97 result\nhttps://example.com/result\nnormalized snippet".to_owned(),
+        ];
+        let hash = digest_hex(&normalized_search_value_hash(&items).expect("hash"));
+        let output = ActionOutput {
+            summary: "verified normalized search".into(),
+            value: ActionValue::TextList(items.clone()),
+            evidence: vec![
+                "android-https-search".into(),
+                "provider-boundary:runtime-configured".into(),
+                "normalization:field-map-v1".into(),
+                "status:200".into(),
+                "source:https://api.example.com".into(),
+                "results:1".into(),
+                format!("results-sha256:{hash}"),
+                "max-results:5".into(),
+            ],
+        };
+        let descriptor = CapabilityDescriptor::new(
+            CapabilityId("web.search".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::ReadOnly,
+        )
+        .expect("descriptor");
+        let action = TypedAction::WebSearch {
+            query: "ntd97".into(),
+            max_results: 5,
+        };
+        let mut verifier = AndroidProductionVerifier;
+        assert_eq!(
+            verifier.verify(&descriptor, &action, &output),
+            ActionVerification::Accept
+        );
+
+        let mut tampered = output;
+        let ActionValue::TextList(values) = &mut tampered.value else {
+            panic!("text list");
+        };
+        values[0].push('x');
+        assert!(matches!(
+            verifier.verify(&descriptor, &action, &tampered),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
+    #[test]
     fn governed_explicit_web_and_browser_commands_materialize_canonical_actions() {
         let search = governed_explicit_action_plan("search web for NTD97 mobile")
             .expect("search plan")
