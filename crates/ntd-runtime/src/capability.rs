@@ -176,6 +176,10 @@ pub enum TypedAction {
         url: String,
         path: String,
     },
+    ArtifactUpload {
+        url: String,
+        path: String,
+    },
     BrowserObserve {
         target: String,
     },
@@ -232,9 +236,10 @@ pub enum TypedAction {
 impl TypedAction {
     pub fn domain(&self) -> CapabilityDomain {
         match self {
-            Self::WebSearch { .. } | Self::WebFetch { .. } | Self::ArtifactDownload { .. } => {
-                CapabilityDomain::Web
-            }
+            Self::WebSearch { .. }
+            | Self::WebFetch { .. }
+            | Self::ArtifactDownload { .. }
+            | Self::ArtifactUpload { .. } => CapabilityDomain::Web,
             Self::BrowserObserve { .. } | Self::BrowserInteract { .. } => CapabilityDomain::Browser,
             Self::FileRead { .. } | Self::FileWrite { .. } => CapabilityDomain::File,
             Self::DeviceObserve { .. } | Self::DeviceInteract { .. } => CapabilityDomain::Device,
@@ -256,7 +261,7 @@ impl TypedAction {
                 }
             }
             Self::WebFetch { url } => nonempty(url)?,
-            Self::ArtifactDownload { url, path } => {
+            Self::ArtifactDownload { url, path } | Self::ArtifactUpload { url, path } => {
                 nonempty(url)?;
                 nonempty(path)?;
             }
@@ -461,6 +466,16 @@ mod tests {
         let mut grant = AuthorityGrant::new();
         grant.allow_irreversible = true;
         assert_eq!(grant.permits(&descriptor), Ok(()));
+    }
+
+    #[test]
+    fn artifact_upload_is_a_web_action() {
+        let action = TypedAction::ArtifactUpload {
+            url: "https://example.com/upload".into(),
+            path: "artifacts/report.bin".into(),
+        };
+        assert_eq!(action.domain(), CapabilityDomain::Web);
+        assert_eq!(action.validate(), Ok(()));
     }
 
     #[test]
