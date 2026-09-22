@@ -51,6 +51,15 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
         return result == null ? new byte[0] : result;
     }
 
+    static byte[] runWebCapabilityProbe() {
+        if (!ensureLoaded()) {
+            return "web_authority=failed\nweb_fetch=failed\nweb_receipt=failed\nerror=native library unavailable\n"
+                    .getBytes(StandardCharsets.UTF_8);
+        }
+        byte[] result = nativeWebCapabilityProbe();
+        return result == null ? new byte[0] : result;
+    }
+
     private static synchronized boolean ensureLoaded() {
         if (!loadAttempted) {
             loadAttempted = true;
@@ -386,6 +395,8 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
             String shardRoot,
             byte[] verifyKey,
             String expectedTokenIds);
+
+    private static native byte[] nativeWebCapabilityProbe();
 
     private static native byte[] nativeWebCapabilityProbe();
 
