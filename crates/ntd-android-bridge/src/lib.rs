@@ -32,13 +32,14 @@ use ntd_runtime::{
     choose_reasoning_budget, decode_conversation_checkpoint, encode_conversation_checkpoint,
     execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
     parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
-    ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
+    ActionNode, ActionOutput, ActionPlanId, ActionPlanStatus, ActionValue, ActionVerification,
+    ActionVerifier, AdapterResult,
     AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope, CapabilityAdapter,
     CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
     CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
     GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
     NativeChatPromptCompiler, NativeReasoningProbe, ResourceSnapshot, SamplingMode,
-    SideEffectClass, SovereignConversationState, TaskStatus, ThermalState, TypedAction,
+    SideEffectClass, SovereignConversationState, TaskGraph, TaskStatus, ThermalState, TypedAction,
     NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
 };
 use platform::{AndroidPlatformAdapter, AndroidPlatformVerifier};
@@ -645,6 +646,192 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativePullSpeak
     _sample_rate_hz: jint,
 ) -> jbyteArray {
     java_bytes(&env, &[])
+}
+
+fn governed_platform_plan(
+    vm: Arc<JavaVM>,
+    task_id: u64,
+    node_id: u32,
+    mut descriptor: CapabilityDescriptor,
+    scope: &str,
+    action: TypedAction,
+) -> Result<(ActionFabric, ActionPlanId), String> {
+    descriptor
+        .required_scopes
+        .push(AuthorityScope::new(scope).map_err(|error| format!("{error:?}"))?);
+    let capability = descriptor.id.clone();
+    let side_effect = descriptor.side_effect;
+
+    let mut registry = CapabilityRegistry::new();
+    registry
+        .register(descriptor)
+        .map_err(|error| format!("register platform probe capability: {error:?}"))?;
+    let mut fabric = ActionFabric::new(registry);
+    fabric
+        .register_adapter(
+            capability.clone(),
+            AndroidPlatformAdapter::new(vm),
+        )
+        .map_err(|error| format!("register platform probe adapter: {error:?}"))?;
+
+    let graph = TaskGraph {
+        actions: vec![ActionNode {
+            id: node_id,
+            capability: capability.clone(),
+            side_effect,
+            verification_required: true,
+        }],
+    };
+    let plan_id = fabric
+        .prepare_plan(task_id, &graph, BTreeMap::from([(node_id, action)]))
+        .map_err(|error| format!("prepare governed platform probe: {error:?}"))?;
+    let authority = AuthorityGrant::new().with_scope(
+        AuthorityScope::new(scope).map_err(|error| format!("{error:?}"))?,
+    );
+    let report = fabric
+        .execute_next(plan_id, &authority, &mut AndroidPlatformVerifier)
+        .map_err(|error| format!("execute governed platform probe: {error:?}"))?;
+    if report.plan_status != ActionPlanStatus::Completed {
+        return Err(format!(
+            "platform probe did not complete: status={:?} summary={}",
+            report.plan_status, report.summary
+        ));
+    }
+    Ok((fabric, plan_id))
+}
+
+fn committed_platform_action(
+    fabric: &ActionFabric,
+    plan_id: ActionPlanId,
+) -> Result<ntd_runtime::PlannedAction, String> {
+    let plan = fabric
+        .state()
+        .plans
+        .get(&plan_id.0)
+        .ok_or_else(|| "platform probe plan disappeared".to_owned())?;
+    if plan.status != ActionPlanStatus::Completed || plan.actions.len() != 1 {
+        return Err("platform probe plan is not canonically completed".into());
+    }
+    plan.actions
+        .first()
+        .cloned()
+        .ok_or_else(|| "platform probe action missing".to_owned())
+}
+
+fn run_android_platform_probe(vm: Arc<JavaVM>, url: &str) -> Result<String, String> {
+    let web_descriptor = CapabilityDescriptor::new(
+        CapabilityId("web.fetch".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("build web.fetch probe descriptor: {error:?}"))?;
+    let (web_fabric, web_plan) = governed_platform_plan(
+        Arc::clone(&vm),
+        13_001,
+        1,
+        web_descriptor,
+        "network.read",
+        TypedAction::WebFetch {
+            url: url.to_owned(),
+        },
+    )?;
+    let web_action = committed_platform_action(&web_fabric, web_plan)?;
+    let fetched = match web_action
+        .output
+        .as_ref()
+        .map(|output| &output.value)
+    {
+        Some(ActionValue::Bytes(bytes)) if !bytes.is_empty() => bytes.clone(),
+        _ => return Err("web.fetch probe produced no verified bytes".into()),
+    };
+
+    let file_path = "m13/web-file-probe.bin".to_owned();
+    let mut write_descriptor = CapabilityDescriptor::new(
+        CapabilityId("file.write".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::Reversible,
+    )
+    .map_err(|error| format!("build file.write probe descriptor: {error:?}"))?;
+    write_descriptor.rollback_supported = true;
+    let write_action = TypedAction::FileWrite {
+        path: file_path.clone(),
+        bytes: fetched.clone(),
+    };
+    let (mut write_fabric, write_plan) = governed_platform_plan(
+        Arc::clone(&vm),
+        13_002,
+        1,
+        write_descriptor,
+        "storage.app.write",
+        write_action.clone(),
+    )?;
+    let written = committed_platform_action(&write_fabric, write_plan)?;
+    let rollback_token = written
+        .rollback_token
+        .clone()
+        .ok_or_else(|| "file.write probe has no rollback token".to_owned())?;
+
+    let replay = AndroidPlatformAdapter::new(Arc::clone(&vm))
+        .execute(written.id, &write_action)
+        .map_err(|error| format!("replay file.write probe: {error}"))?;
+    let idempotent = matches!(
+        replay,
+        AdapterResult::Completed {
+            rollback_token: Some(ref token),
+            ..
+        } if token == &rollback_token
+    );
+    if !idempotent {
+        return Err("file.write stable ActionId did not return the persisted receipt".into());
+    }
+
+    let read_descriptor = CapabilityDescriptor::new(
+        CapabilityId("file.read".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("build file.read probe descriptor: {error:?}"))?;
+    let (read_fabric, read_plan) = governed_platform_plan(
+        Arc::clone(&vm),
+        13_003,
+        1,
+        read_descriptor,
+        "storage.app.read",
+        TypedAction::FileRead {
+            path: file_path.clone(),
+        },
+    )?;
+    let read = committed_platform_action(&read_fabric, read_plan)?;
+    let read_bytes = match read.output.as_ref().map(|output| &output.value) {
+        Some(ActionValue::Bytes(bytes)) => bytes,
+        _ => return Err("file.read probe produced no verified bytes".into()),
+    };
+    if read_bytes != &fetched {
+        return Err("Web -> File probe payload changed after scoped storage write/read".into());
+    }
+
+    write_fabric
+        .rollback_plan(write_plan)
+        .map_err(|error| format!("rollback file.write probe: {error:?}"))?;
+
+    let after_rollback = AndroidPlatformAdapter::new(vm)
+        .execute(
+            ntd_runtime::ActionId(13_004),
+            &TypedAction::FileRead { path: file_path },
+        )
+        .map_err(|error| format!("verify rollback file.read probe: {error}"))?;
+    if !matches!(after_rollback, AdapterResult::Retryable { .. }) {
+        return Err("file.write rollback did not remove the newly created scoped file".into());
+    }
+
+    Ok(format!(
+        "web_fetch=ok\nfile_write=ok\nfile_read=ok\nfile_idempotency=ok\nfile_rollback=ok\nplatform_payload_bytes={}\nplatform_payload_sha256={}\n",
+        fetched.len(),
+        digest_hex(&sha256(&fetched))
+    ))
 }
 
 const STORIES260K_ASSET_ID: &str = "model.ntd97.stories260k";
@@ -1776,6 +1963,37 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
         )
         .is_ok(),
     )
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativePlatformAdapterProbe(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    url: JString<'_>,
+) -> jbyteArray {
+    let Some(url) = java_string(&mut env, &url) else {
+        return java_bytes(&env, b"platform_adapter=failed\nerror=invalid URL\n");
+    };
+    let vm = match env.get_java_vm() {
+        Ok(vm) => Arc::new(vm),
+        Err(error) => {
+            return java_bytes(
+                &env,
+                format!("platform_adapter=failed\nerror=JavaVM unavailable: {error}\n").as_bytes(),
+            );
+        }
+    };
+    match run_android_platform_probe(vm, &url) {
+        Ok(result) => java_bytes(
+            &env,
+            format!("{result}platform_adapter=PASS\n").as_bytes(),
+        ),
+        Err(error) => java_bytes(
+            &env,
+            format!("platform_adapter=failed\nerror={error}\n").as_bytes(),
+        ),
+    }
 }
 
 #[allow(unsafe_code)]
