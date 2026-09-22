@@ -62,12 +62,12 @@ public final class NtdRealModelProbeActivity extends Activity {
     private String runChatApiProbe() throws IOException {
         NtdNativeRuntimeHost host = NtdNativeRuntimeHost.create(this);
         if (host == null || !host.chatReady()) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         long requestId = host.submitChat("Once upon a time", 4);
         if (requestId < 0) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         int tokenCount = 0;
@@ -82,7 +82,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 completed = true;
                 break;
             }
-            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         boolean statusOk = completed && tokenCount > 0 && host.chatStatus(requestId) == 2;
@@ -148,6 +148,34 @@ public final class NtdRealModelProbeActivity extends Activity {
             store.clear();
         }
 
+        long governedRequest =
+                host.submitChat("What is my current battery status?", 4);
+        boolean governedE2eOk = false;
+        if (governedRequest >= 0) {
+            int plannerStatus = host.chatActionPlannerStatus(governedRequest);
+            int actionCount = host.chatActionCount(governedRequest);
+            int verifiedCount = host.chatVerifiedActionCount(governedRequest);
+            boolean synthesisReady = host.chatVerifiedSynthesisReady(governedRequest);
+            boolean governedComplete = false;
+            int governedTokens = 0;
+            for (int attempt = 0; attempt < 8; attempt++) {
+                NtdRuntimeHost.ChatEvent event = host.nextChatEvent(governedRequest);
+                if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+                    governedTokens++;
+                    continue;
+                }
+                governedComplete = event.kind == NtdRuntimeHost.ChatEvent.COMPLETE;
+                break;
+            }
+            governedE2eOk = plannerStatus == 2
+                    && actionCount > 0
+                    && verifiedCount == actionCount
+                    && synthesisReady
+                    && governedComplete
+                    && governedTokens > 0
+                    && host.chatStatus(governedRequest) == 2;
+        }
+
         long cancelRequest = host.submitChat("cancel this response", 8);
         boolean cancelOk = cancelRequest >= 0
                 && host.cancelChat(cancelRequest)
@@ -160,6 +188,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_reasoning_loop=" + (reasoningLoopOk ? "ok" : "failed") + "\n"
                 + "chat_action_planner=" + (actionPlannerOk ? "ok" : "failed") + "\n"
                 + "chat_action_safety=" + (actionSafetyOk ? "ok" : "failed") + "\n"
+                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"
                 + "chat_memory=" + (memoryOk ? "ok" : "failed") + "\n"
                 + "chat_restore=" + (restoreOk ? "ok" : "failed") + "\n"
                 + "chat_store=" + (storeOk ? "ok" : "failed") + "\n"
