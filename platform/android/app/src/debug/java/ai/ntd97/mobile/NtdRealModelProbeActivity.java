@@ -297,6 +297,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                     throw new IOException("accessibility UI effect verification failed");
                 }
                 result = result + "app_accessibility_ui_effect=ok\n";
+                result = result + runPairedPcProvisioningProbe();
             } catch (Exception error) {
                 String message = error.getMessage();
                 if (message == null || message.isEmpty()) {
@@ -315,6 +316,78 @@ public final class NtdRealModelProbeActivity extends Activity {
         }, "ntd97-production-capabilities");
         probeThread.setDaemon(true);
         probeThread.start();
+    }
+
+    private String runPairedPcProvisioningProbe() throws IOException {
+        final String alias = "ci-workstation";
+        final String remotePeerId = "5bb32dad65c4ac01f19a986e6ec3cdda";
+        final String remoteVerifyKey =
+                "d4eec1869fb1b8a4e817516ad5a931557cb56805c3eb16e8f3a803d647df7869";
+        String existing = NtdNativeRuntimeHost.listPcPairs(this);
+        if (existing.startsWith("ERROR:")) {
+            throw new IOException("paired-PC list before provision failed: " + existing);
+        }
+        if (Arrays.asList(existing.split("\\n")).contains(alias)) {
+            String cleanup = NtdNativeRuntimeHost.revokePcPair(this, alias);
+            if (!"OK".equals(cleanup)) {
+                throw new IOException("paired-PC stale profile cleanup failed: " + cleanup);
+            }
+        }
+
+        String receipt = NtdNativeRuntimeHost.provisionPcPair(
+                this,
+                alias,
+                "127.0.0.1:45970",
+                remotePeerId,
+                remoteVerifyKey);
+        if (!receipt.startsWith("NTD97_PC_PAIR_RECEIPT_V1\n")
+                || receipt.contains("local_seed")
+                || !receipt.contains("local_peer_id=")
+                || !receipt.contains("local_verify_key=")) {
+            throw new IOException("paired-PC public provisioning receipt is invalid");
+        }
+
+        File profile = new File(
+                new File(new File(getFilesDir(), "ntd97-capability-files"), "pc-pairs"),
+                alias + ".pcp97");
+        if (!profile.isFile()) {
+            throw new IOException("paired-PC profile was not committed");
+        }
+
+        String listed = NtdNativeRuntimeHost.listPcPairs(this);
+        if (listed.startsWith("ERROR:")
+                || !Arrays.asList(listed.split("\\n")).contains(alias)) {
+            throw new IOException("paired-PC profile did not appear in native list");
+        }
+        String described = NtdNativeRuntimeHost.describePcPair(this, alias);
+        if (!receipt.equals(described) || described.contains("local_seed")) {
+            throw new IOException("paired-PC public identity describe mismatch");
+        }
+
+        String duplicate = NtdNativeRuntimeHost.provisionPcPair(
+                this,
+                alias,
+                "127.0.0.1:45970",
+                remotePeerId,
+                remoteVerifyKey);
+        if (!duplicate.startsWith("ERROR:")) {
+            throw new IOException("paired-PC duplicate alias replacement was not denied");
+        }
+
+        String revoke = NtdNativeRuntimeHost.revokePcPair(this, alias);
+        if (!"OK".equals(revoke)) {
+            throw new IOException("paired-PC revoke failed: " + revoke);
+        }
+        String after = NtdNativeRuntimeHost.listPcPairs(this);
+        if (after.startsWith("ERROR:")
+                || Arrays.asList(after.split("\\n")).contains(alias)
+                || profile.exists()) {
+            throw new IOException("paired-PC revoked profile remained active");
+        }
+
+        return "pc_pair_provision=ok\n"
+                + "pc_pair_public_identity=ok\n"
+                + "pc_pair_revoke=ok\n";
     }
 
     private String runChatApiProbe() throws IOException {
