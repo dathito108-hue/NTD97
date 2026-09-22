@@ -3891,7 +3891,7 @@ fn production_capability_probe(
         .permits(&browser_interact_descriptor)
         .map_err(|error| format!("browser interaction explicit authority rejected: {error:?}"))?;
     let browser_interact_action = TypedAction::BrowserInteract {
-        target: "a".into(),
+        target: "body".into(),
         operation: "click".into(),
         value: None,
     };
