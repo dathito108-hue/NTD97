@@ -3769,8 +3769,120 @@ fn terminal_chat_event(request_id: u64) -> Option<Vec<u8>> {
     }
 }
 
+fn advance_pending_chat_actions(request_id: u64) -> Result<Option<Vec<u8>>, String> {
+    let (task_id, model, resources, conversation) = {
+        let guard = lock_state();
+        let session = guard
+            .chat_session
+            .as_ref()
+            .filter(|session| {
+                session.request_id == request_id
+                    && session.status == NativeChatSessionStatus::Running
+            })
+            .ok_or_else(|| "chat request is not running".to_owned())?;
+        if guard
+            .conversation
+            .action_fabric_checkpoint_for_task(session.task_id)
+            .is_none()
+        {
+            return Ok(None);
+        }
+        (
+            session.task_id,
+            guard
+                .chat_model
+                .clone()
+                .ok_or_else(|| "native chat model is not loaded".to_owned())?,
+            guard.resources,
+            guard.conversation.clone(),
+        )
+    };
+
+    let active = conversation
+        .active()
+        .cloned()
+        .ok_or_else(|| "persisted action state has no active turn".to_owned())?;
+    if active.task_id != task_id {
+        return Err("persisted action state task identity mismatch".into());
+    }
+    let protocol = conversation
+        .action_plan_protocol_for_task(task_id)
+        .ok_or_else(|| "persisted action state has no canonical action protocol".to_owned())?;
+    let action_plan = match parse_native_action_plan(protocol)
+        .map_err(|error| format!("reconstruct persisted action plan: {error:?}"))?
+    {
+        AssistantPlanDecision::Actions(plan) => plan,
+        AssistantPlanDecision::Direct => {
+            return Err("persisted action protocol unexpectedly resolved to DIRECT".into())
+        }
+    };
+    let external_write = external_write_approval(&action_plan)?.is_some();
+    let approval_status = conversation
+        .chat_approval_for_task(task_id)
+        .map(|(_, _, status)| status);
+    let external_approved = approval_status == Some("approved-executing");
+    if external_write && !external_approved {
+        return Err("persisted external-write plan requires reconfirmation before resume".into());
+    }
+
+    let prompt_limit = model
+        .context_limit
+        .saturating_sub(active.max_new_tokens)
+        .max(1);
+    let mut advanced = conversation.clone();
+    let outcome = execute_android_verified_actions(
+        &mut advanced,
+        &action_plan,
+        AndroidActionExecutionContext {
+            model: &model,
+            task_id,
+            user_message: &active.user_message,
+            prompt_limit,
+            resources,
+            external_approved,
+            prepare_only: false,
+        },
+    )?;
+
+    let note = match outcome {
+        AndroidActionExecutionOutcome::Prepared => {
+            return Err("running action execution returned to prepare-only boundary".into())
+        }
+        AndroidActionExecutionOutcome::Checkpointed(note) => note,
+        AndroidActionExecutionOutcome::Completed => {
+            if external_write {
+                advanced
+                    .set_chat_approval_status(task_id, "approved")
+                    .map_err(|error| format!("commit approved action status: {error:?}"))?;
+            }
+            "verified action execution committed".to_owned()
+        }
+    };
+
+    let mut guard = lock_state();
+    if guard.conversation != conversation {
+        return Err("sovereign conversation changed during action continuation".into());
+    }
+    if !guard.chat_session.as_ref().is_some_and(|session| {
+        session.request_id == request_id
+            && session.task_id == task_id
+            && session.status == NativeChatSessionStatus::Running
+    }) {
+        return Err("chat request changed during action continuation".into());
+    }
+    guard.conversation = advanced;
+    Ok(Some(encode_chat_event(
+        CHAT_EVENT_ACTION_CHECKPOINTED,
+        None,
+        &note,
+    )))
+}
+
 fn next_chat_event(request_id: u64) -> Result<Vec<u8>, String> {
     if let Some(event) = terminal_chat_event(request_id) {
+        return Ok(event);
+    }
+    if let Some(event) = advance_pending_chat_actions(request_id)? {
         return Ok(event);
     }
 
