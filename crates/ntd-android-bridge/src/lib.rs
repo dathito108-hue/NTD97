@@ -6235,16 +6235,17 @@ fn production_capability_probe(
         return Err("production browser.interact receipt verification failed".into());
     }
 
-    let cross_origin_error = browser_interact
-        .execute(
-            ntd_runtime::ActionId(109),
-            &TypedAction::BrowserInteract {
-                target: "a[href*='iana']".into(),
-                operation: "click".into(),
-                value: None,
-            },
-        )
-        .expect_err("cross-origin browser link unexpectedly completed");
+    let cross_origin_error = match browser_interact.execute(
+        ntd_runtime::ActionId(109),
+        &TypedAction::BrowserInteract {
+            target: "a[href*='iana']".into(),
+            operation: "click".into(),
+            value: None,
+        },
+    ) {
+        Err(error) => error,
+        Ok(_) => return Err("cross-origin browser link unexpectedly completed".into()),
+    };
     if !cross_origin_error.to_ascii_lowercase().contains("cross-origin") {
         return Err(format!(
             "cross-origin browser link failed for unexpected reason: {cross_origin_error}"
