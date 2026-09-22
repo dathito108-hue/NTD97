@@ -222,13 +222,12 @@ where
         let mut context = prompt_tokens.to_vec();
         let mut total_log_probability = 0.0f64;
         for token in candidate_tokens {
-            let logits =
-                self.next_distribution_with_resolver(resolver, &context, context_limit)?;
-            total_log_probability +=
-                token_log_probability(&logits, usize::try_from(*token).map_err(|_| {
-                    GenerationError::TokenIdOutOfRange(*token)
-                })?)
-                .map_err(GenerationError::Sampling)? as f64;
+            let logits = self.next_distribution_with_resolver(resolver, &context, context_limit)?;
+            total_log_probability += token_log_probability(
+                &logits,
+                usize::try_from(*token).map_err(|_| GenerationError::TokenIdOutOfRange(*token))?,
+            )
+            .map_err(GenerationError::Sampling)? as f64;
             context.push(*token);
         }
 
@@ -914,10 +913,7 @@ mod tests {
         let transitions = Tensor::new(
             vec![4, 4],
             vec![
-                0.0, 10.0, 1.0, 0.0,
-                0.0, 0.0, 10.0, 0.0,
-                0.0, 0.0, 0.0, 10.0,
-                0.0, 0.0, 0.0, 10.0,
+                0.0, 10.0, 1.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0,
             ],
         )
         .expect("transitions");
