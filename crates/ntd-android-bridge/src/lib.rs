@@ -3463,6 +3463,60 @@ fn production_capability_probe(
     let mut file = AndroidScopedFileAdapter::new(root.clone())?;
     let mut verifier = AndroidProductionVerifier;
 
+    let search_action = TypedAction::WebSearch {
+        query: "Android".into(),
+        max_results: 3,
+    };
+    let mut search_descriptor = CapabilityDescriptor::new(
+        CapabilityId("web.search".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("web.search probe descriptor: {error:?}"))?;
+    let search_scope = AuthorityScope::new("network.read")
+        .map_err(|error| format!("web.search authority scope: {error:?}"))?;
+    search_descriptor.required_scopes.push(search_scope.clone());
+    search_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize web.search descriptor: {error:?}"))?;
+    if AuthorityGrant::new().permits(&search_descriptor).is_ok() {
+        return Err("web.search was not denied without network.read scope".into());
+    }
+    AuthorityGrant::new()
+        .with_scope(search_scope)
+        .permits(&search_descriptor)
+        .map_err(|error| format!("web.search explicit authority rejected: {error:?}"))?;
+
+    let mut search = AndroidWebSearchAdapter;
+    let search_result = search
+        .execute(ntd_runtime::ActionId(89), &search_action)
+        .map_err(|error| format!("production web.search probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: search_output,
+        ..
+    } = search_result
+    else {
+        return Err("production web.search probe did not complete".into());
+    };
+    if verifier.verify(&search_descriptor, &search_action, &search_output)
+        != ActionVerification::Accept
+    {
+        return Err("production web.search evidence verification failed".into());
+    }
+    let ActionValue::TextList(search_items) = &search_output.value else {
+        return Err("production web.search did not return a text result list".into());
+    };
+    if search_items.is_empty() || search_items.len() > 3 {
+        return Err("production web.search returned an invalid result count".into());
+    }
+    if search_items
+        .iter()
+        .any(|item| !item.contains(" | https://"))
+    {
+        return Err("production web.search result lacks a verified HTTPS URL".into());
+    }
+
     let mut web = AndroidWebFetchAdapter;
     let web_action = TypedAction::WebFetch {
         url: "https://example.com/".into(),
@@ -3738,7 +3792,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_search_authority_block=ok\nweb_search=ok\nweb_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
