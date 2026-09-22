@@ -1882,16 +1882,28 @@ fn external_write_approval(
     )))
 }
 
-fn execute_android_verified_actions(
-    conversation: &mut SovereignConversationState,
-    model: &NativeChatModel,
+struct AndroidActionExecutionContext<'a> {
+    model: &'a NativeChatModel,
     task_id: u64,
-    user_message: &str,
+    user_message: &'a str,
     prompt_limit: usize,
     resources: ResourceSnapshot,
-    action_plan: &AssistantActionPlan,
     external_approved: bool,
+}
+
+fn execute_android_verified_actions(
+    conversation: &mut SovereignConversationState,
+    action_plan: &AssistantActionPlan,
+    context: AndroidActionExecutionContext<'_>,
 ) -> Result<(), String> {
+    let AndroidActionExecutionContext {
+        model,
+        task_id,
+        user_message,
+        prompt_limit,
+        resources,
+        external_approved,
+    } = context;
     let supported = [
         "device.observe",
         "web.fetch",
@@ -2298,13 +2310,15 @@ fn submit_chat_reserved(
             } else {
                 execute_android_verified_actions(
                     &mut conversation,
-                    model,
-                    task_id,
-                    user_message,
-                    prompt_limit,
-                    resources,
                     &action_plan,
-                    false,
+                    AndroidActionExecutionContext {
+                        model,
+                        task_id,
+                        user_message,
+                        prompt_limit,
+                        resources,
+                        external_approved: false,
+                    },
                 )?;
             }
         }
@@ -2451,13 +2465,15 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
     let mut executed = conversation.clone();
     let execution = execute_android_verified_actions(
         &mut executed,
-        &model,
-        task_id,
-        &active.user_message,
-        prompt_limit,
-        resources,
         &action_plan,
-        true,
+        AndroidActionExecutionContext {
+            model: &model,
+            task_id,
+            user_message: &active.user_message,
+            prompt_limit,
+            resources,
+            external_approved: true,
+        },
     );
 
     match execution {
