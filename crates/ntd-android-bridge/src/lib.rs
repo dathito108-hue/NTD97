@@ -1552,7 +1552,25 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
                 .as_ref()
                 .is_some_and(|session| chat_session_active(session.status))
         {
-            return Err("another native chat request is still running".into());
+            let session = guard
+                .chat_session
+                .as_ref()
+                .map(|session| {
+                    format!(
+                        "request={} task={} status={:?}",
+                        session.request_id, session.task_id, session.status
+                    )
+                })
+                .unwrap_or_else(|| "none".to_owned());
+            let active_task = guard
+                .conversation
+                .active()
+                .map(|active| active.task_id.to_string())
+                .unwrap_or_else(|| "none".to_owned());
+            return Err(format!(
+                "another native chat request is still running: submit_in_progress={} session={} active_task={}",
+                guard.chat_submit_in_progress, session, active_task
+            ));
         }
         let model = guard
             .chat_model
