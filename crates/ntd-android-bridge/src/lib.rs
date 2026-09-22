@@ -2094,3 +2094,60 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeEn
         Err(_) => java_bytes(&env, &[]),
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn governed_device_policy_routes_live_evidence() {
+        assert_eq!(
+            governed_device_surfaces("What is my current battery status?"),
+            Some(vec!["battery", "resources"])
+        );
+        assert_eq!(
+            governed_device_surfaces("Is my phone temperature high?"),
+            Some(vec!["thermal", "resources"])
+        );
+        assert_eq!(
+            governed_device_surfaces("How much RAM is available?"),
+            Some(vec!["memory", "resources"])
+        );
+        assert_eq!(governed_device_surfaces("remember our conversation memory"), None);
+        assert_eq!(governed_device_surfaces("tell me a story"), None);
+    }
+
+    #[test]
+    fn device_adapter_scopes_verified_fields_to_selected_surface() {
+        let snapshot = ResourceSnapshot {
+            available_ram_bytes: 123,
+            battery_percent: 77,
+            charging: true,
+            thermal: ThermalState::Nominal,
+            latency_budget_ms: 42,
+        };
+        let mut adapter = AndroidResourceAdapter { snapshot };
+        let result = adapter
+            .execute(
+                ntd_runtime::ActionId(1),
+                &TypedAction::DeviceObserve {
+                    surface: "battery".into(),
+                },
+            )
+            .expect("battery observation");
+        let AdapterResult::Completed { output, .. } = result else {
+            panic!("expected completed observation");
+        };
+        let ActionValue::Fields(fields) = output.value else {
+            panic!("expected field evidence");
+        };
+
+        assert_eq!(fields.get("battery_percent").map(String::as_str), Some("77"));
+        assert_eq!(fields.get("charging").map(String::as_str), Some("true"));
+        assert_eq!(fields.get("surface").map(String::as_str), Some("battery"));
+        assert!(!fields.contains_key("available_ram_bytes"));
+        assert!(!fields.contains_key("thermal"));
+        assert_eq!(output.evidence, vec!["android-resource-snapshot"]);
+    }
+}
