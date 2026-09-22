@@ -3173,7 +3173,17 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeResolveCh
     let Ok(request_id) = u64::try_from(request_id) else {
         return 0;
     };
-    u8::from(resolve_chat_approval(request_id, approved != 0).unwrap_or(false))
+    match resolve_chat_approval(request_id, approved != 0) {
+        Ok(value) => {
+            lock_state().chat_last_error.clear();
+            u8::from(value)
+        }
+        Err(error) => {
+            let mut guard = lock_state();
+            guard.chat_last_error = error.chars().take(2048).collect();
+            0
+        }
+    }
 }
 
 #[allow(unsafe_code)]
