@@ -154,10 +154,7 @@ fn load_pc_pair_profile(root: &Path, expected_peer: &str) -> Result<PcPairProfil
     let text = fs::read_to_string(&canonical)
         .map_err(|error| format!("read paired-PC profile: {error}"))?;
     let lines = text.lines().collect::<Vec<_>>();
-    if lines.len() != 7
-        || lines[0] != "NTD97_PC_PAIR_V1"
-        || lines[6] != "END"
-    {
+    if lines.len() != 7 || lines[0] != "NTD97_PC_PAIR_V1" || lines[6] != "END" {
         return Err("paired-PC profile framing is invalid".into());
     }
 
@@ -169,10 +166,8 @@ fn load_pc_pair_profile(root: &Path, expected_peer: &str) -> Result<PcPairProfil
         .parse::<SocketAddr>()
         .map_err(|_| "paired-PC profile address is invalid".to_owned())?;
     let local_seed = decode_fixed_hex::<32>(profile_value(lines[3], "local_seed=")?)?;
-    let remote_peer_id =
-        decode_fixed_hex::<16>(profile_value(lines[4], "remote_peer_id=")?)?;
-    let remote_verify_key =
-        decode_fixed_hex::<32>(profile_value(lines[5], "remote_verify_key=")?)?;
+    let remote_peer_id = decode_fixed_hex::<16>(profile_value(lines[4], "remote_peer_id=")?)?;
+    let remote_verify_key = decode_fixed_hex::<32>(profile_value(lines[5], "remote_verify_key=")?)?;
     PairingRecord::from_public(remote_peer_id, remote_verify_key)
         .map_err(|error| format!("paired-PC pinned identity is invalid: {error:?}"))?;
 
@@ -198,7 +193,11 @@ fn expected_remote_pc_capability(
 ) -> Option<(&'static str, SideEffectClass, &'static str)> {
     match canonical {
         "pc.observe" => Some(("pc.system.observe", SideEffectClass::ReadOnly, "pc.observe")),
-        "pc.execute" => Some(("pc.process.execute", SideEffectClass::ExternalWrite, "pc.execute")),
+        "pc.execute" => Some((
+            "pc.process.execute",
+            SideEffectClass::ExternalWrite,
+            "pc.execute",
+        )),
         "pc.artifact.read" => Some((
             "pc.artifact.read",
             SideEffectClass::ReadOnly,
@@ -1870,7 +1869,10 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .any(|item| item == "operation:launch")
             }
             ("pc.observe", TypedAction::PcObserve { peer, .. }) => {
-                output.evidence.iter().any(|item| item == "pcf97-authenticated")
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "pcf97-authenticated")
                     && output
                         .evidence
                         .iter()
@@ -1881,7 +1883,10 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .any(|item| item == "remote-capability:pc.system.observe")
             }
             ("pc.execute", TypedAction::PcExecute { peer, .. }) => {
-                output.evidence.iter().any(|item| item == "pcf97-authenticated")
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "pcf97-authenticated")
                     && output
                         .evidence
                         .iter()
@@ -1892,7 +1897,10 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .any(|item| item == "remote-capability:pc.process.execute")
             }
             ("pc.artifact.read", TypedAction::PcArtifactRead { peer, .. }) => {
-                output.evidence.iter().any(|item| item == "pcf97-authenticated")
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "pcf97-authenticated")
                     && output
                         .evidence
                         .iter()
@@ -1903,11 +1911,11 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .any(|item| item == "remote-capability:pc.artifact.read")
                     && matches!(&output.value, ActionValue::Bytes(_))
             }
-            (
-                "pc.artifact.write",
-                TypedAction::PcArtifactWrite { peer, bytes, .. },
-            ) => {
-                output.evidence.iter().any(|item| item == "pcf97-authenticated")
+            ("pc.artifact.write", TypedAction::PcArtifactWrite { peer, bytes, .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "pcf97-authenticated")
                     && output
                         .evidence
                         .iter()
@@ -3090,10 +3098,9 @@ fn external_write_approval(
                         .unwrap_or_default()
                 ));
             }
-            (
-                "pc.artifact.write",
-                TypedAction::PcArtifactWrite { peer, path, bytes },
-            ) if valid_pc_peer_alias(peer) && !path.trim().is_empty() && !bytes.is_empty() => {
+            ("pc.artifact.write", TypedAction::PcArtifactWrite { peer, path, bytes })
+                if valid_pc_peer_alias(peer) && !path.trim().is_empty() && !bytes.is_empty() =>
+            {
                 capabilities.insert("pc.artifact.write".to_owned());
                 rationales.push(format!(
                     "write {} bytes to paired-PC artifact {path} on {peer}",
@@ -3478,10 +3485,11 @@ fn execute_android_verified_actions(
                     SideEffectClass::ReadOnly,
                 );
                 if let Ok(descriptor) = descriptor.as_mut() {
-                    descriptor.required_scopes.push(
-                        AuthorityScope::new("pc.artifact.read")
-                            .map_err(|error| format!("paired-PC artifact read scope: {error:?}"))?,
-                    );
+                    descriptor
+                        .required_scopes
+                        .push(AuthorityScope::new("pc.artifact.read").map_err(|error| {
+                            format!("paired-PC artifact read scope: {error:?}")
+                        })?);
                 }
                 descriptor
             }
@@ -3494,8 +3502,9 @@ fn execute_android_verified_actions(
                 );
                 if let Ok(descriptor) = descriptor.as_mut() {
                     descriptor.required_scopes.push(
-                        AuthorityScope::new("pc.artifact.write")
-                            .map_err(|error| format!("paired-PC artifact write scope: {error:?}"))?,
+                        AuthorityScope::new("pc.artifact.write").map_err(|error| {
+                            format!("paired-PC artifact write scope: {error:?}")
+                        })?,
                     );
                 }
                 descriptor
@@ -3707,16 +3716,17 @@ fn execute_android_verified_actions(
             );
         }
         if fabric_capabilities.contains("pc.execute") {
-            authority = authority.with_scope(
-                AuthorityScope::new("pc.execute")
-                    .map_err(|error| format!("paired-PC execute authority scope: {error:?}"))?,
-            );
+            authority =
+                authority
+                    .with_scope(AuthorityScope::new("pc.execute").map_err(|error| {
+                        format!("paired-PC execute authority scope: {error:?}")
+                    })?);
         }
         if fabric_capabilities.contains("pc.artifact.write") {
-            authority = authority.with_scope(
-                AuthorityScope::new("pc.artifact.write")
-                    .map_err(|error| format!("paired-PC artifact write authority scope: {error:?}"))?,
-            );
+            authority =
+                authority.with_scope(AuthorityScope::new("pc.artifact.write").map_err(
+                    |error| format!("paired-PC artifact write authority scope: {error:?}"),
+                )?);
         }
     }
 
@@ -6206,7 +6216,10 @@ mod tests {
                 surface: "system".into(),
             })
         );
-        assert_eq!(observe.graph.actions[0].side_effect, SideEffectClass::ReadOnly);
+        assert_eq!(
+            observe.graph.actions[0].side_effect,
+            SideEffectClass::ReadOnly
+        );
 
         let execute = governed_explicit_action_plan("execute pc workstation echo")
             .expect("execute plan")
