@@ -75,6 +75,8 @@ for REQUIRED in \
   chat_store=ok \
   chat_cancel=ok \
   chat_status=ok \
+  web_search_authority_block=ok \
+  web_search=ok \
   web_fetch=ok \
   web_private_block=ok \
   file_write=ok \
