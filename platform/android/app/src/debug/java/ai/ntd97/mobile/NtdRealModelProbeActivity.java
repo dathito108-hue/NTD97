@@ -1,6 +1,9 @@
 package ai.ntd97.mobile;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 
@@ -234,6 +237,8 @@ public final class NtdRealModelProbeActivity extends Activity {
                     && governedFinalStatus == 2;
         }
 
+        boolean externalApprovalOk = runExternalApprovalProbe(host);
+
         long cancelRequest = host.submitChat("cancel this response", 8);
         boolean cancelOk = cancelRequest >= 0
                 && host.cancelChat(cancelRequest)
@@ -246,7 +251,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_reasoning_loop=" + (reasoningLoopOk ? "ok" : "failed") + "\n"
                 + "chat_action_planner=" + (actionPlannerOk ? "ok" : "failed") + "\n"
                 + "chat_action_safety=" + (actionSafetyOk ? "ok" : "failed") + "\n"
-                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"
+                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"                + "chat_external_approval=" + (externalApprovalOk ? "ok" : "failed") + "\n"
                 + "governed_request_id=" + governedRequest + "\n"
                 + "governed_planner_status=" + governedPlannerStatus + "\n"
                 + "governed_action_count=" + governedActionCount + "\n"
@@ -271,6 +276,63 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_store=" + (storeOk ? "ok" : "failed") + "\n"
                 + "chat_cancel=" + (cancelOk ? "ok" : "failed") + "\n"
                 + "chat_status=" + (statusOk ? "ok" : "failed") + "\n";
+    }
+
+    private boolean runExternalApprovalProbe(NtdRuntimeHost host) {
+        ClipboardManager clipboard =
+                (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            return false;
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText("ntd97-before", "NTD97-BEFORE"));
+
+        long deniedRequest = host.submitChat("set clipboard to NTD97-M13-CHAT", 4);
+        if (deniedRequest < 0) {
+            return false;
+        }
+        NtdRuntimeHost.ChatEvent pending = host.nextChatEvent(deniedRequest);
+        if (pending.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED
+                || !"NTD97-BEFORE".contentEquals(clipboard.getPrimaryClip().getItemAt(0).coerceToText(this))) {
+            return false;
+        }
+
+        byte[] checkpoint = host.chatCheckpoint();
+        if (checkpoint.length == 0) {
+            return false;
+        }
+        long restored = host.restoreChatCheckpoint(checkpoint);
+        if (restored <= 0
+                || host.nextChatEvent(restored).kind
+                        != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED
+                || !host.resolveChatApproval(restored, false)
+                || host.chatStatus(restored) != 3
+                || !"NTD97-BEFORE".contentEquals(clipboard.getPrimaryClip().getItemAt(0).coerceToText(this))) {
+            return false;
+        }
+
+        long approvedRequest = host.submitChat("set clipboard to NTD97-M13-CHAT", 4);
+        if (approvedRequest < 0
+                || host.nextChatEvent(approvedRequest).kind
+                        != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED
+                || !host.resolveChatApproval(approvedRequest, true)) {
+            return false;
+        }
+        CharSequence value = clipboard.getPrimaryClip().getItemAt(0).coerceToText(this);
+        if (!"NTD97-M13-CHAT".contentEquals(value)
+                || !host.chatVerifiedSynthesisReady(approvedRequest)
+                || host.chatVerifiedActionCount(approvedRequest) <= 0) {
+            return false;
+        }
+
+        for (int attempt = 0; attempt < 8; attempt++) {
+            NtdRuntimeHost.ChatEvent event = host.nextChatEvent(approvedRequest);
+            if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+                continue;
+            }
+            return event.kind == NtdRuntimeHost.ChatEvent.COMPLETE
+                    && host.chatStatus(approvedRequest) == 2;
+        }
+        return false;
     }
 
     private boolean actionPlannerStatusKnown(NtdRuntimeHost host, long requestId) {
