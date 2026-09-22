@@ -689,7 +689,7 @@ mod tests {
     }
 
     #[test]
-    fn paired_pc_action_round_trips_in_taf97_minor_two() {
+    fn paired_pc_action_round_trips_in_taf97_minor_three() {
         let mut registry = CapabilityRegistry::new();
         registry
             .register(
@@ -732,6 +732,63 @@ mod tests {
                         resume_token: None,
                         rollback_token: None,
                         last_error: None,
+                    }],
+                },
+            )]),
+        };
+
+        let encoded = encode_action_fabric_checkpoint(&registry, &state).expect("encode");
+        assert_eq!(
+            decode_action_fabric_checkpoint(&registry, &encoded).expect("decode"),
+            state
+        );
+    }
+
+    #[test]
+    fn artifact_download_round_trips_with_resume_state() {
+        let mut registry = CapabilityRegistry::new();
+        let mut descriptor = CapabilityDescriptor::new(
+            CapabilityId("artifact.download".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::Reversible,
+        )
+        .expect("descriptor");
+        descriptor.resumable = true;
+        descriptor.rollback_supported = true;
+        descriptor.required_scopes = vec![
+            AuthorityScope::new("network.read").expect("network scope"),
+            AuthorityScope::new("file.app_private").expect("file scope"),
+        ];
+        registry.register(descriptor).expect("register");
+
+        let state = ActionFabricState {
+            next_plan_id: 2,
+            next_action_id: 2,
+            plans: BTreeMap::from([(
+                1,
+                ActionPlanState {
+                    id: ActionPlanId(1),
+                    task_id: 13,
+                    cursor: 0,
+                    status: ActionPlanStatus::Suspended,
+                    actions: vec![PlannedAction {
+                        id: ActionId(1),
+                        node_id: 1,
+                        capability: CapabilityId("artifact.download".into()),
+                        capability_version: 1,
+                        side_effect: SideEffectClass::Reversible,
+                        verification_required: true,
+                        action: TypedAction::ArtifactDownload {
+                            url: "https://example.com/file.bin".into(),
+                            path: "artifacts/file.bin".into(),
+                        },
+                        status: ActionStatus::Suspended,
+                        attempts: 1,
+                        output: None,
+                        resume_token: Some(vec![1, 2, 3, 4]),
+                        rollback_token: None,
+                        last_error: Some("download staged".into()),
                     }],
                 },
             )]),
