@@ -27,6 +27,7 @@ public final class NtdRealModelProbeActivity extends Activity {
     private boolean productionCapabilityProbeStarted;
     private int productionFocusAttempts;
     private String externalApprovalDiagnostic = "not-run";
+    private String uploadContinuityDiagnostic = "not-run";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -93,7 +94,9 @@ public final class NtdRealModelProbeActivity extends Activity {
                     + "chat_external_approval=failed\n"
                     + "chat_external_approval_detail=foreground-probe:"
                     + message.replace('\n', ' ').replace('\r', ' ')
-                    + "\n";
+                    + "\n"
+                    + "chat_upload_continuity=failed\n"
+                    + "chat_upload_continuity_detail=foreground-probe\n";
         }
 
         pendingResult = result;
@@ -182,14 +185,14 @@ public final class NtdRealModelProbeActivity extends Activity {
     private String runChatApiProbe() throws IOException {
         NtdNativeRuntimeHost host = NtdNativeRuntimeHost.create(this);
         if (host == null || !host.chatReady()) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_external_approval=failed\nchat_upload_continuity=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         long requestId = host.submitChat("Once", 2);
         if (requestId < 0) {
             String diagnostic = host.chatLastError().replace('\n', ' ').replace('\r', ' ');
             return "chat_submit=failed\nchat_error=" + diagnostic
-                    + "\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+                    + "\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_external_approval=failed\nchat_upload_continuity=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         int tokenCount = 0;
@@ -204,7 +207,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 completed = true;
                 break;
             }
-            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_external_approval=failed\nchat_upload_continuity=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         boolean statusOk = completed && tokenCount > 0 && host.chatStatus(requestId) == 2;
@@ -323,6 +326,12 @@ public final class NtdRealModelProbeActivity extends Activity {
         }
 
         boolean externalApprovalOk = runExternalApprovalProbe(host);
+        boolean uploadContinuityOk = false;
+        if (externalApprovalOk) {
+            uploadContinuityOk = runUploadContinuityProbe(host);
+        } else {
+            uploadContinuityDiagnostic = "skipped-after-external-approval-failure";
+        }
 
         long cancelRequest = host.submitChat("cancel this response", 8);
         boolean cancelOk = cancelRequest >= 0
@@ -336,7 +345,11 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_reasoning_loop=" + (reasoningLoopOk ? "ok" : "failed") + "\n"
                 + "chat_action_planner=" + (actionPlannerOk ? "ok" : "failed") + "\n"
                 + "chat_action_safety=" + (actionSafetyOk ? "ok" : "failed") + "\n"
-                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"                + "chat_external_approval=" + (externalApprovalOk ? "ok" : "failed") + "\n"                + "chat_external_approval_detail=" + externalApprovalDiagnostic + "\n"
+                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"
+                + "chat_external_approval=" + (externalApprovalOk ? "ok" : "failed") + "\n"
+                + "chat_external_approval_detail=" + externalApprovalDiagnostic + "\n"
+                + "chat_upload_continuity=" + (uploadContinuityOk ? "ok" : "failed") + "\n"
+                + "chat_upload_continuity_detail=" + uploadContinuityDiagnostic + "\n"
                 + "governed_request_id=" + governedRequest + "\n"
                 + "governed_planner_status=" + governedPlannerStatus + "\n"
                 + "governed_action_count=" + governedActionCount + "\n"
@@ -496,6 +509,90 @@ public final class NtdRealModelProbeActivity extends Activity {
         }
         externalApprovalDiagnostic = "approved-terminal-timeout";
         return false;
+    }
+
+    private boolean runUploadContinuityProbe(NtdRuntimeHost host) {
+        File source = new File(
+                new File(getFilesDir(), "ntd97-capability-files"),
+                "m13/process-upload.bin");
+        try {
+            File parent = source.getParentFile();
+            if (parent == null || (!parent.isDirectory() && !parent.mkdirs())) {
+                uploadContinuityDiagnostic = "source-directory";
+                return false;
+            }
+            byte[] payload = "NTD97-M13-PERSISTED-UPLOAD".getBytes(StandardCharsets.UTF_8);
+            try (FileOutputStream output = new FileOutputStream(source, false)) {
+                output.write(payload);
+                output.getFD().sync();
+            }
+
+            long request = host.submitChat(
+                    "upload artifact m13/process-upload.bin to https://127.0.0.1/upload",
+                    4);
+            if (request < 0) {
+                uploadContinuityDiagnostic = "submit:" + safeDiagnostic(host.chatLastError());
+                return false;
+            }
+            NtdRuntimeHost.ChatEvent approval = host.nextChatEvent(request);
+            if (approval.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+                uploadContinuityDiagnostic = "approval-kind:" + approval.kind;
+                return false;
+            }
+            if (!host.resolveChatApproval(request, true)) {
+                uploadContinuityDiagnostic = "prepare:" + safeDiagnostic(host.chatLastError());
+                return false;
+            }
+
+            NtdRuntimeHost.ChatEvent suspended = host.nextChatEvent(request);
+            if (suspended.kind != NtdRuntimeHost.ChatEvent.ACTION_CHECKPOINTED) {
+                uploadContinuityDiagnostic = "suspend-kind:" + suspended.kind;
+                return false;
+            }
+            if (host.chatVerifiedSynthesisReady(request)
+                    || host.chatVerifiedActionCount(request) != 0) {
+                uploadContinuityDiagnostic = "side-effect-committed-before-restore";
+                return false;
+            }
+
+            byte[] checkpoint = host.chatCheckpoint();
+            if (checkpoint.length == 0) {
+                uploadContinuityDiagnostic = "checkpoint-empty";
+                return false;
+            }
+            long restored = host.restoreChatCheckpoint(checkpoint);
+            if (restored <= 0) {
+                uploadContinuityDiagnostic = "restore:" + safeDiagnostic(host.chatLastError());
+                return false;
+            }
+            NtdRuntimeHost.ChatEvent reconfirm = host.nextChatEvent(restored);
+            if (reconfirm.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+                uploadContinuityDiagnostic = "restore-auto-replayed:" + reconfirm.kind;
+                return false;
+            }
+            if (!host.resolveChatApproval(restored, false)) {
+                uploadContinuityDiagnostic = "deny:" + safeDiagnostic(host.chatLastError());
+                return false;
+            }
+            if (host.chatStatus(restored) != 3) {
+                uploadContinuityDiagnostic = "deny-status:" + host.chatStatus(restored);
+                return false;
+            }
+            if (!Arrays.equals(payload, readAllBytes(source))) {
+                uploadContinuityDiagnostic = "source-changed";
+                return false;
+            }
+
+            uploadContinuityDiagnostic = "ok";
+            return true;
+        } catch (IOException error) {
+            uploadContinuityDiagnostic = "io:" + safeDiagnostic(error.getMessage());
+            return false;
+        } finally {
+            if (source.exists() && !source.delete()) {
+                source.deleteOnExit();
+            }
+        }
     }
 
     private String safeDiagnostic(String value) {
