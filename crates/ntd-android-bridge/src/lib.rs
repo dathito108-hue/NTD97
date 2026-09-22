@@ -183,6 +183,22 @@ fn canonical_pc_pair_directory(root: &Path, create: bool) -> Result<PathBuf, Str
     Ok(pairs)
 }
 
+fn pc_pair_public_receipt(profile: &PcPairProfile) -> String {
+    let local = PairedIdentity::from_seed(profile.local_seed);
+    format!(
+        "NTD97_PC_PAIR_RECEIPT_V1\npeer={}\naddress={}\nlocal_peer_id={}\nlocal_verify_key={}\nEND\n",
+        profile.peer,
+        profile.address,
+        fixed_hex(&local.peer_id()),
+        fixed_hex(&local.verify_key()),
+    )
+}
+
+fn describe_pc_pair_profile(root: &Path, peer: &str) -> Result<String, String> {
+    let profile = load_pc_pair_profile(root, peer)?;
+    Ok(pc_pair_public_receipt(&profile))
+}
+
 fn provision_pc_pair_profile(
     root: &Path,
     peer: &str,
@@ -253,11 +269,8 @@ fn provision_pc_pair_profile(
         return Err("paired-PC committed profile failed verification".into());
     }
 
-    Ok(format!(
-        "NTD97_PC_PAIR_RECEIPT_V1\npeer={peer}\naddress={address}\nlocal_peer_id={}\nlocal_verify_key={}\nEND\n",
-        fixed_hex(&local.peer_id()),
-        fixed_hex(&local.verify_key()),
-    ))
+    let _ = local;
+    Ok(pc_pair_public_receipt(&loaded))
 }
 
 fn revoke_pc_pair_profile(root: &Path, peer: &str) -> Result<(), String> {
@@ -6504,6 +6517,26 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeProvision
         &remote_peer_id,
         &remote_verify_key,
     ) {
+        Ok(receipt) => java_bytes(&env, receipt.as_bytes()),
+        Err(error) => java_bytes(&env, format!("ERROR:{error}").as_bytes()),
+    }
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeDescribePcPairProfile(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    capability_root: JString<'_>,
+    peer: JString<'_>,
+) -> jbyteArray {
+    let Some(capability_root) = java_string(&mut env, &capability_root) else {
+        return java_bytes(&env, b"ERROR:invalid capability root");
+    };
+    let Some(peer) = java_string(&mut env, &peer) else {
+        return java_bytes(&env, b"ERROR:invalid peer alias");
+    };
+    match describe_pc_pair_profile(Path::new(&capability_root), &peer) {
         Ok(receipt) => java_bytes(&env, receipt.as_bytes()),
         Err(error) => java_bytes(&env, format!("ERROR:{error}").as_bytes()),
     }
