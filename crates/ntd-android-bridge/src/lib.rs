@@ -5324,6 +5324,137 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeEn
 mod tests {
     use super::*;
 
+    struct AmbiguousExternalRetryAdapter;
+
+    impl CapabilityAdapter for AmbiguousExternalRetryAdapter {
+        fn execute(
+            &mut self,
+            _action_id: ntd_runtime::ActionId,
+            _action: &TypedAction,
+        ) -> Result<AdapterResult, String> {
+            Err("external transport outcome is ambiguous".into())
+        }
+    }
+
+    struct ResumableExternalRetryAdapter;
+
+    impl CapabilityAdapter for ResumableExternalRetryAdapter {
+        fn execute(
+            &mut self,
+            _action_id: ntd_runtime::ActionId,
+            _action: &TypedAction,
+        ) -> Result<AdapterResult, String> {
+            Ok(AdapterResult::Retryable {
+                reason: "retry with durable token".into(),
+                resume_token: Some(vec![1, 2, 3]),
+            })
+        }
+    }
+
+    #[test]
+    fn ambiguous_external_retry_requires_reconfirmation_but_resumable_token_does_not() {
+        let mut browser_registry = CapabilityRegistry::new();
+        browser_registry
+            .register(
+                CapabilityDescriptor::new(
+                    CapabilityId("browser.interact".into()),
+                    1,
+                    CapabilityDomain::Browser,
+                    SideEffectClass::ExternalWrite,
+                )
+                .expect("browser descriptor"),
+            )
+            .expect("register browser");
+        let mut browser_fabric = ActionFabric::new(browser_registry);
+        browser_fabric
+            .register_adapter(
+                CapabilityId("browser.interact".into()),
+                AmbiguousExternalRetryAdapter,
+            )
+            .expect("browser adapter");
+        let browser_graph = ntd_runtime::TaskGraph {
+            actions: vec![ntd_runtime::ActionNode {
+                id: 1,
+                capability: CapabilityId("browser.interact".into()),
+                side_effect: SideEffectClass::ExternalWrite,
+                verification_required: true,
+            }],
+        };
+        let browser_plan = browser_fabric
+            .prepare_plan(
+                1,
+                &browser_graph,
+                BTreeMap::from([(
+                    1,
+                    TypedAction::BrowserInteract {
+                        target: "body".into(),
+                        operation: "click".into(),
+                        value: None,
+                    },
+                )]),
+            )
+            .expect("browser plan");
+        let mut authority = AuthorityGrant::new();
+        authority.allow_external_write = true;
+        let report = browser_fabric
+            .execute_next(browser_plan, &authority, &mut AndroidProductionVerifier)
+            .expect("browser retry report");
+        assert_eq!(report.action_status, Some(ActionStatus::Retryable));
+        assert!(action_checkpoint_requires_reconfirm(
+            &browser_fabric,
+            browser_plan
+        ));
+
+        let mut upload_registry = CapabilityRegistry::new();
+        let mut upload_descriptor = CapabilityDescriptor::new(
+            CapabilityId("artifact.upload".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("upload descriptor");
+        upload_descriptor.resumable = true;
+        upload_registry
+            .register(upload_descriptor)
+            .expect("register upload");
+        let mut upload_fabric = ActionFabric::new(upload_registry);
+        upload_fabric
+            .register_adapter(
+                CapabilityId("artifact.upload".into()),
+                ResumableExternalRetryAdapter,
+            )
+            .expect("upload adapter");
+        let upload_graph = ntd_runtime::TaskGraph {
+            actions: vec![ntd_runtime::ActionNode {
+                id: 1,
+                capability: CapabilityId("artifact.upload".into()),
+                side_effect: SideEffectClass::ExternalWrite,
+                verification_required: true,
+            }],
+        };
+        let upload_plan = upload_fabric
+            .prepare_plan(
+                2,
+                &upload_graph,
+                BTreeMap::from([(
+                    1,
+                    TypedAction::ArtifactUpload {
+                        url: "https://example.com/upload".into(),
+                        path: "artifacts/report.bin".into(),
+                    },
+                )]),
+            )
+            .expect("upload plan");
+        let report = upload_fabric
+            .execute_next(upload_plan, &authority, &mut AndroidProductionVerifier)
+            .expect("upload retry report");
+        assert_eq!(report.action_status, Some(ActionStatus::Retryable));
+        assert!(!action_checkpoint_requires_reconfirm(
+            &upload_fabric,
+            upload_plan
+        ));
+    }
+
     #[test]
     fn governed_device_policy_routes_live_evidence() {
         assert_eq!(
