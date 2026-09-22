@@ -520,34 +520,68 @@ where
     }
 
     let plan_id = fabric.prepare_cognitive_task(task, action_plan.payloads.clone())?;
+    continue_verified_assistant_plan(
+        fabric,
+        plan_id,
+        task,
+        action_plan,
+        authority,
+        verifier,
+        user_message,
+    )
+}
+
+pub fn continue_verified_assistant_plan<V>(
+    fabric: &mut ActionFabric,
+    plan_id: ActionPlanId,
+    task: &CognitiveTask,
+    action_plan: &AssistantActionPlan,
+    authority: &AuthorityGrant,
+    verifier: &mut V,
+    user_message: &str,
+) -> Result<VerifiedAssistantActionRun, AssistantActionRunError>
+where
+    V: ActionVerifier,
+{
+    if task.graph.actions.is_empty() || task.graph != action_plan.graph {
+        return Err(AssistantActionRunError::TaskGraphMismatch);
+    }
+
+    let initial = fabric
+        .state()
+        .plans
+        .get(&plan_id.0)
+        .ok_or(AssistantActionRunError::MissingPlan)?;
+    if initial.task_id != task.id
+        || initial.actions.len() != action_plan.graph.actions.len()
+        || initial
+            .actions
+            .iter()
+            .zip(&action_plan.graph.actions)
+            .any(|(stored, planned)| {
+                stored.node_id != planned.id
+                    || stored.capability != planned.capability
+                    || stored.side_effect != planned.side_effect
+                    || stored.verification_required != planned.verification_required
+                    || action_plan.payloads.get(&planned.id) != Some(&stored.action)
+            })
+    {
+        return Err(AssistantActionRunError::TaskGraphMismatch);
+    }
+
     let mut reports = Vec::with_capacity(action_plan.graph.actions.len());
+    if initial.status != ActionPlanStatus::Completed {
+        for _ in 0..action_plan.graph.actions.len() {
+            let report = fabric.execute_next(plan_id, authority, verifier)?;
+            let status = report.plan_status;
+            let action_status = report.action_status;
+            reports.push(report);
 
-    for _ in 0..action_plan.graph.actions.len() {
-        let report = fabric.execute_next(plan_id, authority, verifier)?;
-        let status = report.plan_status;
-        let action_status = report.action_status;
-        reports.push(report);
-
-        match status {
-            ActionPlanStatus::Completed => break,
-            ActionPlanStatus::Failed
-            | ActionPlanStatus::RolledBack
-            | ActionPlanStatus::Suspended => {
-                let summary = reports
-                    .last()
-                    .map(|report| report.summary.clone())
-                    .unwrap_or_default();
-                return Err(AssistantActionRunError::Incomplete {
-                    plan_status: status,
-                    action_status,
-                    summary,
-                });
-            }
-            ActionPlanStatus::Ready => {
-                if matches!(
-                    action_status,
-                    Some(ActionStatus::Retryable | ActionStatus::Suspended)
-                ) {
+            match status {
+                ActionPlanStatus::Completed => break,
+                ActionPlanStatus::Failed
+                | ActionPlanStatus::RolledBack
+                | ActionPlanStatus::Suspended => {
                     let summary = reports
                         .last()
                         .map(|report| report.summary.clone())
@@ -557,6 +591,22 @@ where
                         action_status,
                         summary,
                     });
+                }
+                ActionPlanStatus::Ready => {
+                    if matches!(
+                        action_status,
+                        Some(ActionStatus::Retryable | ActionStatus::Suspended)
+                    ) {
+                        let summary = reports
+                            .last()
+                            .map(|report| report.summary.clone())
+                            .unwrap_or_default();
+                        return Err(AssistantActionRunError::Incomplete {
+                            plan_status: status,
+                            action_status,
+                            summary,
+                        });
+                    }
                 }
             }
         }
