@@ -435,14 +435,19 @@ Current implementation:
 - app-private file writes use sync + atomic rename and emit rollback tokens restoring the previous bytes or removing newly-created files;
 - native action protocol now represents `file.write` as a reversible side effect instead of a read-only action;
 - Android production TaskGraph execution accepts only allowlisted `device.observe`, `web.fetch`, `file.read` and `file.write` capabilities; unsupported domains remain fail-closed;
-- Android emulator acceptance performs a real HTTPS fetch, rejects a private-network HTTPS target, verifies app-private write/read content and verifies rollback to the absent state.
+- Android emulator acceptance performs a real HTTPS fetch, rejects a private-network HTTPS target, verifies app-private write/read content and verifies rollback to the absent state;
+- native action protocol represents `device.interact` and `app.action` as `ExternalWrite` side effects rather than read-only operations;
+- production Android `device.interact` currently supports explicit-authority clipboard `set_text` with platform read-back verification and a native evidence receipt, without persisting the previous clipboard content;
+- production Android `app.action` currently supports exact-package `launch` through an explicit Android Intent and emits a native evidence receipt without broad package-query permission;
+- both app/device write capabilities require dedicated scopes plus `allow_external_write=true`; default grants are proven to deny execution before the side effect;
+- Android emulator acceptance verifies both default authority rejection and explicit-authority clipboard/app-launch execution.
 
 Still required before M13 completion:
 
 - provider-independent real WebSearch boundary;
 - browser observe/interact production adapter;
 - broader Android storage surfaces through explicit platform/user grants;
-- app launch/intents and accessibility-assisted interaction behind explicit authority;
+- connect production app/device external-write adapters to the canonical chat approval/suspend/resume flow; accessibility-assisted interaction remains fail-closed until its explicit-authority adapter is implemented;
 - verified download/upload/artifact handling and resumable network transitions;
 - paired-PC integration into the same production mixed TaskGraph;
 - real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
