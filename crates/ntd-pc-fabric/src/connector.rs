@@ -157,9 +157,7 @@ fn decode_handshake<'a>(
             .map_err(|_| PcFabricError::InvalidHandshake)?,
     ))
     .map_err(|_| PcFabricError::Overflow)?;
-    if payload_len != expected_payload_len
-        || bytes.len() != HANDSHAKE_HEADER_LEN + payload_len
-    {
+    if payload_len != expected_payload_len || bytes.len() != HANDSHAKE_HEADER_LEN + payload_len {
         return Err(PcFabricError::InvalidHandshake);
     }
     Ok(&bytes[HANDSHAKE_HEADER_LEN..])
@@ -213,10 +211,7 @@ impl<'a> FixedCursor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        net::TcpListener,
-        thread,
-    };
+    use std::{net::TcpListener, thread};
 
     use ntd_runtime::{ActionId, AdapterResult, TypedAction};
 
