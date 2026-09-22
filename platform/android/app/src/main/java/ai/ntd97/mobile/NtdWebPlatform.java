@@ -158,7 +158,7 @@ final class NtdWebPlatform {
 
     private static byte[] fetchBlocking(String rawUrl) {
         try {
-            URL current = validateUrl(rawUrl);
+            URL current = validatePublicHttpsUrl(rawUrl);
             for (int redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
                 HttpsURLConnection connection = (HttpsURLConnection) current.openConnection();
                 connection.setInstanceFollowRedirects(false);
@@ -181,7 +181,7 @@ final class NtdWebPlatform {
                     if (location == null || location.trim().isEmpty()) {
                         throw new IOException("redirect missing location");
                     }
-                    current = validateUrl(new URL(current, location).toExternalForm());
+                    current = validatePublicHttpsUrl(new URL(current, location).toExternalForm());
                     continue;
                 }
 
@@ -223,7 +223,7 @@ final class NtdWebPlatform {
                 : message;
     }
 
-    private static URL validateUrl(String rawUrl) throws IOException {
+    static URL validatePublicHttpsUrl(String rawUrl) throws IOException {
         if (rawUrl == null || rawUrl.length() > 4096) {
             throw new IOException("invalid URL");
         }
