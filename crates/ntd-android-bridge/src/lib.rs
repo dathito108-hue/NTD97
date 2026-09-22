@@ -29,11 +29,13 @@ use ntd_mobile_shell::{
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
 use ntd_runtime::{
-    choose_reasoning_budget, decode_conversation_checkpoint, encode_conversation_checkpoint,
-    execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
-    parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
-    ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
-    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope, CapabilityAdapter,
+    choose_reasoning_budget, continue_verified_assistant_plan, decode_action_fabric_checkpoint,
+    decode_conversation_checkpoint, encode_action_fabric_checkpoint, encode_conversation_checkpoint,
+    memory_recall_limit_for_budget, model_inference_signals, parse_native_action_plan,
+    run_budgeted_reasoning_cycle, sample_token, ActionFabric, ActionOutput, ActionPlanStatus,
+    ActionStatus, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
+    AssistantActionPlan, AssistantActionRunError, AssistantPlanDecision, AuthorityGrant,
+    AuthorityScope, CapabilityAdapter,
     CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
     CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
     GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
@@ -53,6 +55,7 @@ const CHAT_EVENT_COMPLETE: u8 = 2;
 const CHAT_EVENT_CANCELLED: u8 = 3;
 const CHAT_EVENT_ERROR: u8 = 4;
 const CHAT_EVENT_APPROVAL_REQUIRED: u8 = 5;
+const CHAT_EVENT_ACTION_CHECKPOINTED: u8 = 6;
 const CHAT_STATUS_MISSING: i32 = 0;
 const CHAT_STATUS_RUNNING: i32 = 1;
 const CHAT_STATUS_COMPLETE: i32 = 2;
@@ -2685,6 +2688,13 @@ fn external_write_approval(
     )))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AndroidActionExecutionOutcome {
+    Prepared,
+    Checkpointed(String),
+    Completed,
+}
+
 struct AndroidActionExecutionContext<'a> {
     model: &'a NativeChatModel,
     task_id: u64,
@@ -2692,13 +2702,14 @@ struct AndroidActionExecutionContext<'a> {
     prompt_limit: usize,
     resources: ResourceSnapshot,
     external_approved: bool,
+    prepare_only: bool,
 }
 
 fn execute_android_verified_actions(
     conversation: &mut SovereignConversationState,
     action_plan: &AssistantActionPlan,
     context: AndroidActionExecutionContext<'_>,
-) -> Result<(), String> {
+) -> Result<AndroidActionExecutionOutcome, String> {
     let AndroidActionExecutionContext {
         model,
         task_id,
@@ -2706,6 +2717,7 @@ fn execute_android_verified_actions(
         prompt_limit,
         resources,
         external_approved,
+        prepare_only,
     } = context;
     let supported = [
         "device.observe",
@@ -2955,7 +2967,18 @@ fn execute_android_verified_actions(
             .map_err(|error| format!("register Android capability: {error:?}"))?;
     }
 
-    let mut fabric = ActionFabric::new(registry);
+    let restored_state = conversation
+        .action_fabric_checkpoint_for_task(task_id)
+        .map(|checkpoint| {
+            decode_action_fabric_checkpoint(&registry, checkpoint)
+                .map_err(|error| format!("decode persisted TAF97 action state: {error:?}"))
+        })
+        .transpose()?;
+    let mut fabric = match restored_state {
+        Some(state) => ActionFabric::from_state(registry, state)
+            .map_err(|error| format!("restore persisted ActionFabric state: {error:?}"))?,
+        None => ActionFabric::new(registry),
+    };
     if fabric_capabilities.contains("device.observe") {
         fabric
             .register_adapter(
@@ -3121,15 +3144,72 @@ fn execute_android_verified_actions(
         .get(&task_id)
         .cloned()
         .ok_or_else(|| "model-grounded cognitive task disappeared".to_owned())?;
-    let run = execute_verified_assistant_plan(
+    let plan_id = if conversation
+        .action_fabric_checkpoint_for_task(task_id)
+        .is_some()
+    {
+        if fabric.state().plans.len() != 1 {
+            return Err("persisted ActionFabric must contain exactly one chat plan".into());
+        }
+        let plan = fabric
+            .state()
+            .plans
+            .values()
+            .next()
+            .ok_or_else(|| "persisted ActionFabric plan is missing".to_owned())?;
+        if plan.task_id != task_id {
+            return Err("persisted ActionFabric task identity mismatch".into());
+        }
+        plan.id
+    } else {
+        fabric
+            .prepare_cognitive_task(&task, action_plan.payloads.clone())
+            .map_err(|error| format!("prepare Android ActionFabric plan: {error:?}"))?
+    };
+
+    let persist_fabric = |conversation: &mut SovereignConversationState,
+                          fabric: &ActionFabric|
+     -> Result<(), String> {
+        let checkpoint = encode_action_fabric_checkpoint(fabric.registry(), fabric.state())
+            .map_err(|error| format!("encode TAF97 action state: {error:?}"))?;
+        conversation
+            .install_action_fabric_checkpoint(task_id, checkpoint)
+            .map_err(|error| format!("persist TAF97 in NCS97: {error:?}"))
+    };
+
+    persist_fabric(conversation, &fabric)?;
+    if prepare_only {
+        return Ok(AndroidActionExecutionOutcome::Prepared);
+    }
+
+    let run = match continue_verified_assistant_plan(
         &mut fabric,
+        plan_id,
         &task,
         action_plan,
         &authority,
         &mut AndroidProductionVerifier,
         user_message,
-    )
-    .map_err(|error| format!("execute verified Android action plan: {error:?}"))?;
+    ) {
+        Ok(run) => run,
+        Err(AssistantActionRunError::Incomplete {
+            plan_status,
+            action_status,
+            summary,
+        }) if plan_status == ActionPlanStatus::Suspended
+            || matches!(action_status, Some(ActionStatus::Retryable | ActionStatus::Suspended)) =>
+        {
+            persist_fabric(conversation, &fabric)?;
+            return Ok(AndroidActionExecutionOutcome::Checkpointed(summary));
+        }
+        Err(error) => {
+            return Err(format!("execute verified Android action plan: {error:?}"));
+        }
+    };
+
+    conversation
+        .clear_action_fabric_checkpoint(task_id)
+        .map_err(|error| format!("clear completed TAF97 action state: {error:?}"))?;
 
     let synthesis_tokens = model
         .tokenizer
@@ -3151,7 +3231,7 @@ fn execute_android_verified_actions(
     conversation
         .record_action_planner_status(task_id, "actions")
         .map_err(|error| format!("record action planner status: {error:?}"))?;
-    Ok(())
+    Ok(AndroidActionExecutionOutcome::Completed)
 }
 
 fn submit_chat_reserved(
