@@ -24,7 +24,12 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -39,6 +44,12 @@ final class NtdBrowserPlatform {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final AtomicBoolean BUSY = new AtomicBoolean();
     private static final AtomicLong RECEIPT_COUNTER = new AtomicLong();
+    private static final ExecutorService URL_VALIDATION_EXECUTOR =
+            Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "ntd97-browser-url");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private static volatile Context appContext;
     private static WebView webView;
@@ -58,7 +69,7 @@ final class NtdBrowserPlatform {
         }
         try {
             Context context = requireContext();
-            URL target = NtdWebPlatform.validatePublicHttpsUrl(rawTarget);
+            URL target = validatePublicHttps(rawTarget);
             AtomicReference<byte[]> result = new AtomicReference<>();
             CountDownLatch latch = new CountDownLatch(1);
             MAIN.post(() -> performObserve(context, target.toExternalForm(), result, latch));
@@ -122,7 +133,7 @@ final class NtdBrowserPlatform {
                         return;
                     }
                     try {
-                        URL finalUrl = NtdWebPlatform.validatePublicHttpsUrl(url);
+                        URL finalUrl = validatePublicHttps(url);
                         String script = "(function(){"
                                 + "var t=document.body?document.body.innerText:'';"
                                 + "if(t.length>" + MAX_OBSERVED_TEXT_CHARS + "){t=t.slice(0,"
@@ -141,7 +152,7 @@ final class NtdBrowserPlatform {
                                             encodeError("browser observe returned invalid DOM evidence"));
                                     return;
                                 }
-                                URL observed = NtdWebPlatform.validatePublicHttpsUrl(fields[0]);
+                                URL observed = validatePublicHttps(fields[0]);
                                 if (!observed.toExternalForm().equals(finalUrl.toExternalForm())) {
                                     finish(completed, result, latch,
                                             encodeError("browser URL changed during observation"));
@@ -190,7 +201,7 @@ final class NtdBrowserPlatform {
                 finish(completed, result, latch, encodeError("browser has no active page"));
                 return;
             }
-            NtdWebPlatform.validatePublicHttpsUrl(current);
+            validatePublicHttps(current);
 
             String selector = JSONObject.quote(target);
             String script;
@@ -231,7 +242,7 @@ final class NtdBrowserPlatform {
                             if (finalUrl == null) {
                                 throw new IOException("browser interaction lost active URL");
                             }
-                            NtdWebPlatform.validatePublicHttpsUrl(finalUrl);
+                            validatePublicHttps(finalUrl);
                             long receiptId = RECEIPT_COUNTER.incrementAndGet();
                             String receipt = "android-webview:" + operation + ":" + receiptId;
                             finish(
@@ -330,6 +341,30 @@ final class NtdBrowserPlatform {
         return context;
     }
 
+    private static URL validatePublicHttps(String rawUrl) throws IOException {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            return NtdWebPlatform.validatePublicHttpsUrl(rawUrl);
+        }
+        Future<URL> future = URL_VALIDATION_EXECUTOR.submit(
+                () -> NtdWebPlatform.validatePublicHttpsUrl(rawUrl));
+        try {
+            return future.get(3, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            future.cancel(true);
+            throw new IOException("browser URL validation interrupted", error);
+        } catch (TimeoutException error) {
+            future.cancel(true);
+            throw new IOException("browser URL validation timed out", error);
+        } catch (ExecutionException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof IOException) {
+                throw (IOException) cause;
+            }
+            throw new IOException("browser URL validation failed", cause);
+        }
+    }
+
     private static String decodeJsString(String raw) throws Exception {
         if (raw == null || "null".equals(raw)) {
             throw new IOException("browser script returned no value");
@@ -409,7 +444,7 @@ final class NtdBrowserPlatform {
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             try {
-                NtdWebPlatform.validatePublicHttpsUrl(request.getUrl().toString());
+                validatePublicHttps(request.getUrl().toString());
                 return false;
             } catch (Exception error) {
                 finish(completed, result, latch, encodeError("blocked browser navigation"));
@@ -422,7 +457,7 @@ final class NtdBrowserPlatform {
                 WebView view,
                 WebResourceRequest request) {
             try {
-                NtdWebPlatform.validatePublicHttpsUrl(request.getUrl().toString());
+                validatePublicHttps(request.getUrl().toString());
                 return null;
             } catch (Exception error) {
                 return blockedResponse();
