@@ -12,9 +12,9 @@ use std::{
 };
 
 use jni::{
-    objects::{JByteArray, JClass, JString},
+    objects::{JByteArray, JClass, JObject, JString, JValue},
     sys::{jboolean, jbyteArray, jint, jlong},
-    JNIEnv,
+    JNIEnv, JavaVM,
 };
 use ntd_assimilation::{
     activate_thin_generative_capsule, verify_native_package_with_shards, AssetKind,
@@ -31,8 +31,9 @@ use ntd_runtime::{
     execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
     parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
     ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
-    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, CapabilityAdapter,
-    CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
+    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope,
+    CapabilityAdapter, CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry,
+    CognitiveContext,
     CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
     GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
     NativeChatPromptCompiler, NativeReasoningProbe, ResourceSnapshot, SamplingMode,
@@ -56,6 +57,11 @@ const CHAT_STATUS_COMPLETE: i32 = 2;
 const CHAT_STATUS_CANCELLED: i32 = 3;
 const CHAT_STATUS_FAILED: i32 = 4;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
+const PLATFORM_CAPABILITY_PROTOCOL_VERSION: u8 = 1;
+const PLATFORM_WEB_MAX_BYTES: i32 = 16 * 1024;
+const PLATFORM_FILE_MAX_BYTES: i32 = 64 * 1024;
+static PLATFORM_VM: OnceLock<JavaVM> = OnceLock::new();
+
 
 struct NativeChatModel {
     asset_id: String,
@@ -207,6 +213,224 @@ impl CapabilityAdapter for AndroidResourceAdapter {
             },
             rollback_token: None,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlatformCapabilityResult {
+    code: i32,
+    identifier: String,
+    evidence: String,
+    payload: Vec<u8>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct AndroidPlatformReadAdapter;
+
+impl CapabilityAdapter for AndroidPlatformReadAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let result = match action {
+            TypedAction::WebSearch { query, max_results } => {
+                call_platform_capability("webSearch", query, i32::from(*max_results))?
+            }
+            TypedAction::WebFetch { url } => {
+                call_platform_capability("webFetch", url, PLATFORM_WEB_MAX_BYTES)?
+            }
+            TypedAction::FileRead { path } => {
+                call_platform_capability("fileRead", path, PLATFORM_FILE_MAX_BYTES)?
+            }
+            _ => return Err("Android platform read adapter received unsupported action".into()),
+        };
+
+        let (summary, value) = match action {
+            TypedAction::WebSearch { .. } => {
+                let text = String::from_utf8(result.payload)
+                    .map_err(|_| "web search payload was not UTF-8".to_owned())?;
+                let rows = text
+                    .lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                if rows.is_empty() {
+                    return Err("web search returned no verified rows".into());
+                }
+                (
+                    format!("verified HTTPS search returned {} result rows", rows.len()),
+                    ActionValue::TextList(rows),
+                )
+            }
+            TypedAction::WebFetch { .. } => {
+                let text = String::from_utf8(result.payload)
+                    .map_err(|_| "web fetch payload was not UTF-8 text".to_owned())?;
+                if text.trim().is_empty() {
+                    return Err("web fetch returned empty text".into());
+                }
+                (
+                    format!("verified HTTPS fetch status {}", result.code),
+                    ActionValue::Text(text),
+                )
+            }
+            TypedAction::FileRead { .. } => {
+                let value = match String::from_utf8(result.payload.clone()) {
+                    Ok(text) => ActionValue::Text(text),
+                    Err(_) => ActionValue::Bytes(result.payload),
+                };
+                ("verified app-private file read".to_owned(), value)
+            }
+            _ => unreachable!(),
+        };
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary,
+                value,
+                evidence: vec![
+                    result.evidence,
+                    format!("platform-id:{}", result.identifier),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+fn remember_platform_vm(env: &JNIEnv<'_>) {
+    if PLATFORM_VM.get().is_none() {
+        if let Ok(vm) = env.get_java_vm() {
+            let _ = PLATFORM_VM.set(vm);
+        }
+    }
+}
+
+fn call_platform_capability(method: &str, input: &str, limit: i32) -> Result<PlatformCapabilityResult, String> {
+    let vm = PLATFORM_VM
+        .get()
+        .ok_or_else(|| "Android platform JVM is not registered".to_owned())?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android platform JVM: {error:?}"))?;
+    let java_input = env
+        .new_string(input)
+        .map_err(|error| format!("encode platform capability input: {error:?}"))?;
+    let java_object = JObject::from(java_input);
+    let value = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdPlatformCapabilityBridge",
+            method,
+            "(Ljava/lang/String;I)[B",
+            &[JValue::Object(&java_object), JValue::Int(limit)],
+        )
+        .map_err(|error| format!("invoke Android platform capability {method}: {error:?}"))?;
+    let object = value
+        .l()
+        .map_err(|error| format!("decode Android platform result object: {error:?}"))?;
+    let array = JByteArray::from(object);
+    let bytes = env
+        .convert_byte_array(&array)
+        .map_err(|error| format!("copy Android platform result bytes: {error:?}"))?;
+    decode_platform_capability_result(&bytes)
+}
+
+fn decode_platform_capability_result(bytes: &[u8]) -> Result<PlatformCapabilityResult, String> {
+    let mut cursor = PlatformFrameCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_CAPABILITY_PROTOCOL_VERSION {
+        return Err("unsupported Android platform capability protocol".into());
+    }
+    let success = match cursor.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err("invalid Android platform capability status".into()),
+    };
+    if cursor.u8()? != 0 || cursor.u8()? != 0 {
+        return Err("non-canonical Android platform capability frame".into());
+    }
+    let code = cursor.i32()?;
+    let identifier = cursor.string()?;
+    let evidence = cursor.string()?;
+    let payload = cursor.bytes()?;
+    if !cursor.finished() {
+        return Err("trailing Android platform capability bytes".into());
+    }
+    if !success {
+        let message = String::from_utf8_lossy(&payload).trim().to_owned();
+        return Err(if message.is_empty() {
+            "Android platform capability failed".into()
+        } else {
+            message
+        });
+    }
+    if identifier.trim().is_empty() || evidence.trim().is_empty() {
+        return Err("Android platform capability omitted provenance".into());
+    }
+    Ok(PlatformCapabilityResult {
+        code,
+        identifier,
+        evidence,
+        payload,
+    })
+}
+
+struct PlatformFrameCursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> PlatformFrameCursor<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8], String> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| "Android platform frame overflow".to_owned())?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or_else(|| "truncated Android platform frame".to_owned())?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn u8(&mut self) -> Result<u8, String> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn i32(&mut self) -> Result<i32, String> {
+        let bytes: [u8; 4] = self
+            .take(4)?
+            .try_into()
+            .map_err(|_| "invalid platform i32".to_owned())?;
+        Ok(i32::from_le_bytes(bytes))
+    }
+
+    fn len(&mut self) -> Result<usize, String> {
+        let bytes: [u8; 4] = self
+            .take(4)?
+            .try_into()
+            .map_err(|_| "invalid platform length".to_owned())?;
+        usize::try_from(u32::from_le_bytes(bytes))
+            .map_err(|_| "platform length does not fit usize".to_owned())
+    }
+
+    fn string(&mut self) -> Result<String, String> {
+        let len = self.len()?;
+        String::from_utf8(self.take(len)?.to_vec())
+            .map_err(|_| "platform frame string was not UTF-8".to_owned())
+    }
+
+    fn bytes(&mut self) -> Result<Vec<u8>, String> {
+        let len = self.len()?;
+        Ok(self.take(len)?.to_vec())
+    }
+
+    fn finished(&self) -> bool {
+        self.offset == self.bytes.len()
     }
 }
 
