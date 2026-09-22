@@ -6235,6 +6235,22 @@ fn production_capability_probe(
         return Err("production browser.interact receipt verification failed".into());
     }
 
+    let cross_origin_error = browser_interact
+        .execute(
+            ntd_runtime::ActionId(109),
+            &TypedAction::BrowserInteract {
+                target: "a[href*='iana']".into(),
+                operation: "click".into(),
+                value: None,
+            },
+        )
+        .expect_err("cross-origin browser link unexpectedly completed");
+    if !cross_origin_error.to_ascii_lowercase().contains("cross-origin") {
+        return Err(format!(
+            "cross-origin browser link failed for unexpected reason: {cross_origin_error}"
+        ));
+    }
+
     let browser_navigate_action = TypedAction::BrowserInteract {
         target: "https://httpbin.org/forms/post".into(),
         operation: "navigate".into(),
@@ -6305,20 +6321,6 @@ fn production_capability_probe(
     ) != ActionVerification::Accept
     {
         return Err("production browser.submit receipt verification failed".into());
-    }
-
-    let cross_origin_blocked = browser_interact
-        .execute(
-            ntd_runtime::ActionId(107),
-            &TypedAction::BrowserInteract {
-                target: "https://httpbin.org/redirect-to?url=https%3A%2F%2Fexample.com%2F".into(),
-                operation: "navigate".into(),
-                value: None,
-            },
-        )
-        .is_err();
-    if !cross_origin_blocked {
-        return Err("cross-origin browser main-frame redirect did not fail closed".into());
     }
 
     let capability_root_path = Path::new(capability_root);
