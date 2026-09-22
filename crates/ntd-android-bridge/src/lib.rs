@@ -348,8 +348,7 @@ fn revoke_pc_pair_profile(root: &Path, peer: &str) -> Result<(), String> {
     if !canonical.starts_with(&pairs) {
         return Err("paired-PC profile escaped profile directory".into());
     }
-    fs::remove_file(&canonical)
-        .map_err(|error| format!("remove paired-PC profile: {error}"))?;
+    fs::remove_file(&canonical).map_err(|error| format!("remove paired-PC profile: {error}"))?;
     sync_pc_pair_directory(&pairs)?;
     Ok(())
 }
