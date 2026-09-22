@@ -25,7 +25,8 @@ public final class NtdRealModelProbeActivity extends Activity {
     private static final String RUNTIME_ROOT = "ntd97-real-model";
     private static final String RESULT_FILE = "ntd97-real-model-probe.txt";
 
-    private static final int MAX_PRODUCTION_FOCUS_ATTEMPTS = 48;
+    private static final int MAX_PRODUCTION_FOCUS_ATTEMPTS = 120;
+    private static final int FOREGROUND_REASSERT_INTERVAL = 12;
     private static final long PRODUCTION_FOCUS_RETRY_MS = 250L;
     private static final long PRODUCTION_FOCUS_SETTLE_MS = 750L;
 
@@ -170,6 +171,12 @@ public final class NtdRealModelProbeActivity extends Activity {
                             + "chat_upload_continuity_detail=initial-window-focus\n");
             finish();
             return;
+        }
+        if (chatFocusAttempts % FOREGROUND_REASSERT_INTERVAL == 0) {
+            Intent foreground = new Intent(this, NtdRealModelProbeActivity.class);
+            foreground.addFlags(
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(foreground);
         }
         getWindow().getDecorView().postDelayed(
                 this::scheduleChatProbeWhenFocused,
