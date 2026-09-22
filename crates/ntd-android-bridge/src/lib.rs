@@ -61,6 +61,8 @@ const CHAT_STATUS_FAILED: i32 = 4;
 const CHAT_STATUS_WAITING_APPROVAL: i32 = 5;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
 const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
+const MAX_WEB_SEARCH_RESULTS: usize = 10;
+const MAX_WEB_SEARCH_FIELD_BYTES: usize = 4096;
 const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
 const PLATFORM_DEVICE_APP_PROTOCOL_VERSION: u8 = 1;
 
@@ -254,6 +256,56 @@ struct AndroidWebFetchResult {
     body: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AndroidWebSearchItem {
+    title: String,
+    url: String,
+    snippet: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AndroidWebSearchResult {
+    provider: String,
+    items: Vec<AndroidWebSearchItem>,
+}
+
+struct AndroidWebSearchAdapter;
+
+impl CapabilityAdapter for AndroidWebSearchAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::WebSearch { query, max_results } = action else {
+            return Err("Android web search adapter only supports web.search".into());
+        };
+        let result = android_web_search(query, *max_results)?;
+        let values = result
+            .items
+            .iter()
+            .map(|item| format!("{}\t{}\t{}", item.title, item.url, item.snippet))
+            .collect::<Vec<_>>();
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!(
+                    "verified web search via {} with {} result(s)",
+                    result.provider,
+                    result.items.len()
+                ),
+                value: ActionValue::TextList(values),
+                evidence: vec![
+                    "android-web-search".into(),
+                    format!("provider:{}", result.provider),
+                    format!("results:{}", result.items.len()),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
 struct AndroidWebFetchAdapter;
 
 impl CapabilityAdapter for AndroidWebFetchAdapter {
@@ -286,6 +338,101 @@ impl CapabilityAdapter for AndroidWebFetchAdapter {
             rollback_token: None,
         })
     }
+}
+
+fn android_web_search(
+    query: &str,
+    max_results: u16,
+) -> Result<AndroidWebSearchResult, String> {
+    if max_results == 0 || usize::from(max_results) > MAX_WEB_SEARCH_RESULTS {
+        return Err("web.search max_results exceeds native limit".into());
+    }
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android web search thread: {error}"))?;
+    let jquery = env
+        .new_string(query)
+        .map_err(|error| format!("encode web.search query for Android: {error}"))?;
+    let jquery_object = JObject::from(jquery);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdWebPlatform",
+            "search",
+            "(Ljava/lang/String;I)[B",
+            &[
+                JValue::Object(&jquery_object),
+                JValue::Int(i32::from(max_results)),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android web search platform boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android web search platform response: {error}"))?;
+    decode_android_web_search_result(&bytes, usize::from(max_results))
+}
+
+fn decode_android_web_search_result(
+    bytes: &[u8],
+    requested_max: usize,
+) -> Result<AndroidWebSearchResult, String> {
+    let mut cursor = PlatformCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_WEB_PROTOCOL_VERSION {
+        return Err("unsupported Android web search platform protocol".into());
+    }
+    let success = cursor.u8()?;
+    if success == 0 {
+        return Err(format!("Android web search failed: {}", cursor.string()?));
+    }
+    if success != 1 {
+        return Err("invalid Android web search platform status".into());
+    }
+
+    let provider = cursor.string()?;
+    if provider.trim().is_empty()
+        || provider.len() > 128
+        || provider.chars().any(char::is_control)
+    {
+        return Err("invalid Android web search provider identity".into());
+    }
+
+    let count = usize::try_from(cursor.u32()?)
+        .map_err(|_| "web search result count overflow".to_owned())?;
+    if count == 0 || count > requested_max || count > MAX_WEB_SEARCH_RESULTS {
+        return Err("invalid Android web search result count".into());
+    }
+
+    let mut items = Vec::with_capacity(count);
+    for _ in 0..count {
+        let title = cursor.string()?;
+        let url = cursor.string()?;
+        let snippet = cursor.string()?;
+        if title.trim().is_empty()
+            || title.len() > MAX_WEB_SEARCH_FIELD_BYTES
+            || snippet.len() > MAX_WEB_SEARCH_FIELD_BYTES
+            || title.chars().any(|ch| matches!(ch, '\r' | '\n' | '\t'))
+            || snippet.chars().any(|ch| matches!(ch, '\r' | '\n' | '\t'))
+            || !url.starts_with("https://")
+            || url.len() > MAX_WEB_SEARCH_FIELD_BYTES
+            || url.chars().any(char::is_whitespace)
+        {
+            return Err("invalid normalized Android web search result".into());
+        }
+        items.push(AndroidWebSearchItem {
+            title,
+            url,
+            snippet,
+        });
+    }
+    if !cursor.finished() {
+        return Err("non-canonical Android web search response framing".into());
+    }
+
+    Ok(AndroidWebSearchResult { provider, items })
 }
 
 fn android_https_fetch(url: &str) -> Result<AndroidWebFetchResult, String> {
@@ -904,6 +1051,24 @@ impl ActionVerifier for AndroidProductionVerifier {
                 .evidence
                 .iter()
                 .any(|item| item == "android-resource-snapshot"),
+            ("web.search", TypedAction::WebSearch { max_results, .. }) => {
+                matches!(
+                    &output.value,
+                    ActionValue::TextList(items)
+                        if !items.is_empty() && items.len() <= usize::from(*max_results)
+                ) && output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-web-search")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("provider:"))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("results:"))
+            }
             ("web.fetch", TypedAction::WebFetch { .. }) => {
                 output
                     .evidence
@@ -1926,6 +2091,7 @@ fn execute_android_verified_actions(
     } = context;
     let supported = [
         "device.observe",
+        "web.search",
         "web.fetch",
         "file.read",
         "file.write",
@@ -1959,6 +2125,21 @@ fn execute_android_verified_actions(
                 CapabilityDomain::Device,
                 SideEffectClass::ReadOnly,
             ),
+            "web.search" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("web.search".into()),
+                    1,
+                    CapabilityDomain::Web,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
             "web.fetch" => {
                 let mut descriptor = CapabilityDescriptor::new(
                     CapabilityId("web.fetch".into()),
@@ -2077,6 +2258,11 @@ fn execute_android_verified_actions(
                 },
             )
             .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("web.search") {
+        fabric
+            .register_adapter(CapabilityId("web.search".into()), AndroidWebSearchAdapter)
+            .map_err(|error| format!("register Android web search adapter: {error:?}"))?;
     }
     if fabric_capabilities.contains("web.fetch") {
         fabric
