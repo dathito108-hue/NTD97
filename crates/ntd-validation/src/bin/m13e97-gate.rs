@@ -2,9 +2,7 @@
 
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
-use ntd_validation::{
-    decode_m13_hardware_evidence, M13_REQUIRED_GATE_MASK,
-};
+use ntd_validation::{decode_m13_hardware_evidence, M13_REQUIRED_GATE_MASK};
 
 fn main() -> ExitCode {
     let mut args = env::args_os();
@@ -51,7 +49,10 @@ fn main() -> ExitCode {
             record.sovereignty_audit_passed,
         );
         if !record.accepted_for_revision(expected_revision) {
-            eprintln!("{}: M13 hardware acceptance record does not meet the canonical gate", path.display());
+            eprintln!(
+                "{}: M13 hardware acceptance record does not meet the canonical gate",
+                path.display()
+            );
             return ExitCode::FAILURE;
         }
         accepted += 1;
