@@ -2097,13 +2097,55 @@ fn run_constrained_device_planner(
     })
 }
 
-fn governed_external_action_plan(
+fn governed_explicit_action_plan(
     user_message: &str,
 ) -> Result<Option<AssistantActionPlan>, String> {
     let trimmed = user_message.trim();
     let lower = trimmed.to_ascii_lowercase();
 
-    let canonical = if lower.starts_with("set clipboard to ") {
+    let canonical = if lower.starts_with("search web for ") {
+        let query = trimmed
+            .get("search web for ".len()..)
+            .ok_or_else(|| "web search command boundary failed".to_owned())?;
+        if query.trim().is_empty()
+            || query
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|web.search|{query}\nEND"
+        ))
+    } else if lower.starts_with("observe browser ") {
+        let target = trimmed
+            .get("observe browser ".len()..)
+            .ok_or_else(|| "browser observe command boundary failed".to_owned())?;
+        if target.trim().is_empty()
+            || target
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.observe|{target}\nEND"
+        ))
+    } else if lower.starts_with("browser click ") {
+        let target = trimmed
+            .get("browser click ".len()..)
+            .ok_or_else(|| "browser interaction command boundary failed".to_owned())?;
+        if target.trim().is_empty()
+            || target
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tclick\nEND"
+        ))
+    } else if lower.starts_with("set clipboard to ") {
         let value = trimmed
             .get("set clipboard to ".len()..)
             .ok_or_else(|| "clipboard command boundary failed".to_owned())?;
@@ -2159,6 +2201,19 @@ fn external_write_approval(
             .get(&node.id)
             .ok_or_else(|| "external-write action payload is missing".to_owned())?;
         match action {
+            TypedAction::BrowserInteract {
+                target,
+                operation,
+                value,
+            } if (operation == "click" && value.is_none())
+                || (operation == "set_value"
+                    && value.as_ref().is_some_and(|value| !value.is_empty())) =>
+            {
+                capabilities.insert("browser.interact".to_owned());
+                rationales.push(format!(
+                    "interact with the controlled browser using {operation} on selector {target}"
+                ));
+            }
             TypedAction::DeviceInteract {
                 surface,
                 operation,
@@ -2660,7 +2715,7 @@ fn submit_chat_reserved(
         .record_reasoning_cycle_report(task_id, &report)
         .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
 
-    let planner_outcome = if let Some(plan) = governed_external_action_plan(user_message)? {
+    let planner_outcome = if let Some(plan) = governed_explicit_action_plan(user_message)? {
         NativeActionPlanningOutcome::Actions(plan)
     } else {
         match governed_device_surfaces(user_message) {
