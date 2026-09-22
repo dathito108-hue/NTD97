@@ -1,6 +1,7 @@
 package ai.ntd97.mobile;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.net.http.SslError;
 import android.os.Handler;
 import android.os.Looper;
@@ -22,6 +23,7 @@ import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -41,6 +43,9 @@ final class NtdBrowserPlatform {
     private static final int MAX_TARGET_BYTES = 1024;
     private static final int MAX_VALUE_BYTES = 4096;
     private static final int MAX_OBSERVED_TEXT_CHARS = 64 * 1024;
+    private static final String PREFS_NAME = "ntd97-browser";
+    private static final String LAST_VERIFIED_URL_KEY = "last-verified-url";
+    private static final String SESSION_TARGET = "session";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final AtomicBoolean BUSY = new AtomicBoolean();
     private static final AtomicLong RECEIPT_COUNTER = new AtomicLong();
@@ -69,10 +74,16 @@ final class NtdBrowserPlatform {
         }
         try {
             Context context = requireContext();
-            URL target = validatePublicHttps(rawTarget);
+            String requestedTarget = normalizeObserveTarget(rawTarget);
+            URL target = resolveObserveTarget(context, requestedTarget);
             AtomicReference<byte[]> result = new AtomicReference<>();
             CountDownLatch latch = new CountDownLatch(1);
-            MAIN.post(() -> performObserve(context, target.toExternalForm(), result, latch));
+            MAIN.post(() -> performObserve(
+                    context,
+                    requestedTarget,
+                    target.toExternalForm(),
+                    result,
+                    latch));
             if (!latch.await(OPERATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 return encodeError("browser observe timed out");
             }
@@ -120,6 +131,7 @@ final class NtdBrowserPlatform {
 
     private static void performObserve(
             Context context,
+            String requestedTarget,
             String target,
             AtomicReference<byte[]> result,
             CountDownLatch latch) {
@@ -158,12 +170,23 @@ final class NtdBrowserPlatform {
                                             encodeError("browser URL changed during observation"));
                                     return;
                                 }
+                                persistVerifiedSessionUrl(context, observed);
+                                String receipt = browserReceipt(
+                                        "observe",
+                                        requestedTarget,
+                                        "");
                                 finish(
                                         completed,
                                         result,
                                         latch,
                                         encodeSuccess(
-                                                "url=" + fields[0]
+                                                "receipt=" + receipt
+                                                        + "\noperation=observe"
+                                                        + "\nsession="
+                                                        + (SESSION_TARGET.equals(requestedTarget)
+                                                                ? "resumed"
+                                                                : "direct")
+                                                        + "\nurl=" + fields[0]
                                                         + "\ntitle=" + sanitizeLine(fields[1])
                                                         + "\ntext=" + fields[2]));
                             } catch (Exception error) {
