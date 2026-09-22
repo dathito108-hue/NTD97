@@ -39,6 +39,7 @@ public final class MainActivity extends Activity {
     private final ExecutorService chatExecutor = Executors.newSingleThreadExecutor();
     private final StringBuilder transcript = new StringBuilder();
     private volatile long activeChatRequestId = -1L;
+    private volatile long pendingChatApprovalRequestId = -1L;
     private volatile boolean chatCancelRequested;
     private volatile boolean conversationRestored;
     private volatile boolean activityDestroyed;
@@ -267,6 +268,21 @@ public final class MainActivity extends Activity {
                 finishChatUi("Native response complete", true);
                 return;
             }
+            if (event.kind == NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+                pendingChatApprovalRequestId = requestId;
+                conversationRestored = true;
+                NtdSessionController.checkpointConversation(this);
+                String detail = event.text.replace('\n', ' ').trim();
+                runOnUiThread(() -> {
+                    approvalPanel.setVisibility(LinearLayout.VISIBLE);
+                    stopButton.setEnabled(false);
+                    statusView.setText(
+                            detail.isEmpty()
+                                    ? "External action approval required"
+                                    : "Approval required: " + detail);
+                });
+                return;
+            }
             if (event.kind == NtdRuntimeHost.ChatEvent.CANCELLED) {
                 finishChatUi("Generation cancelled", true);
                 return;
@@ -299,6 +315,7 @@ public final class MainActivity extends Activity {
         conversationRestored = true;
         NtdSessionController.checkpointConversation(this);
         activeChatRequestId = -1L;
+        pendingChatApprovalRequestId = -1L;
         runOnUiThread(() -> {
             if (terminateAssistantLine) {
                 appendTranscript("\n");
@@ -403,6 +420,37 @@ public final class MainActivity extends Activity {
         NtdRuntimeHost host = NtdSessionController.runtime();
         if (host == null) {
             statusView.setText("Runtime unavailable");
+            return;
+        }
+
+        long chatRequestId = pendingChatApprovalRequestId;
+        if (chatRequestId >= 0) {
+            approvalPanel.setVisibility(LinearLayout.GONE);
+            statusView.setText(approved ? "Executing approved action..." : "Denying action...");
+            chatExecutor.execute(() -> {
+                boolean accepted = host.resolveChatApproval(chatRequestId, approved);
+                conversationRestored = true;
+                NtdSessionController.checkpointConversation(this);
+                if (!accepted) {
+                    runOnUiThread(() -> {
+                        approvalPanel.setVisibility(LinearLayout.VISIBLE);
+                        statusView.setText("Approval resolution failed; confirmation still required");
+                    });
+                    return;
+                }
+
+                pendingChatApprovalRequestId = -1L;
+                if (!approved) {
+                    finishChatUi("External action denied", true);
+                    return;
+                }
+
+                runOnUiThread(() -> {
+                    statusView.setText("Approved action verified; resuming response...");
+                    stopButton.setEnabled(true);
+                });
+                streamChat(host, chatRequestId);
+            });
             return;
         }
 
