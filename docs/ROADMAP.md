@@ -426,6 +426,27 @@ Required contract:
 - paired-PC fabric integrated into the same production task graph;
 - real mixed Web -> File -> App/Device -> PC acceptance tasks.
 
+Current implementation:
+
+- production Android `web.fetch` adapter uses the OS HTTPS stack rather than a hosted AI/tool backend;
+- HTTPS boundary is GET-only, timeout-bounded and response-size-bounded, re-validates redirects, rejects user-info/non-443 endpoints and blocks loopback/link-local/site-local/multicast/IPv6-ULA destinations;
+- native ActionFabric retains ActionId, authority, verification and commit ownership while Java supplies only the Android HTTPS transport boundary;
+- production `file.read` / `file.write` adapters are restricted to an app-private capability root, reject absolute/traversal/symlink paths and cap evidence/write size;
+- app-private file writes use sync + atomic rename and emit rollback tokens restoring the previous bytes or removing newly-created files;
+- native action protocol now represents `file.write` as a reversible side effect instead of a read-only action;
+- Android production TaskGraph execution accepts only allowlisted `device.observe`, `web.fetch`, `file.read` and `file.write` capabilities; unsupported domains remain fail-closed;
+- Android emulator acceptance performs a real HTTPS fetch, rejects a private-network HTTPS target, verifies app-private write/read content and verifies rollback to the absent state.
+
+Still required before M13 completion:
+
+- provider-independent real WebSearch boundary;
+- browser observe/interact production adapter;
+- broader Android storage surfaces through explicit platform/user grants;
+- app launch/intents and accessibility-assisted interaction behind explicit authority;
+- verified download/upload/artifact handling and resumable network transitions;
+- paired-PC integration into the same production mixed TaskGraph;
+- real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
+
 Exit: NTD97 can complete useful multi-surface tasks on a real phone with verifiable results and no mock adapter in the canonical path.
 
 ## M14 — Major Block N: Cognitive Quality + Capability Growth
