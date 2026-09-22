@@ -31,6 +31,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.HttpsURLConnection;
+import javax.xml.parsers.DocumentBuilderFactory;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 final class NtdWebPlatform {
     private static final int CONNECT_TIMEOUT_MS = 10_000;
@@ -44,11 +50,20 @@ final class NtdWebPlatform {
     private static final int MAX_SEARCH_SNIPPET_BYTES = 4096;
     private static final byte PROTOCOL_VERSION = 1;
     private static final String PREFS_NAME = "ntd97-web";
+    static final String SEARCH_MODE_JSON = "json";
+    static final String SEARCH_MODE_OPENSEARCH = "opensearch";
+    private static final String SEARCH_MODE_KEY = "search-mode";
     private static final String SEARCH_TEMPLATE_KEY = "search-endpoint-template";
+    private static final String SEARCH_OPENSEARCH_DESCRIPTION_KEY =
+            "search-opensearch-description";
     private static final String SEARCH_RESULTS_PATH_KEY = "search-results-path";
     private static final String SEARCH_TITLE_PATH_KEY = "search-title-path";
     private static final String SEARCH_URL_PATH_KEY = "search-url-path";
     private static final String SEARCH_SNIPPET_PATH_KEY = "search-snippet-path";
+    private static final String SEARCH_CREDENTIAL_HEADER_KEY = "search-credential-header";
+    private static final String SEARCH_CREDENTIAL_VALUE_KEY = "search-credential-value";
+    private static final int MAX_SEARCH_CREDENTIAL_BYTES = 4096;
+    private static final int MAX_SEARCH_HEADER_NAME_BYTES = 64;
 
     private static volatile SearchConfiguration searchConfiguration = SearchConfiguration.empty();
 
@@ -62,31 +77,59 @@ final class NtdWebPlatform {
     private NtdWebPlatform() {}
 
     static final class SearchConfiguration {
+        final String mode;
         final String endpointTemplate;
+        final String openSearchDescription;
         final String resultsPath;
         final String titlePath;
         final String urlPath;
         final String snippetPath;
+        final String credentialHeaderName;
+        final String credentialHeaderValue;
 
         SearchConfiguration(
+                String mode,
                 String endpointTemplate,
+                String openSearchDescription,
                 String resultsPath,
                 String titlePath,
                 String urlPath,
-                String snippetPath) {
+                String snippetPath,
+                String credentialHeaderName,
+                String credentialHeaderValue) {
+            this.mode = mode;
             this.endpointTemplate = endpointTemplate;
+            this.openSearchDescription = openSearchDescription;
             this.resultsPath = resultsPath;
             this.titlePath = titlePath;
             this.urlPath = urlPath;
             this.snippetPath = snippetPath;
+            this.credentialHeaderName = credentialHeaderName;
+            this.credentialHeaderValue = credentialHeaderValue;
         }
 
         static SearchConfiguration empty() {
-            return new SearchConfiguration("", "", "", "", "");
+            return new SearchConfiguration(
+                    SEARCH_MODE_JSON,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "");
         }
 
         boolean configured() {
+            if (SEARCH_MODE_OPENSEARCH.equals(mode)) {
+                return !openSearchDescription.isEmpty();
+            }
             return !endpointTemplate.isEmpty();
+        }
+
+        boolean hasCredential() {
+            return !credentialHeaderName.isEmpty();
         }
     }
 
@@ -120,18 +163,27 @@ final class NtdWebPlatform {
         Context appContext = context.getApplicationContext();
         SharedPreferences preferences =
                 appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String mode = value(preferences, SEARCH_MODE_KEY);
+        if (mode.isEmpty()) {
+            mode = SEARCH_MODE_JSON;
+        }
         String template = value(preferences, SEARCH_TEMPLATE_KEY);
-        if (template.isEmpty()) {
+        String descriptor = value(preferences, SEARCH_OPENSEARCH_DESCRIPTION_KEY);
+        if (template.isEmpty() && descriptor.isEmpty()) {
             searchConfiguration = SearchConfiguration.empty();
             return;
         }
         try {
             SearchConfiguration configuration = buildSearchConfiguration(
+                    mode,
                     template,
+                    descriptor,
                     value(preferences, SEARCH_RESULTS_PATH_KEY),
                     value(preferences, SEARCH_TITLE_PATH_KEY),
                     value(preferences, SEARCH_URL_PATH_KEY),
-                    value(preferences, SEARCH_SNIPPET_PATH_KEY));
+                    value(preferences, SEARCH_SNIPPET_PATH_KEY),
+                    value(preferences, SEARCH_CREDENTIAL_HEADER_KEY),
+                    rawValue(preferences, SEARCH_CREDENTIAL_VALUE_KEY));
             searchConfiguration = configuration;
         } catch (IOException ignored) {
             clearSearchPreferences(preferences);
@@ -150,11 +202,37 @@ final class NtdWebPlatform {
             String titlePath,
             String urlPath,
             String snippetPath) {
+        return configureSearchProfile(
+                context,
+                SEARCH_MODE_JSON,
+                template,
+                "",
+                resultsPath,
+                titlePath,
+                urlPath,
+                snippetPath,
+                "",
+                "");
+    }
+
+    static boolean configureSearchProfile(
+            Context context,
+            String mode,
+            String endpointTemplate,
+            String openSearchDescription,
+            String resultsPath,
+            String titlePath,
+            String urlPath,
+            String snippetPath,
+            String credentialHeaderName,
+            String credentialHeaderValue) {
         Context appContext = context.getApplicationContext();
         SharedPreferences preferences =
                 appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        String normalizedTemplate = template == null ? "" : template.trim();
-        if (normalizedTemplate.isEmpty()) {
+        String normalizedTemplate = endpointTemplate == null ? "" : endpointTemplate.trim();
+        String normalizedDescriptor =
+                openSearchDescription == null ? "" : openSearchDescription.trim();
+        if (normalizedTemplate.isEmpty() && normalizedDescriptor.isEmpty()) {
             clearSearchPreferences(preferences);
             searchConfiguration = SearchConfiguration.empty();
             return true;
@@ -163,22 +241,38 @@ final class NtdWebPlatform {
         final SearchConfiguration configuration;
         try {
             configuration = buildSearchConfiguration(
+                    mode,
                     normalizedTemplate,
+                    normalizedDescriptor,
                     resultsPath,
                     titlePath,
                     urlPath,
-                    snippetPath);
+                    snippetPath,
+                    credentialHeaderName,
+                    credentialHeaderValue);
         } catch (IOException error) {
             return false;
         }
 
-        preferences.edit()
+        SharedPreferences.Editor editor = preferences.edit()
+                .putString(SEARCH_MODE_KEY, configuration.mode)
                 .putString(SEARCH_TEMPLATE_KEY, configuration.endpointTemplate)
+                .putString(
+                        SEARCH_OPENSEARCH_DESCRIPTION_KEY,
+                        configuration.openSearchDescription)
                 .putString(SEARCH_RESULTS_PATH_KEY, configuration.resultsPath)
                 .putString(SEARCH_TITLE_PATH_KEY, configuration.titlePath)
                 .putString(SEARCH_URL_PATH_KEY, configuration.urlPath)
                 .putString(SEARCH_SNIPPET_PATH_KEY, configuration.snippetPath)
-                .apply();
+                .putString(
+                        SEARCH_CREDENTIAL_HEADER_KEY,
+                        configuration.credentialHeaderName)
+                .putString(
+                        SEARCH_CREDENTIAL_VALUE_KEY,
+                        configuration.credentialHeaderValue);
+        if (!editor.commit()) {
+            return false;
+        }
         searchConfiguration = configuration;
         return true;
     }
