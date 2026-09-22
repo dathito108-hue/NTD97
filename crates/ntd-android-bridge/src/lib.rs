@@ -31,7 +31,7 @@ use ntd_runtime::{
     execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
     parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
     ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
-    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, CapabilityAdapter,
+    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope, CapabilityAdapter,
     CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
     CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
     GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
@@ -43,6 +43,7 @@ use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
     DeviceEvidence, EvidenceClass, PhysicalEvidenceRecord,
 };
+use ntd_web_adapter::{ProductionWebAdapter, ProductionWebVerifier, WebAdapterConfig};
 
 const BRIDGE_PROTOCOL_VERSION: u8 = 1;
 const CHAT_EVENT_PROTOCOL_VERSION: u8 = 1;
@@ -233,6 +234,29 @@ impl ActionVerifier for AndroidResourceVerifier {
             };
         }
         ActionVerification::Accept
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct AndroidGovernedVerifier {
+    device: AndroidResourceVerifier,
+    web: ProductionWebVerifier,
+}
+
+impl ActionVerifier for AndroidGovernedVerifier {
+    fn verify(
+        &mut self,
+        descriptor: &CapabilityDescriptor,
+        action: &TypedAction,
+        output: &ActionOutput,
+    ) -> ActionVerification {
+        match descriptor.domain {
+            CapabilityDomain::Device => self.device.verify(descriptor, action, output),
+            CapabilityDomain::Web => self.web.verify(descriptor, action, output),
+            _ => ActionVerification::Reject {
+                reason: "Android chat verifier has no production verifier for this domain".into(),
+            },
+        }
     }
 }
 
