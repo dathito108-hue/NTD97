@@ -340,11 +340,22 @@ public final class NtdRealModelProbeActivity extends Activity {
                 "127.0.0.1:45970",
                 remotePeerId,
                 remoteVerifyKey);
-        if (!receipt.startsWith("NTD97_PC_PAIR_RECEIPT_V1\n")
-                || receipt.contains("local_seed")
-                || !receipt.contains("local_peer_id=")
-                || !receipt.contains("local_verify_key=")) {
-            throw new IOException("paired-PC public provisioning receipt is invalid");
+        if (receipt.startsWith("ERROR:")) {
+            throw new IOException(
+                    "paired-PC provision failed: " + safeDiagnostic(receipt));
+        }
+        boolean receiptPrefix = receipt.startsWith("NTD97_PC_PAIR_RECEIPT_V1\n");
+        boolean receiptPeerId = receipt.contains("local_peer_id=");
+        boolean receiptVerifyKey = receipt.contains("local_verify_key=");
+        boolean receiptSecret = receipt.contains("local_seed");
+        if (!receiptPrefix || receiptSecret || !receiptPeerId || !receiptVerifyKey) {
+            throw new IOException(
+                    "paired-PC public provisioning receipt framing invalid"
+                            + " length=" + receipt.length()
+                            + " prefix=" + receiptPrefix
+                            + " peer_id=" + receiptPeerId
+                            + " verify_key=" + receiptVerifyKey
+                            + " secret=" + receiptSecret);
         }
 
         File profile = new File(
