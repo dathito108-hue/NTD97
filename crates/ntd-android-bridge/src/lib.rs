@@ -2205,10 +2205,10 @@ fn production_web_capability_probe() -> Result<String, String> {
     if status != "200"
         || digest.len() != 64
         || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-        || match bytes.parse::<usize>().ok() {
+        || (match bytes.parse::<usize>().ok() {
             Some(count) => count == 0,
             None => true,
-        }
+        })
     {
         return Err("production web receipt failed integrity checks".into());
     }
