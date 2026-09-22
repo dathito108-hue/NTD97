@@ -5311,12 +5311,18 @@ mod tests {
         };
         let upload_output = ActionOutput {
             summary: "uploaded".into(),
-            value: ActionValue::None,
+            value: ActionValue::Fields(BTreeMap::from([
+                ("url".into(), "https://example.com/upload".into()),
+                ("status".into(), "200".into()),
+                ("sha256".into(), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()),
+                ("bytes".into(), "5".into()),
+            ])),
             evidence: vec![
                 "android-artifact-upload".into(),
                 "transport:https-put".into(),
                 "status:200".into(),
-                "sha256:0123456789abcdef".into(),
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+                "bytes:5".into(),
                 "url:https://example.com/upload".into(),
             ],
         };
@@ -5327,11 +5333,18 @@ mod tests {
 
         let missing_hash = ActionOutput {
             summary: "uploaded".into(),
-            value: ActionValue::None,
+            value: ActionValue::Fields(BTreeMap::from([
+                ("url".into(), "https://example.com/upload".into()),
+                ("status".into(), "200".into()),
+                ("sha256".into(), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into()),
+                ("bytes".into(), "5".into()),
+            ])),
             evidence: vec![
                 "android-artifact-upload".into(),
                 "transport:https-put".into(),
                 "status:200".into(),
+                "bytes:5".into(),
+                "url:https://example.com/upload".into(),
             ],
         };
         assert!(matches!(
