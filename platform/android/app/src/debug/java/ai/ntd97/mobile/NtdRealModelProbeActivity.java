@@ -18,6 +18,9 @@ public final class NtdRealModelProbeActivity extends Activity {
     private static final String RUNTIME_ROOT = "ntd97-real-model";
     private static final String RESULT_FILE = "ntd97-real-model-probe.txt";
 
+    private String pendingResult;
+    private boolean productionProbeStarted;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -45,6 +48,30 @@ public final class NtdRealModelProbeActivity extends Activity {
                 result = "android_real_model=failed\nerror=empty native result\n";
             }
             result = result + runChatApiProbe();
+            pendingResult = result;
+        } catch (Exception error) {
+            String message = error.getMessage();
+            if (message == null || message.isEmpty()) {
+                message = error.getClass().getSimpleName();
+            }
+            result = "android_real_model=failed\nerror="
+                    + message.replace('\n', ' ').replace('\r', ' ')
+                    + "\n";
+            writeResult(result);
+            finish();
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus || productionProbeStarted || pendingResult == null) {
+            return;
+        }
+
+        productionProbeStarted = true;
+        String result = pendingResult;
+        try {
             result = result + new String(
                     NtdNativeRuntimeHost.runProductionCapabilityProbe(this),
                     StandardCharsets.UTF_8);
@@ -53,7 +80,7 @@ public final class NtdRealModelProbeActivity extends Activity {
             if (message == null || message.isEmpty()) {
                 message = error.getClass().getSimpleName();
             }
-            result = "android_real_model=failed\nerror="
+            result = result + "production_capabilities=failed\nerror="
                     + message.replace('\n', ' ').replace('\r', ' ')
                     + "\n";
         }
