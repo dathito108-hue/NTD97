@@ -11,7 +11,6 @@ import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 
 import java.io.ByteArrayOutputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -123,14 +122,13 @@ final class NtdStorageGrantPlatform {
             Uri tree = grantedTree(context, path.alias, true);
             Uri document = resolveForWrite(resolver, tree, path.segments);
 
-            try (ParcelFileDescriptor descriptor =
-                            resolver.openFileDescriptor(document, "rwt");
-                    FileOutputStream output = descriptor == null
-                            ? null
-                            : new FileOutputStream(descriptor.getFileDescriptor())) {
-                if (descriptor == null || output == null) {
-                    throw new IOException("granted file descriptor unavailable");
-                }
+            ParcelFileDescriptor descriptor =
+                    resolver.openFileDescriptor(document, "rwt");
+            if (descriptor == null) {
+                throw new IOException("granted file descriptor unavailable");
+            }
+            try (ParcelFileDescriptor.AutoCloseOutputStream output =
+                    new ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
                 output.write(bytes);
                 output.flush();
                 output.getFD().sync();
