@@ -5288,6 +5288,8 @@ mod tests {
             value: ActionValue::None,
             evidence: vec![
                 "android-user-granted-file".into(),
+                "grant:shared".into(),
+                "path:notes/out.txt".into(),
                 "operation:write".into(),
                 "receipt:grant-write:shared:notes/out.txt:5:abcd".into(),
             ],
