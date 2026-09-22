@@ -1979,16 +1979,70 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .any(|item| item == "operation:set_text")
                     && output.evidence.iter().any(|item| item == &expected_receipt)
             }),
-            ("app.action", TypedAction::AppAction { action, .. }) => {
-                action == "launch"
-                    && output
+            (
+                "app.action",
+                TypedAction::AppAction {
+                    app,
+                    action,
+                    payload,
+                },
+            ) => {
+                if action == "launch" && payload.is_empty() {
+                    let expected_receipt = format!("app-launch:{app}");
+                    output
                         .evidence
                         .iter()
                         .any(|item| item == "android-app-launch")
-                    && output
+                        && output
+                            .evidence
+                            .iter()
+                            .any(|item| item == "operation:launch")
+                        && output
+                            .evidence
+                            .iter()
+                            .any(|item| item == &expected_receipt)
+                        && matches!(
+                            &output.value,
+                            ActionValue::Fields(fields)
+                                if fields.get("package") == Some(app)
+                                    && fields.get("operation") == Some(action)
+                                    && fields.get("receipt") == Some(&expected_receipt)
+                        )
+                } else {
+                    let Ok(spec) = parse_accessibility_action(action, payload) else {
+                        return ActionVerification::Reject {
+                            reason: "Android accessibility action payload is invalid".into(),
+                        };
+                    };
+                    let expected_receipt = format!(
+                        "accessibility:{action}:{app}:{}",
+                        digest_hex(&sha256(payload))
+                    );
+                    output
                         .evidence
                         .iter()
-                        .any(|item| item == "operation:launch")
+                        .any(|item| item == "android-accessibility-interaction")
+                        && output
+                            .evidence
+                            .iter()
+                            .any(|item| item == &format!("operation:{action}"))
+                        && output
+                            .evidence
+                            .iter()
+                            .any(|item| item == &expected_receipt)
+                        && matches!(
+                            &output.value,
+                            ActionValue::Fields(fields)
+                                if fields.get("package") == Some(app)
+                                    && fields.get("operation") == Some(action)
+                                    && fields.get("selector_kind") == Some(&spec.selector_kind)
+                                    && fields.get("selector") == Some(&spec.selector_value)
+                                    && fields.get("receipt") == Some(&expected_receipt)
+                                    && spec.text_bytes.is_none_or(|text_bytes| {
+                                        fields.get("text_bytes") == Some(&text_bytes.to_string())
+                                    })
+                        )
+                }
             }
             ("pc.observe", TypedAction::PcObserve { peer, .. }) => {
                 output
@@ -3686,10 +3740,12 @@ fn execute_android_verified_actions(
                     SideEffectClass::ExternalWrite,
                 );
                 if let Ok(descriptor) = descriptor.as_mut() {
-                    descriptor.required_scopes.push(
-                        AuthorityScope::new("app.launch")
-                            .map_err(|error| format!("app scope: {error:?}"))?,
-                    );
+                    for scope in app_action_scope_names(action_plan)? {
+                        descriptor.required_scopes.push(
+                            AuthorityScope::new(scope)
+                                .map_err(|error| format!("app action scope: {error:?}"))?,
+                        );
+                    }
                 }
                 descriptor
             }
@@ -3956,10 +4012,12 @@ fn execute_android_verified_actions(
             );
         }
         if fabric_capabilities.contains("app.action") {
-            authority = authority.with_scope(
-                AuthorityScope::new("app.launch")
-                    .map_err(|error| format!("app authority scope: {error:?}"))?,
-            );
+            for scope in app_action_scope_names(action_plan)? {
+                authority = authority.with_scope(
+                    AuthorityScope::new(scope)
+                        .map_err(|error| format!("app authority scope: {error:?}"))?,
+                );
+            }
         }
         if fabric_capabilities.contains("pc.execute") {
             authority =
