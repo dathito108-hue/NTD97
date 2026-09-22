@@ -339,7 +339,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                         || openSearchConfiguration.openSearchDescription.isEmpty()) {
                     throw new IOException("OpenSearch profile did not persist/reload");
                 }
-                byte[] openSearchResult = NtdWebPlatform.search("NTD97", 3);
+                byte[] openSearchResult = NtdWebPlatform.search("OpenSearch", 3);
                 if (normalizedSearchResultCount(openSearchResult) <= 0) {
                     throw new IOException("OpenSearch discovery returned no normalized result");
                 }
