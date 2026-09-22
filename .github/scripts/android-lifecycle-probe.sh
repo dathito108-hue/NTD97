@@ -44,7 +44,9 @@ adb shell dumpsys activity services "${PACKAGE}" | grep -q "NtdOverlayService"
 # Durable state stays intact; the probe intentionally does not invoke MainActivity restore.
 adb shell am force-stop "${PACKAGE}"
 adb shell run-as "${PACKAGE}" rm -f files/ntd97-real-model-probe.txt || true
-adb shell am start -W -n "${REAL_MODEL_ACTIVITY}" >/dev/null
+# NEW_TASK | CLEAR_TASK makes the debug probe the root activity; MainActivity cannot
+# be recreated underneath it and race NCS97 restore into the singleton native state.
+adb shell am start -W -f 0x10008000 -n "${REAL_MODEL_ACTIVITY}" >/dev/null
 
 for ATTEMPT in $(seq 1 120); do
   if adb shell run-as "${PACKAGE}" test -f files/ntd97-real-model-probe.txt; then
