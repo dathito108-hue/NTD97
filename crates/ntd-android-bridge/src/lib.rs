@@ -4561,6 +4561,163 @@ fn production_capability_probe(
         return Err("artifact rollback did not restore absent state".into());
     }
 
+    let grant_read_scope = AuthorityScope::new("file.user_grant.read")
+        .map_err(|error| format!("granted file read scope: {error:?}"))?;
+    let mut grant_read_descriptor = CapabilityDescriptor::new(
+        CapabilityId("file.grant.read".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("file.grant.read descriptor: {error:?}"))?;
+    grant_read_descriptor
+        .required_scopes
+        .push(grant_read_scope.clone());
+    grant_read_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize file.grant.read descriptor: {error:?}"))?;
+    if AuthorityGrant::new().permits(&grant_read_descriptor).is_ok() {
+        return Err("user-granted file read was not denied without runtime scope".into());
+    }
+    AuthorityGrant::new()
+        .with_scope(grant_read_scope)
+        .permits(&grant_read_descriptor)
+        .map_err(|error| format!("user-granted read runtime scope rejected: {error:?}"))?;
+    let grant_read_action = TypedAction::FileRead {
+        path: "shared\tprobe.txt".into(),
+    };
+    let mut user_granted_file = AndroidUserGrantedFileAdapter;
+    if user_granted_file
+        .execute(ntd_runtime::ActionId(101), &grant_read_action)
+        .is_ok()
+    {
+        return Err("missing persisted SAF grant did not fail closed".into());
+    }
+
+    let grant_write_scope = AuthorityScope::new("file.user_grant.write")
+        .map_err(|error| format!("granted file write scope: {error:?}"))?;
+    let mut grant_write_descriptor = CapabilityDescriptor::new(
+        CapabilityId("file.grant.write".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("file.grant.write descriptor: {error:?}"))?;
+    grant_write_descriptor
+        .required_scopes
+        .push(grant_write_scope.clone());
+    grant_write_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize file.grant.write descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(grant_write_scope.clone())
+        .permits(&grant_write_descriptor)
+        .is_ok()
+    {
+        return Err("user-granted file write was not denied without external-write authority".into());
+    }
+    let mut grant_write_authority = AuthorityGrant::new().with_scope(grant_write_scope);
+    grant_write_authority.allow_external_write = true;
+    grant_write_authority
+        .permits(&grant_write_descriptor)
+        .map_err(|error| format!("user-granted write runtime authority rejected: {error:?}"))?;
+
+    let upload_relative = "m13/upload.bin";
+    let upload_source = b"NTD97-M13-VERIFIED-UPLOAD".to_vec();
+    let upload_write = TypedAction::FileWrite {
+        path: upload_relative.into(),
+        bytes: upload_source.clone(),
+    };
+    let upload_source_result = file
+        .execute(ntd_runtime::ActionId(102), &upload_write)
+        .map_err(|error| format!("prepare artifact upload source: {error}"))?;
+    let AdapterResult::Completed {
+        rollback_token: Some(upload_source_rollback),
+        ..
+    } = upload_source_result
+    else {
+        return Err("artifact upload source preparation lacked rollback token".into());
+    };
+
+    let upload_action = TypedAction::ArtifactUpload {
+        url: "https://httpbin.org/put".into(),
+        path: upload_relative.into(),
+    };
+    let mut upload_descriptor = CapabilityDescriptor::new(
+        CapabilityId("artifact.upload".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("artifact.upload descriptor: {error:?}"))?;
+    upload_descriptor.resumable = true;
+    let upload_network_scope = AuthorityScope::new("network.write")
+        .map_err(|error| format!("upload network authority scope: {error:?}"))?;
+    let upload_file_scope = AuthorityScope::new("file.app_private")
+        .map_err(|error| format!("upload file authority scope: {error:?}"))?;
+    upload_descriptor
+        .required_scopes
+        .extend([upload_network_scope.clone(), upload_file_scope.clone()]);
+    upload_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize artifact.upload descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(upload_network_scope.clone())
+        .with_scope(upload_file_scope.clone())
+        .permits(&upload_descriptor)
+        .is_ok()
+    {
+        return Err("artifact upload was not denied without external-write authority".into());
+    }
+    let mut upload_authority = AuthorityGrant::new()
+        .with_scope(upload_network_scope)
+        .with_scope(upload_file_scope);
+    upload_authority.allow_external_write = true;
+    upload_authority
+        .permits(&upload_descriptor)
+        .map_err(|error| format!("artifact upload explicit authority rejected: {error:?}"))?;
+
+    let mut upload = AndroidArtifactUploadAdapter::new(root.clone())?;
+    let upload_stage = upload
+        .execute(ntd_runtime::ActionId(103), &upload_action)
+        .map_err(|error| format!("production artifact.upload stage probe: {error}"))?;
+    let AdapterResult::Suspended {
+        resume_token: upload_resume,
+        ..
+    } = upload_stage
+    else {
+        return Err("production artifact.upload did not suspend before network write".into());
+    };
+    let upload_completed = upload
+        .resume(ntd_runtime::ActionId(103), &upload_action, &upload_resume)
+        .map_err(|error| format!("production artifact.upload resume probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: upload_output,
+        ..
+    } = upload_completed
+    else {
+        return Err("production artifact.upload resume did not complete".into());
+    };
+    if verifier.verify(&upload_descriptor, &upload_action, &upload_output)
+        != ActionVerification::Accept
+    {
+        return Err("production artifact.upload evidence verification failed".into());
+    }
+    let ActionValue::Fields(upload_fields) = &upload_output.value else {
+        return Err("artifact upload output did not contain field evidence".into());
+    };
+    if upload_fields.get("sha256")
+        != Some(&digest_hex(&sha256(&upload_source)))
+    {
+        return Err("artifact upload receipt hash does not match source bytes".into());
+    }
+    file.rollback(
+        ntd_runtime::ActionId(102),
+        &upload_write,
+        &upload_source_rollback,
+    )
+    .map_err(|error| format!("artifact upload source rollback: {error}"))?;
+
     let clipboard_scope = AuthorityScope::new("device.clipboard.write")
         .map_err(|error| format!("clipboard authority scope: {error:?}"))?;
     let mut clipboard_descriptor = CapabilityDescriptor::new(
@@ -4651,7 +4808,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
