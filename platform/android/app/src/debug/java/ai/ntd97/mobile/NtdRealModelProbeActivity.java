@@ -420,7 +420,45 @@ public final class NtdRealModelProbeActivity extends Activity {
             return false;
         }
         if (!host.resolveChatApproval(approvedRequest, true)) {
-            externalApprovalDiagnostic = "approved-resolve:" + safeDiagnostic(host.chatLastError());
+            externalApprovalDiagnostic = "approved-prepare:" + safeDiagnostic(host.chatLastError());
+            return false;
+        }
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+            externalApprovalDiagnostic = "side-effect-before-durable-checkpoint";
+            return false;
+        }
+
+        byte[] approvedCheckpoint = host.chatCheckpoint();
+        if (approvedCheckpoint.length == 0) {
+            externalApprovalDiagnostic = "approved-checkpoint-empty";
+            return false;
+        }
+        long interruptedRequest = host.restoreChatCheckpoint(approvedCheckpoint);
+        if (interruptedRequest <= 0) {
+            externalApprovalDiagnostic = "approved-restore:" + safeDiagnostic(host.chatLastError());
+            return false;
+        }
+        NtdRuntimeHost.ChatEvent reconfirm = host.nextChatEvent(interruptedRequest);
+        if (reconfirm.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED) {
+            externalApprovalDiagnostic = "approved-restore-replayed:" + reconfirm.kind;
+            return false;
+        }
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+            externalApprovalDiagnostic = "side-effect-during-restore";
+            return false;
+        }
+        if (!host.resolveChatApproval(interruptedRequest, true)) {
+            externalApprovalDiagnostic = "reconfirm-prepare:" + safeDiagnostic(host.chatLastError());
+            return false;
+        }
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
+            externalApprovalDiagnostic = "side-effect-before-resume-event";
+            return false;
+        }
+
+        NtdRuntimeHost.ChatEvent actionEvent = host.nextChatEvent(interruptedRequest);
+        if (actionEvent.kind != NtdRuntimeHost.ChatEvent.ACTION_CHECKPOINTED) {
+            externalApprovalDiagnostic = "resume-event-kind:" + actionEvent.kind;
             return false;
         }
         if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites + 1) {
@@ -432,27 +470,28 @@ public final class NtdRealModelProbeActivity extends Activity {
             externalApprovalDiagnostic = "approved-clipboard-readback";
             return false;
         }
-        if (!host.chatVerifiedSynthesisReady(approvedRequest)) {
+        if (!host.chatVerifiedSynthesisReady(interruptedRequest)) {
             externalApprovalDiagnostic = "approved-synthesis-not-ready";
             return false;
         }
-        if (host.chatVerifiedActionCount(approvedRequest) <= 0) {
+        if (host.chatVerifiedActionCount(interruptedRequest) <= 0) {
             externalApprovalDiagnostic = "approved-verified-count:"
-                    + host.chatVerifiedActionCount(approvedRequest);
+                    + host.chatVerifiedActionCount(interruptedRequest);
             return false;
         }
 
         for (int attempt = 0; attempt < 8; attempt++) {
-            NtdRuntimeHost.ChatEvent event = host.nextChatEvent(approvedRequest);
-            if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+            NtdRuntimeHost.ChatEvent event = host.nextChatEvent(interruptedRequest);
+            if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN
+                    || event.kind == NtdRuntimeHost.ChatEvent.ACTION_CHECKPOINTED) {
                 continue;
             }
             boolean ok = event.kind == NtdRuntimeHost.ChatEvent.COMPLETE
-                    && host.chatStatus(approvedRequest) == 2;
+                    && host.chatStatus(interruptedRequest) == 2;
             externalApprovalDiagnostic = ok
                     ? "ok"
                     : "approved-terminal-kind:" + event.kind
-                            + ":status:" + host.chatStatus(approvedRequest);
+                            + ":status:" + host.chatStatus(interruptedRequest);
             return ok;
         }
         externalApprovalDiagnostic = "approved-terminal-timeout";
