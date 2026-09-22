@@ -1626,7 +1626,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .iter()
                         .any(|item| item == "operation:set_text")
                     && output.evidence.iter().any(|item| item == &expected_receipt)
-            })
+            }),
             ("app.action", TypedAction::AppAction { action, .. }) => {
                 action == "launch"
                     && output
