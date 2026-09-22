@@ -25,6 +25,15 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
         return new NtdNativeRuntimeHost(context);
     }
 
+    static byte[] runPlatformAdapterProbe(String url) {
+        if (!ensureLoaded()) {
+            return "platform_adapter=failed\nerror=native library unavailable\n"
+                    .getBytes(StandardCharsets.UTF_8);
+        }
+        byte[] result = nativePlatformAdapterProbe(url);
+        return result == null ? new byte[0] : result;
+    }
+
     static byte[] runRealModelProbe(
             String capsulePath,
             String shardRoot,
@@ -335,6 +344,8 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
         buffer.get(bytes);
         return new String(bytes, StandardCharsets.UTF_8);
     }
+
+    private static native byte[] nativePlatformAdapterProbe(String url);
 
     private static native boolean nativeOpenChatModel(
             String assetId,
