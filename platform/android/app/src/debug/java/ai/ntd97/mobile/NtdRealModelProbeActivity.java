@@ -1,9 +1,6 @@
 package ai.ntd97.mobile;
 
 import android.app.Activity;
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 
@@ -279,12 +276,7 @@ public final class NtdRealModelProbeActivity extends Activity {
     }
 
     private boolean runExternalApprovalProbe(NtdRuntimeHost host) {
-        ClipboardManager clipboard =
-                (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        if (clipboard == null) {
-            return false;
-        }
-        clipboard.setPrimaryClip(ClipData.newPlainText("ntd97-before", "NTD97-BEFORE"));
+        long beforeWrites = NtdDeviceAppPlatform.successfulClipboardWrites();
 
         long deniedRequest = host.submitChat("set clipboard to NTD97-M13-CHAT", 4);
         if (deniedRequest < 0) {
@@ -292,7 +284,7 @@ public final class NtdRealModelProbeActivity extends Activity {
         }
         NtdRuntimeHost.ChatEvent pending = host.nextChatEvent(deniedRequest);
         if (pending.kind != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED
-                || !"NTD97-BEFORE".contentEquals(clipboard.getPrimaryClip().getItemAt(0).coerceToText(this))) {
+                || NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
             return false;
         }
 
@@ -306,7 +298,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                         != NtdRuntimeHost.ChatEvent.APPROVAL_REQUIRED
                 || !host.resolveChatApproval(restored, false)
                 || host.chatStatus(restored) != 3
-                || !"NTD97-BEFORE".contentEquals(clipboard.getPrimaryClip().getItemAt(0).coerceToText(this))) {
+                || NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites) {
             return false;
         }
 
@@ -317,8 +309,8 @@ public final class NtdRealModelProbeActivity extends Activity {
                 || !host.resolveChatApproval(approvedRequest, true)) {
             return false;
         }
-        CharSequence value = clipboard.getPrimaryClip().getItemAt(0).coerceToText(this);
-        if (!"NTD97-M13-CHAT".contentEquals(value)
+        if (NtdDeviceAppPlatform.successfulClipboardWrites() != beforeWrites + 1
+                || !NtdDeviceAppPlatform.lastSuccessfulClipboardTextEquals("NTD97-M13-CHAT")
                 || !host.chatVerifiedSynthesisReady(approvedRequest)
                 || host.chatVerifiedActionCount(approvedRequest) <= 0) {
             return false;
