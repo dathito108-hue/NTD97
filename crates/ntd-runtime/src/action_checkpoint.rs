@@ -12,7 +12,7 @@ use crate::{
 
 pub const TAF97_MAGIC: [u8; 6] = *b"TAF97\0";
 pub const TAF97_MAJOR: u16 = 0;
-pub const TAF97_MINOR: u16 = 2;
+pub const TAF97_MINOR: u16 = 3;
 pub const TAF97_HEADER_LEN: usize = 24;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
