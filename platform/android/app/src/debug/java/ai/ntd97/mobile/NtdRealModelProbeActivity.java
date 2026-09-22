@@ -134,23 +134,37 @@ public final class NtdRealModelProbeActivity extends Activity {
             return;
         }
 
-        String result = pendingResult;
-        try {
-            result = result + new String(
-                    NtdNativeRuntimeHost.runProductionCapabilityProbe(this),
-                    StandardCharsets.UTF_8);
-        } catch (Exception error) {
-            String message = error.getMessage();
-            if (message == null || message.isEmpty()) {
-                message = error.getClass().getSimpleName();
+        final String prefix = pendingResult;
+        Thread probeThread = new Thread(() -> {
+            String result = prefix;
+            try {
+                boolean searchConfigured = NtdWebPlatform.configureSearchEndpoint(
+                        this,
+                        "https://example.com/?q={query}&n={count}");
+                if (!searchConfigured) {
+                    throw new IOException("failed to configure provider-independent search probe");
+                }
+                result = result + new String(
+                        NtdNativeRuntimeHost.runProductionCapabilityProbe(this),
+                        StandardCharsets.UTF_8);
+            } catch (Exception error) {
+                String message = error.getMessage();
+                if (message == null || message.isEmpty()) {
+                    message = error.getClass().getSimpleName();
+                }
+                result = result + "production_capabilities=failed\nerror="
+                        + message.replace('\n', ' ').replace('\r', ' ')
+                        + "\n";
             }
-            result = result + "production_capabilities=failed\nerror="
-                    + message.replace('\n', ' ').replace('\r', ' ')
-                    + "\n";
-        }
 
-        writeResult(result);
-        finish();
+            String finalResult = result;
+            runOnUiThread(() -> {
+                writeResult(finalResult);
+                finish();
+            });
+        }, "ntd97-production-capabilities");
+        probeThread.setDaemon(true);
+        probeThread.start();
     }
 
     private String runChatApiProbe() throws IOException {
