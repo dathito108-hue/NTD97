@@ -1608,9 +1608,13 @@ impl ActionVerifier for AndroidProductionVerifier {
             (
                 "device.interact",
                 TypedAction::DeviceInteract {
-                    surface, operation, ..
+                    surface,
+                    operation,
+                    argument,
                 },
-            ) => {
+            ) => argument.as_ref().is_some_and(|text| {
+                let expected_receipt =
+                    format!("clipboard-set:{}:{}", text.len(), digest_hex(&sha256(text.as_bytes())));
                 surface == "clipboard"
                     && operation == "set_text"
                     && output
@@ -1621,7 +1625,8 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .evidence
                         .iter()
                         .any(|item| item == "operation:set_text")
-            }
+                    && output.evidence.iter().any(|item| item == &expected_receipt)
+            })
             ("app.action", TypedAction::AppAction { action, .. }) => {
                 action == "launch"
                     && output
@@ -5831,18 +5836,39 @@ mod tests {
             operation: "set_text".into(),
             argument: Some("NTD97".into()),
         };
+        let device_receipt = format!(
+            "clipboard-set:{}:{}",
+            "NTD97".len(),
+            digest_hex(&sha256(b"NTD97"))
+        );
         let accepted_device = ActionOutput {
             summary: "clipboard written".into(),
             value: ActionValue::None,
             evidence: vec![
                 "android-clipboard-write".into(),
                 "operation:set_text".into(),
+                device_receipt,
             ],
         };
         assert_eq!(
             verifier.verify(&device_descriptor, &device_action, &accepted_device),
             ActionVerification::Accept
         );
+
+        let mismatched_device = ActionOutput {
+            summary: "clipboard receipt mismatch".into(),
+            value: ActionValue::None,
+            evidence: vec![
+                "android-clipboard-write".into(),
+                "operation:set_text".into(),
+                "clipboard-set:5:0000000000000000000000000000000000000000000000000000000000000000"
+                    .into(),
+            ],
+        };
+        assert!(matches!(
+            verifier.verify(&device_descriptor, &device_action, &mismatched_device),
+            ActionVerification::Reject { .. }
+        ));
 
         let app_descriptor = CapabilityDescriptor::new(
             CapabilityId("app.action".into()),
