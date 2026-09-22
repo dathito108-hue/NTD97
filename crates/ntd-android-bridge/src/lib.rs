@@ -226,7 +226,6 @@ fn provision_pc_pair_profile(
     }
 
     let local_seed = os_random::<32>()?;
-    let local = PairedIdentity::from_seed(local_seed);
     let suffix = fixed_hex(&os_random::<8>()?);
     let staged = pairs.join(format!(".{peer}.{suffix}.tmp"));
     let body = format!(
@@ -269,7 +268,6 @@ fn provision_pc_pair_profile(
         return Err("paired-PC committed profile failed verification".into());
     }
 
-    let _ = local;
     Ok(pc_pair_public_receipt(&loaded))
 }
 
