@@ -1492,18 +1492,44 @@ impl ActionVerifier for AndroidProductionVerifier {
                     .any(|item| item == "android-app-private-file")
                     && output.evidence.iter().any(|item| item == "operation:write")
             }
-            ("file.grant.read", TypedAction::FileRead { .. }) => {
-                output
-                    .evidence
-                    .iter()
-                    .any(|item| item == "android-user-granted-file")
+            ("file.grant.read", TypedAction::FileRead { path }) => {
+                let path_matches = granted_file_parts(path)
+                    .map(|(alias, relative)| {
+                        output
+                            .evidence
+                            .iter()
+                            .any(|item| item.strip_prefix("grant:") == Some(alias))
+                            && output
+                                .evidence
+                                .iter()
+                                .any(|item| item.strip_prefix("path:") == Some(relative))
+                    })
+                    .unwrap_or(false);
+                path_matches
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-user-granted-file")
                     && output.evidence.iter().any(|item| item == "operation:read")
             }
-            ("file.grant.write", TypedAction::FileWrite { .. }) => {
-                output
-                    .evidence
-                    .iter()
-                    .any(|item| item == "android-user-granted-file")
+            ("file.grant.write", TypedAction::FileWrite { path, .. }) => {
+                let path_matches = granted_file_parts(path)
+                    .map(|(alias, relative)| {
+                        output
+                            .evidence
+                            .iter()
+                            .any(|item| item.strip_prefix("grant:") == Some(alias))
+                            && output
+                                .evidence
+                                .iter()
+                                .any(|item| item.strip_prefix("path:") == Some(relative))
+                    })
+                    .unwrap_or(false);
+                path_matches
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-user-granted-file")
                     && output.evidence.iter().any(|item| item == "operation:write")
                     && output
                         .evidence
@@ -1524,7 +1550,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .iter()
                         .any(|item| item.starts_with("sha256:"))
             }
-            ("artifact.upload", TypedAction::ArtifactUpload { .. }) => {
+            ("artifact.upload", TypedAction::ArtifactUpload { url, .. }) => {
                 output
                     .evidence
                     .iter()
@@ -1541,6 +1567,10 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .evidence
                         .iter()
                         .any(|item| item.starts_with("sha256:"))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("url:") == Some(url.as_str()))
             }
             (
                 "device.interact",
@@ -5245,6 +5275,7 @@ mod tests {
                 "transport:https-put".into(),
                 "status:200".into(),
                 "sha256:0123456789abcdef".into(),
+                "url:https://example.com/upload".into(),
             ],
         };
         assert_eq!(
