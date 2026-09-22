@@ -16,6 +16,7 @@ ntd-capsule = { path = "../ntd-capsule" }
 ntd-mobile-shell = { path = "../ntd-mobile-shell" }
 ntd-runtime = { path = "../ntd-runtime" }
 ntd-validation = { path = "../ntd-validation" }
+ntd-web-adapter = { path = "../ntd-web-adapter" }
 
 [lints.clippy]
 all = "warn"
