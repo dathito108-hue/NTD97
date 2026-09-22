@@ -283,11 +283,19 @@ impl ActionVerifier for AndroidWebVerifier {
             };
         }
 
-        let evidence = output
-            .evidence
-            .iter()
-            .filter_map(|item| item.split_once('='))
-            .collect::<BTreeMap<_, _>>();
+        let mut evidence = BTreeMap::new();
+        for item in &output.evidence {
+            let Some((key, value)) = item.split_once('=') else {
+                return ActionVerification::Reject {
+                    reason: "web fetch evidence is malformed".into(),
+                };
+            };
+            if key.is_empty() || value.contains('\n') || evidence.insert(key, value).is_some() {
+                return ActionVerification::Reject {
+                    reason: "web fetch evidence is non-canonical".into(),
+                };
+            }
+        }
         if evidence.get("transport") != Some(&"android-http-url-connection") {
             return ActionVerification::Reject {
                 reason: "web fetch lacks trusted Android transport evidence".into(),
@@ -320,7 +328,8 @@ impl ActionVerifier for AndroidWebVerifier {
             };
         }
         let digest = sha256(payload);
-        if evidence.get("sha256") != Some(&digest_hex(&digest).as_str()) {
+        let expected_digest = digest_hex(&digest);
+        if evidence.get("sha256").copied() != Some(expected_digest.as_str()) {
             return ActionVerification::Reject {
                 reason: "web fetch digest evidence mismatch".into(),
             };
