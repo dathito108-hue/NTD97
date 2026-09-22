@@ -30,18 +30,17 @@ use ntd_mobile_shell::{
 };
 use ntd_runtime::{
     choose_reasoning_budget, continue_verified_assistant_plan, decode_action_fabric_checkpoint,
-    decode_conversation_checkpoint, encode_action_fabric_checkpoint, encode_conversation_checkpoint,
-    memory_recall_limit_for_budget, model_inference_signals, parse_native_action_plan,
-    run_budgeted_reasoning_cycle, sample_token, ActionFabric, ActionOutput, ActionPlanStatus,
-    ActionStatus, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
-    AssistantActionPlan, AssistantActionRunError, AssistantPlanDecision, AuthorityGrant,
-    AuthorityScope, CapabilityAdapter,
-    CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
-    CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
-    GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
-    NativeChatPromptCompiler, NativeReasoningProbe, ResourceSnapshot, SamplingMode,
-    SideEffectClass, SovereignConversationState, TaskStatus, ThermalState, TypedAction,
-    NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
+    decode_conversation_checkpoint, encode_action_fabric_checkpoint,
+    encode_conversation_checkpoint, memory_recall_limit_for_budget, model_inference_signals,
+    parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
+    ActionOutput, ActionPlanStatus, ActionStatus, ActionValue, ActionVerification, ActionVerifier,
+    AdapterResult, AssistantActionPlan, AssistantActionRunError, AssistantPlanDecision,
+    AuthorityGrant, AuthorityScope, CapabilityAdapter, CapabilityDescriptor, CapabilityDomain,
+    CapabilityId, CapabilityRegistry, CognitiveContext, CognitiveIdentity, CognitiveObservation,
+    CpuReferenceProvider, DistributionKind, GenerationConfig, GenerationControl, GraphGenerator,
+    LlamaSpmConfig, LlamaSpmTokenizer, NativeChatPromptCompiler, NativeReasoningProbe,
+    ResourceSnapshot, SamplingMode, SideEffectClass, SovereignConversationState, TaskStatus,
+    ThermalState, TypedAction, NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
@@ -3243,7 +3242,10 @@ fn execute_android_verified_actions(
             action_status,
             summary,
         }) if plan_status == ActionPlanStatus::Suspended
-            || matches!(action_status, Some(ActionStatus::Retryable | ActionStatus::Suspended)) =>
+            || matches!(
+                action_status,
+                Some(ActionStatus::Retryable | ActionStatus::Suspended)
+            ) =>
         {
             let requires_reconfirm = action_checkpoint_requires_reconfirm(&fabric, plan_id);
             persist_fabric(conversation, &fabric)?;
@@ -3905,7 +3907,9 @@ fn advance_pending_chat_actions(request_id: u64) -> Result<Option<Vec<u8>>, Stri
             if requires_reconfirm {
                 advanced
                     .set_chat_approval_status(task_id, "reconfirm")
-                    .map_err(|error| format!("require reconfirmation before external retry: {error:?}"))?;
+                    .map_err(|error| {
+                        format!("require reconfirmation before external retry: {error:?}")
+                    })?;
             }
             note
         }
