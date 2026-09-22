@@ -947,9 +947,7 @@ fn parse_accessibility_action(
         .map_err(|_| "accessibility payload is not UTF-8".to_owned())?;
     if payload.is_empty()
         || payload.len() > MAX_PLATFORM_TEXT_BYTES
-        || payload
-            .chars()
-            .any(|ch| matches!(ch, '\r' | '\n' | '|'))
+        || payload.chars().any(|ch| matches!(ch, '\r' | '\n' | '|'))
     {
         return Err("accessibility payload is invalid".into());
     }
@@ -1997,10 +1995,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                             .evidence
                             .iter()
                             .any(|item| item == "operation:launch")
-                        && output
-                            .evidence
-                            .iter()
-                            .any(|item| item == &expected_receipt)
+                        && output.evidence.iter().any(|item| item == &expected_receipt)
                         && matches!(
                             &output.value,
                             ActionValue::Fields(fields)
@@ -2026,10 +2021,7 @@ impl ActionVerifier for AndroidProductionVerifier {
                             .evidence
                             .iter()
                             .any(|item| item == &format!("operation:{action}"))
-                        && output
-                            .evidence
-                            .iter()
-                            .any(|item| item == &expected_receipt)
+                        && output.evidence.iter().any(|item| item == &expected_receipt)
                         && matches!(
                             &output.value,
                             ActionValue::Fields(fields)
@@ -5945,7 +5937,9 @@ fn production_capability_probe(
         .permits(&accessibility_descriptor)
         .is_ok()
     {
-        return Err("accessibility app interaction was not denied without external-write authority".into());
+        return Err(
+            "accessibility app interaction was not denied without external-write authority".into(),
+        );
     }
     let mut accessibility_authority = AuthorityGrant::new().with_scope(accessibility_scope);
     accessibility_authority.allow_external_write = true;
@@ -6709,11 +6703,10 @@ mod tests {
     fn accessibility_commands_use_dedicated_scope_and_receipt_binding() {
         let package = "ai.ntd97.mobile";
         let view_id = "ai.ntd97.mobile:id/ntd_accessibility_probe_button";
-        let click = governed_explicit_action_plan(&format!(
-            "accessibility click {package} {view_id}"
-        ))
-        .expect("click plan")
-        .expect("click action");
+        let click =
+            governed_explicit_action_plan(&format!("accessibility click {package} {view_id}"))
+                .expect("click plan")
+                .expect("click action");
         assert_eq!(
             click.payloads.get(&1),
             Some(&TypedAction::AppAction {
@@ -6741,9 +6734,7 @@ mod tests {
         .expect("set text action");
         let set_text_action = set_text.payloads.get(&1).expect("set text payload");
         let TypedAction::AppAction {
-            action,
-            payload,
-            ..
+            action, payload, ..
         } = set_text_action
         else {
             panic!("expected app action");
@@ -6783,7 +6774,10 @@ mod tests {
                 ("operation".into(), action.clone()),
                 ("selector_kind".into(), spec.selector_kind.clone()),
                 ("selector".into(), spec.selector_value.clone()),
-                ("text_bytes".into(), spec.text_bytes.expect("text bytes").to_string()),
+                (
+                    "text_bytes".into(),
+                    spec.text_bytes.expect("text bytes").to_string(),
+                ),
                 ("receipt".into(), expected_receipt.clone()),
             ])),
             evidence: vec![
@@ -6799,9 +6793,7 @@ mod tests {
         );
 
         let mut rejected = output;
-        rejected
-            .evidence
-            .retain(|item| item != &expected_receipt);
+        rejected.evidence.retain(|item| item != &expected_receipt);
         assert!(matches!(
             verifier.verify(&descriptor, set_text_action, &rejected),
             ActionVerification::Reject { .. }
