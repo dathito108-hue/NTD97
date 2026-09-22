@@ -4086,6 +4086,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn governed_web_search_builds_canonical_read_only_action() {
+        let plan = governed_web_search_plan("search web for Android")
+            .expect("planner")
+            .expect("search plan");
+
+        assert_eq!(plan.graph.actions.len(), 1);
+        assert_eq!(plan.graph.actions[0].capability.0, "web.search");
+        assert_eq!(plan.graph.actions[0].side_effect, SideEffectClass::ReadOnly);
+        assert_eq!(
+            plan.payloads.get(&1),
+            Some(&TypedAction::WebSearch {
+                query: "Android".into(),
+                max_results: 5,
+            })
+        );
+        assert!(governed_web_search_plan("tell me a story")
+            .expect("planner")
+            .is_none());
+        assert!(governed_web_search_plan("search web for bad|payload")
+            .expect("planner")
+            .is_none());
+    }
+
+    #[test]
+    fn production_verifier_requires_opensearch_receipts() {
+        let descriptor = CapabilityDescriptor::new(
+            CapabilityId("web.search".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::ReadOnly,
+        )
+        .expect("descriptor");
+        let action = TypedAction::WebSearch {
+            query: "Android".into(),
+            max_results: 3,
+        };
+        let accepted = ActionOutput {
+            summary: "verified OpenSearch results: 1".into(),
+            value: ActionValue::TextList(vec![
+                "Android | https://en.wikipedia.org/wiki/Android_(operating_system)".into(),
+            ]),
+            evidence: vec![
+                "android-opensearch".into(),
+                "descriptor:https://en.wikipedia.org/w/opensearch_desc.php".into(),
+                "response:https://en.wikipedia.org/w/api.php?action=opensearch".into(),
+                "results:1".into(),
+            ],
+        };
+        let mut verifier = AndroidProductionVerifier;
+        assert_eq!(
+            verifier.verify(&descriptor, &action, &accepted),
+            ActionVerification::Accept
+        );
+
+        let rejected = ActionOutput {
+            summary: "unverified search".into(),
+            value: ActionValue::TextList(vec!["Android".into()]),
+            evidence: vec!["results:1".into()],
+        };
+        assert!(matches!(
+            verifier.verify(&descriptor, &action, &rejected),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
+    #[test]
     fn governed_device_policy_routes_live_evidence() {
         assert_eq!(
             governed_device_surfaces("What is my current battery status?"),
