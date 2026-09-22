@@ -58,6 +58,48 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
         return result == null ? new byte[0] : result;
     }
 
+    static String provisionPcPair(
+            Context context,
+            String peer,
+            String address,
+            String remotePeerId,
+            String remoteVerifyKey) {
+        if (!ensureLoaded()) {
+            return "ERROR:native library unavailable";
+        }
+        byte[] result = nativeProvisionPcPairProfile(
+                pcCapabilityRoot(context).getAbsolutePath(),
+                peer == null ? "" : peer.trim(),
+                address == null ? "" : address.trim(),
+                remotePeerId == null ? "" : remotePeerId.trim(),
+                remoteVerifyKey == null ? "" : remoteVerifyKey.trim());
+        return utf8Result(result);
+    }
+
+    static String revokePcPair(Context context, String peer) {
+        if (!ensureLoaded()) {
+            return "ERROR:native library unavailable";
+        }
+        byte[] result = nativeRevokePcPairProfile(
+                pcCapabilityRoot(context).getAbsolutePath(),
+                peer == null ? "" : peer.trim());
+        return utf8Result(result);
+    }
+
+    static String listPcPairs(Context context) {
+        if (!ensureLoaded()) {
+            return "ERROR:native library unavailable";
+        }
+        return utf8Result(nativeListPcPairProfiles(pcCapabilityRoot(context).getAbsolutePath()));
+    }
+
+    private static File pcCapabilityRoot(Context context) {
+        return new File(context.getFilesDir(), "ntd97-capability-files");
+    }
+
+    private static String utf8Result(byte[] result) {
+        return result == null ? "ERROR:empty native result" : new String(result, StandardCharsets.UTF_8);
+    }
 
     private static synchronized boolean ensureLoaded() {
         if (!loadAttempted) {
@@ -412,6 +454,19 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static native long nativeRestoreChatCheckpoint(byte[] checkpoint);
 
     private static native byte[] nativeChatTranscript();
+
+    private static native byte[] nativeProvisionPcPairProfile(
+            String capabilityRoot,
+            String peer,
+            String address,
+            String remotePeerId,
+            String remoteVerifyKey);
+
+    private static native byte[] nativeRevokePcPairProfile(
+            String capabilityRoot,
+            String peer);
+
+    private static native byte[] nativeListPcPairProfiles(String capabilityRoot);
 
     private static native byte[] nativeProductionCapabilityProbe(
             String capabilityRoot,
