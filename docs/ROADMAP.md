@@ -467,14 +467,19 @@ Current implementation:
 - Android UI exposes an explicit Storage Access Framework tree picker and persists the selected tree as the `shared` grant; no broad storage permission or raw absolute-path authority is introduced;
 - `artifact.upload` is now a first-class Web-domain `ExternalWrite` action persisted in TAF97 0.4, with `network.write + file.app_private` scopes, hash-locked resume state and an idempotent HTTPS PUT platform boundary that rejects redirects and private/local destinations;
 - upload execution suspends before the network write, verifies that the local source hash is unchanged on resume, preserves the same resume token for retryable transport failures and commits only a 2xx HTTPS receipt carrying source SHA-256, byte count and final URL;
-- emulator acceptance requires storage-grant runtime-scope denial, missing-grant fail-closed behavior, granted-write ExternalWrite denial, upload approval denial, pre-write suspension, verified resume and matching upload receipt hash.
+- emulator acceptance requires storage-grant runtime-scope denial, missing-grant fail-closed behavior, granted-write ExternalWrite denial, upload approval denial, pre-write suspension, verified resume and matching upload receipt hash;
+- NCS97 v0.2 now embeds a bounded opaque TAF97 checkpoint in the active sovereign conversation turn while remaining backward-readable from NCS97 v0.1; the runtime does not duplicate ActionFabric semantics inside cognition;
+- production chat reconstructs the exact capability registry from the persisted canonical action protocol, validates/decodes the embedded TAF97 state and resumes the same ActionPlanId instead of preparing a second plan;
+- approved ExternalWrite execution now stops at a durable prepared boundary before any side effect, Android persists NCS97 immediately on ACTION_CHECKPOINTED events, and interrupted approved execution restores as reconfirm before any replay;
+- suspended/retryable resumable actions keep their TAF97 resume token across process death; ambiguous non-resumable ExternalWrite retry without a resume token is forced back to reconfirm even in the same live process;
+- verified completion clears the embedded ActionFabric checkpoint only after committed evidence has produced the synthesis prompt; emulator approval acceptance proves no clipboard side effect occurs before the durable prepare checkpoint and restore never auto-replays it.
 
 Still required before M13 completion:
 
 - user-facing WebSearch endpoint configuration/discovery and provider-result normalization beyond the provider-independent runtime boundary;
 - broader browser session persistence/navigation/form semantics beyond the initial fail-closed observe/click/set-value foundation;
 - successful SAF read/write acceptance on representative physical phones/providers, including grant revocation/reselection and provider-specific edge cases;
-- persist/restore the production ActionFabric itself through chat/task continuity so resumable upload can survive process death and resume without exposing a shortcut that cannot yet preserve its fabric checkpoint;
+- representative-phone process-death acceptance for resumable upload and SAF provider state, including retryable network loss after the durable TAF97 checkpoint;
 - accessibility-assisted app interaction remains fail-closed until its explicit-authority adapter is implemented;
 - paired-PC integration into the same production mixed TaskGraph;
 - real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
