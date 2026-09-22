@@ -109,6 +109,8 @@ for REQUIRED in \
   browser_interact=ok \
   browser_navigate=ok \
   browser_set_value=ok \
+  browser_submit=ok \
+  browser_cross_origin_block=ok \
   file_write=ok \
   file_read=ok \
   file_rollback=ok \
