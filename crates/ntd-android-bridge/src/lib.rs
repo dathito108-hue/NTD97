@@ -6286,10 +6286,12 @@ mod tests {
         fs::create_dir_all(&pairs).expect("pairs");
         let remote = PairedIdentity::from_seed([72; 32]);
         let hex = |bytes: &[u8]| {
-            bytes
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
+            let mut encoded = String::with_capacity(bytes.len() * 2);
+            for byte in bytes {
+                std::fmt::Write::write_fmt(&mut encoded, format_args!("{byte:02x}"))
+                    .expect("write hex");
+            }
+            encoded
         };
         let profile = format!(
             "NTD97_PC_PAIR_V1\npeer=workstation\naddress=127.0.0.1:45970\nlocal_seed={}\nremote_peer_id={}\nremote_verify_key={}\nEND",
