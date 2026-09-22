@@ -62,12 +62,12 @@ public final class NtdRealModelProbeActivity extends Activity {
     private String runChatApiProbe() throws IOException {
         NtdNativeRuntimeHost host = NtdNativeRuntimeHost.create(this);
         if (host == null || !host.chatReady()) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         long requestId = host.submitChat("Once upon a time", 4);
         if (requestId < 0) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         int tokenCount = 0;
@@ -82,7 +82,7 @@ public final class NtdRealModelProbeActivity extends Activity {
                 completed = true;
                 break;
             }
-            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            return "chat_submit=ok\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         boolean statusOk = completed && tokenCount > 0 && host.chatStatus(requestId) == 2;
@@ -148,6 +148,42 @@ public final class NtdRealModelProbeActivity extends Activity {
             store.clear();
         }
 
+        long governedRequest =
+                host.submitChat("What is my current battery status?", 4);
+        boolean governedE2eOk = false;
+        int governedPlannerStatus = 0;
+        int governedActionCount = 0;
+        int governedVerifiedCount = 0;
+        boolean governedSynthesisReady = false;
+        boolean governedComplete = false;
+        int governedTokens = 0;
+        int governedTerminalKind = 0;
+        int governedFinalStatus = 0;
+        if (governedRequest >= 0) {
+            governedPlannerStatus = host.chatActionPlannerStatus(governedRequest);
+            governedActionCount = host.chatActionCount(governedRequest);
+            governedVerifiedCount = host.chatVerifiedActionCount(governedRequest);
+            governedSynthesisReady = host.chatVerifiedSynthesisReady(governedRequest);
+            for (int attempt = 0; attempt < 8; attempt++) {
+                NtdRuntimeHost.ChatEvent event = host.nextChatEvent(governedRequest);
+                if (event.kind == NtdRuntimeHost.ChatEvent.TOKEN) {
+                    governedTokens++;
+                    continue;
+                }
+                governedTerminalKind = event.kind;
+                governedComplete = event.kind == NtdRuntimeHost.ChatEvent.COMPLETE;
+                break;
+            }
+            governedFinalStatus = host.chatStatus(governedRequest);
+            governedE2eOk = governedPlannerStatus == 2
+                    && governedActionCount > 0
+                    && governedVerifiedCount == governedActionCount
+                    && governedSynthesisReady
+                    && governedComplete
+                    && governedTokens > 0
+                    && governedFinalStatus == 2;
+        }
+
         long cancelRequest = host.submitChat("cancel this response", 8);
         boolean cancelOk = cancelRequest >= 0
                 && host.cancelChat(cancelRequest)
@@ -160,6 +196,15 @@ public final class NtdRealModelProbeActivity extends Activity {
                 + "chat_reasoning_loop=" + (reasoningLoopOk ? "ok" : "failed") + "\n"
                 + "chat_action_planner=" + (actionPlannerOk ? "ok" : "failed") + "\n"
                 + "chat_action_safety=" + (actionSafetyOk ? "ok" : "failed") + "\n"
+                + "chat_governed_e2e=" + (governedE2eOk ? "ok" : "failed") + "\n"
+                + "governed_request_id=" + governedRequest + "\n"
+                + "governed_planner_status=" + governedPlannerStatus + "\n"
+                + "governed_action_count=" + governedActionCount + "\n"
+                + "governed_verified_count=" + governedVerifiedCount + "\n"
+                + "governed_synthesis_ready=" + governedSynthesisReady + "\n"
+                + "governed_token_count=" + governedTokens + "\n"
+                + "governed_terminal_kind=" + governedTerminalKind + "\n"
+                + "governed_final_status=" + governedFinalStatus + "\n"
                 + "chat_memory=" + (memoryOk ? "ok" : "failed") + "\n"
                 + "chat_restore=" + (restoreOk ? "ok" : "failed") + "\n"
                 + "chat_store=" + (storeOk ? "ok" : "failed") + "\n"

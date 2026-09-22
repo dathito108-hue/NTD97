@@ -388,12 +388,15 @@ Current implementation:
 - generic verified-action coordination prepares the cognitive task through ActionFabric, refuses suspended/retryable/failed plans, and permits answer synthesis only from Completed plans whose actions are all Committed;
 - verified action results replace the active answer prompt only after evidence collection, while direct/invalid planner output creates no task-graph side effects;
 - Android acceptance checks fail-closed planner invariants and preserves planner/action evidence across NCS97 restore.
+- governed live-device queries now use constrained native-logit candidate scoring over allowlisted read-only observation surfaces; DIRECT is not admissible when current device evidence is required;
+- Android device evidence is surface-scoped before verified synthesis so battery/thermal/memory turns do not inflate the bounded prompt with unrelated fields;
+- verified-action synthesis provenance is persisted inside NCS97 and exposed through the production JNI chat contract;
+- the final M12 Android acceptance turn requires a current-battery request to produce a non-empty verified TaskGraph, committed action evidence, verified synthesis provenance and a completed native response in the same request.
 
 Still required before M12 completion:
 
-- demonstrate a representative real native assistant model that emits a valid non-empty action protocol end-to-end rather than the current TinyStories fixture normally taking the direct/invalid fail-closed path;
-- extend production Android adapters beyond the initial safe read-only `device.observe` path as required by supported assistant tasks;
-- end-to-end offline acceptance covering native reasoning + memory + model-grounded TaskGraph + verified governed action + synthesized response in one user turn.
+- obtain green real-model Android evidence for the governed end-to-end acceptance turn on the canonical branch;
+- broader production Android adapters remain future task-surface expansion; M12's governed-action acceptance is intentionally scoped to the verified read-only `device.observe` path.
 
 Exit: the canonical APK can hold a useful local conversation, reason through the native model, remember relevant state and resume interrupted work without any external AI backend.
 

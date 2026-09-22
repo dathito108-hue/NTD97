@@ -156,24 +156,48 @@ impl CapabilityAdapter for AndroidResourceAdapter {
         };
 
         let mut fields = BTreeMap::new();
-        fields.insert(
-            "available_ram_bytes".into(),
-            self.snapshot.available_ram_bytes.to_string(),
-        );
-        fields.insert(
-            "battery_percent".into(),
-            self.snapshot.battery_percent.to_string(),
-        );
-        fields.insert("charging".into(), self.snapshot.charging.to_string());
-        fields.insert(
-            "thermal".into(),
-            format!("{:?}", self.snapshot.thermal).to_lowercase(),
-        );
-        fields.insert(
-            "latency_budget_ms".into(),
-            self.snapshot.latency_budget_ms.to_string(),
-        );
         fields.insert("surface".into(), surface.clone());
+        match surface.as_str() {
+            "battery" => {
+                fields.insert(
+                    "battery_percent".into(),
+                    self.snapshot.battery_percent.to_string(),
+                );
+                fields.insert("charging".into(), self.snapshot.charging.to_string());
+            }
+            "thermal" => {
+                fields.insert(
+                    "thermal".into(),
+                    format!("{:?}", self.snapshot.thermal).to_lowercase(),
+                );
+            }
+            "memory" => {
+                fields.insert(
+                    "available_ram_bytes".into(),
+                    self.snapshot.available_ram_bytes.to_string(),
+                );
+            }
+            "resources" => {
+                fields.insert(
+                    "available_ram_bytes".into(),
+                    self.snapshot.available_ram_bytes.to_string(),
+                );
+                fields.insert(
+                    "battery_percent".into(),
+                    self.snapshot.battery_percent.to_string(),
+                );
+                fields.insert("charging".into(), self.snapshot.charging.to_string());
+                fields.insert(
+                    "thermal".into(),
+                    format!("{:?}", self.snapshot.thermal).to_lowercase(),
+                );
+                fields.insert(
+                    "latency_budget_ms".into(),
+                    self.snapshot.latency_budget_ms.to_string(),
+                );
+            }
+            _ => return Err(format!("unsupported device observation surface: {surface}")),
+        }
 
         Ok(AdapterResult::Completed {
             output: ActionOutput {
@@ -852,6 +876,106 @@ fn run_native_action_planner(
     })
 }
 
+fn governed_device_surfaces(user_message: &str) -> Option<Vec<&'static str>> {
+    let normalized = user_message.to_ascii_lowercase();
+    if normalized.contains("battery") || normalized.contains("charging") {
+        return Some(vec!["battery", "resources"]);
+    }
+    if normalized.contains("thermal")
+        || normalized.contains("device temperature")
+        || normalized.contains("phone temperature")
+    {
+        return Some(vec!["thermal", "resources"]);
+    }
+    if normalized.contains("ram")
+        || normalized.contains("device memory")
+        || normalized.contains("phone memory")
+        || normalized.contains("available memory")
+    {
+        return Some(vec!["memory", "resources"]);
+    }
+    if normalized.contains("device status")
+        || normalized.contains("phone status")
+        || normalized.contains("device resources")
+        || normalized.contains("phone resources")
+    {
+        return Some(vec!["resources"]);
+    }
+    None
+}
+
+fn constrained_device_planning_prompt(user_message: &str, surfaces: &[&str]) -> String {
+    format!(
+        "Choose the most relevant live device observation. Options: {}. User: {user_message}\nChoice: ",
+        surfaces.join(" ")
+    )
+}
+
+fn run_constrained_device_planner(
+    model: &NativeChatModel,
+    user_message: &str,
+    surfaces: &[&str],
+) -> Result<NativeActionPlanningOutcome, String> {
+    if surfaces.is_empty() {
+        return Ok(NativeActionPlanningOutcome::Invalid);
+    }
+    let prompt = constrained_device_planning_prompt(user_message, surfaces);
+    let prompt_tokens = model
+        .tokenizer
+        .encode(&prompt, true)
+        .map_err(|error| format!("encode constrained planner prompt: {error:?}"))?;
+    if prompt_tokens.is_empty() || prompt_tokens.len() >= model.context_limit {
+        return Ok(NativeActionPlanningOutcome::Invalid);
+    }
+
+    let generator = GraphGenerator::new(
+        model.activation.graph.clone(),
+        CpuReferenceProvider,
+        BTreeMap::new(),
+        model.activation.manifest.token_input,
+        usize::try_from(model.activation.manifest.distribution_output)
+            .map_err(|_| "distribution output does not fit usize".to_owned())?,
+        usize::try_from(model.activation.manifest.vocabulary_size)
+            .map_err(|_| "vocabulary size does not fit usize".to_owned())?,
+    )
+    .map_err(|error| format!("build constrained planner generator: {error:?}"))?;
+
+    let mut best: Option<(&str, f32)> = None;
+    for &surface in surfaces {
+        let candidate_tokens = model
+            .tokenizer
+            .encode(surface, false)
+            .map_err(|error| format!("encode constrained planner candidate: {error:?}"))?;
+        let score = generator
+            .score_continuation_with_resolver(
+                &model.resolver,
+                &prompt_tokens,
+                &candidate_tokens,
+                model.context_limit,
+            )
+            .map_err(|error| format!("score constrained planner candidate: {error:?}"))?;
+        if !score.is_finite() {
+            return Ok(NativeActionPlanningOutcome::Invalid);
+        }
+        let replace = match best {
+            None => true,
+            Some((_, best_score)) => score > best_score,
+        };
+        if replace {
+            best = Some((surface, score));
+        }
+    }
+
+    let Some((surface, _)) = best else {
+        return Ok(NativeActionPlanningOutcome::Invalid);
+    };
+    let canonical = format!("{NATIVE_ACTION_PROTOCOL_V1}\n1|device.observe|{surface}\nEND");
+    Ok(match parse_native_action_plan(&canonical) {
+        Ok(AssistantPlanDecision::Actions(plan)) => NativeActionPlanningOutcome::Actions(plan),
+        _ => NativeActionPlanningOutcome::Invalid,
+    })
+}
+
 fn execute_android_verified_actions(
     conversation: &mut SovereignConversationState,
     model: &NativeChatModel,
@@ -927,6 +1051,9 @@ fn execute_android_verified_actions(
     conversation
         .replace_active_prompt_tokens(task_id, synthesis_tokens)
         .map_err(|error| format!("install verified synthesis prompt: {error:?}"))?;
+    conversation
+        .record_verified_synthesis_ready(task_id)
+        .map_err(|error| format!("record verified synthesis provenance: {error:?}"))?;
     conversation
         .record_verified_action_count(task_id, run.evidence.len())
         .map_err(|error| format!("record verified action count: {error:?}"))?;
@@ -1031,7 +1158,11 @@ fn submit_chat_reserved(
         .record_reasoning_cycle_report(task_id, &report)
         .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
 
-    match run_native_action_planner(model, user_message)? {
+    let planner_outcome = match governed_device_surfaces(user_message) {
+        Some(surfaces) => run_constrained_device_planner(model, user_message, &surfaces)?,
+        None => run_native_action_planner(model, user_message)?,
+    };
+    match planner_outcome {
         NativeActionPlanningOutcome::Direct => {
             conversation
                 .record_action_planner_status(task_id, "direct")
@@ -1196,6 +1327,20 @@ fn chat_action_count(request_id: u64) -> i32 {
         .action_count_for_task(session.task_id)
         .and_then(|value| i32::try_from(value).ok())
         .unwrap_or(0)
+}
+
+fn chat_verified_synthesis_ready(request_id: u64) -> bool {
+    let guard = lock_state();
+    let Some(session) = guard
+        .chat_session
+        .as_ref()
+        .filter(|session| session.request_id == request_id)
+    else {
+        return false;
+    };
+    guard
+        .conversation
+        .verified_synthesis_ready_for_task(session.task_id)
 }
 
 fn chat_verified_action_count(request_id: u64) -> i32 {
@@ -1652,6 +1797,19 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatVerif
 
 #[allow(unsafe_code)]
 #[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatVerifiedSynthesisReady(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+) -> jboolean {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    u8::from(chat_verified_synthesis_ready(request_id))
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
 pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeCancelChat(
     _env: JNIEnv<'_>,
     _class: JClass<'_>,
@@ -1936,5 +2094,67 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeEn
     match encode_physical_evidence(&record) {
         Ok(bytes) => java_bytes(&env, &bytes),
         Err(_) => java_bytes(&env, &[]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn governed_device_policy_routes_live_evidence() {
+        assert_eq!(
+            governed_device_surfaces("What is my current battery status?"),
+            Some(vec!["battery", "resources"])
+        );
+        assert_eq!(
+            governed_device_surfaces("Is my phone temperature high?"),
+            Some(vec!["thermal", "resources"])
+        );
+        assert_eq!(
+            governed_device_surfaces("How much RAM is available?"),
+            Some(vec!["memory", "resources"])
+        );
+        assert_eq!(
+            governed_device_surfaces("remember our conversation memory"),
+            None
+        );
+        assert_eq!(governed_device_surfaces("tell me a story"), None);
+    }
+
+    #[test]
+    fn device_adapter_scopes_verified_fields_to_selected_surface() {
+        let snapshot = ResourceSnapshot {
+            available_ram_bytes: 123,
+            battery_percent: 77,
+            charging: true,
+            thermal: ThermalState::Nominal,
+            latency_budget_ms: 42,
+        };
+        let mut adapter = AndroidResourceAdapter { snapshot };
+        let result = adapter
+            .execute(
+                ntd_runtime::ActionId(1),
+                &TypedAction::DeviceObserve {
+                    surface: "battery".into(),
+                },
+            )
+            .expect("battery observation");
+        let AdapterResult::Completed { output, .. } = result else {
+            panic!("expected completed observation");
+        };
+        let ActionValue::Fields(fields) = output.value else {
+            panic!("expected field evidence");
+        };
+
+        assert_eq!(
+            fields.get("battery_percent").map(String::as_str),
+            Some("77")
+        );
+        assert_eq!(fields.get("charging").map(String::as_str), Some("true"));
+        assert_eq!(fields.get("surface").map(String::as_str), Some("battery"));
+        assert!(!fields.contains_key("available_ram_bytes"));
+        assert!(!fields.contains_key("thermal"));
+        assert_eq!(output.evidence, vec!["android-resource-snapshot"]);
     }
 }
