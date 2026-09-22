@@ -70,6 +70,7 @@ struct NativeChatModel {
     resolver: FileBackedTensorResolver,
     tokenizer: LlamaSpmTokenizer,
     context_limit: usize,
+    capability_root: PathBuf,
 }
 
 struct NativeModelReasoningProbe<'a> {
@@ -1054,8 +1055,13 @@ fn open_chat_model(
     shard_root: &str,
     verify_key: &[u8],
     context_limit: usize,
+    capability_root: &str,
 ) -> Result<(), String> {
-    if asset_id.trim().is_empty() || version == 0 || context_limit == 0 {
+    if asset_id.trim().is_empty()
+        || version == 0
+        || context_limit == 0
+        || capability_root.trim().is_empty()
+    {
         return Err("invalid native chat model identity or context limit".into());
     }
     let verify_key: [u8; 32] = verify_key
@@ -1086,6 +1092,11 @@ fn open_chat_model(
         return Err("native chat tokenizer vocabulary mismatch".into());
     }
     let resolver = FileBackedTensorResolver::from_activation(shard_store, &activation);
+    let capability_root = PathBuf::from(capability_root);
+    fs::create_dir_all(&capability_root)
+        .map_err(|error| format!("create native capability root: {error}"))?;
+    let capability_root = fs::canonicalize(capability_root)
+        .map_err(|error| format!("canonicalize native capability root: {error}"))?;
 
     let mut guard = lock_state();
     guard.chat_model = Some(Arc::new(NativeChatModel {
@@ -1095,6 +1106,7 @@ fn open_chat_model(
         resolver,
         tokenizer,
         context_limit,
+        capability_root,
     }));
     Ok(())
 }
