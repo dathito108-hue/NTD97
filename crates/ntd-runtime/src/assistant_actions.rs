@@ -137,6 +137,23 @@ fn parse_action_line(
         "file.read" => TypedAction::FileRead {
             path: payload.to_owned(),
         },
+        "file.write" => {
+            let (path, text) = payload
+                .split_once('\t')
+                .ok_or(AssistantPlanError::InvalidPayload)?;
+            if path.trim().is_empty()
+                || path != path.trim()
+                || text.is_empty()
+                || text.contains('\r')
+                || text.contains('\n')
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::FileWrite {
+                path: path.to_owned(),
+                bytes: text.as_bytes().to_vec(),
+            }
+        }
         "device.observe" => TypedAction::DeviceObserve {
             surface: payload.to_owned(),
         },
@@ -163,10 +180,15 @@ fn parse_action_line(
         .map_err(|_| AssistantPlanError::InvalidPayload)?;
 
     let capability_id = CapabilityId(capability.to_owned());
+    let side_effect = if capability == "file.write" {
+        SideEffectClass::Reversible
+    } else {
+        SideEffectClass::ReadOnly
+    };
     let node = ActionNode {
         id,
         capability: capability_id,
-        side_effect: SideEffectClass::ReadOnly,
+        side_effect,
         verification_required: true,
     };
     Ok((node, typed, line.to_owned()))
@@ -451,16 +473,28 @@ END",
     }
 
     #[test]
-    fn unsupported_write_action_fails_closed() {
+    fn reversible_file_write_materializes_scoped_payload() {
+        let parsed = parse_native_action_plan(
+            "NTD97_ACTIONS_V1
+1|file.write|notes/status.txt\thello world
+END",
+        )
+        .expect("plan");
+        let AssistantPlanDecision::Actions(plan) = parsed else {
+            panic!("expected actions");
+        };
+
+        assert_eq!(plan.graph.actions.len(), 1);
         assert_eq!(
-            parse_native_action_plan(
-                "NTD97_ACTIONS_V1
-1|file.write|/tmp/out
-END"
-            ),
-            Err(AssistantPlanError::UnsupportedCapability(
-                "file.write".into()
-            ))
+            plan.graph.actions[0].side_effect,
+            SideEffectClass::Reversible
+        );
+        assert_eq!(
+            plan.payloads.get(&1),
+            Some(&TypedAction::FileWrite {
+                path: "notes/status.txt".into(),
+                bytes: b"hello world".to_vec(),
+            })
         );
     }
 
