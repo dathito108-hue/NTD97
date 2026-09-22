@@ -426,6 +426,33 @@ Required contract:
 - paired-PC fabric integrated into the same production task graph;
 - real mixed Web -> File -> App/Device -> PC acceptance tasks.
 
+Current implementation:
+
+- dedicated `ntd-web-adapter` production capability crate while keeping HTTP/TLS dependencies outside `ntd-runtime`;
+- HTTPS transport through Rustls-backed `ureq` with bounded connect/read timeouts and no automatic redirects;
+- manual redirect validation with scheme/credential checks on every hop;
+- localhost/private/link-local/multicast/documentation target denial by default, including DNS-resolved addresses;
+- hard response-body and text-materialization limits;
+- stable ActionId result reuse within the adapter process;
+- deterministic WebFetch/WebSearch receipts containing action ID, status, final URL, content type, byte count and SHA-256;
+- HTTP 429/5xx retryable semantics and fail-closed verifier treatment of unsuccessful/non-evidenced outputs;
+- configurable read-only search endpoint with bounded external-link extraction;
+- Android INTERNET permission plus governed `network.read` authority scope;
+- Android ActionFabric registration for read-only `web.search` / `web.fetch` alongside existing `device.observe`;
+- constrained native-model web action selection for explicit URL/search intents;
+- composite device/web verifier preserving domain-specific evidence boundaries;
+- Android emulator acceptance requiring an unauthorized WebFetch denial followed by an authorized real HTTPS fetch, HTTP 200 and a valid response SHA-256 receipt.
+
+Still required before M13 completion:
+
+- production browser observe/interact adapter;
+- scoped Android file read/write through platform storage APIs;
+- broader Android device/app action adapters behind explicit authority;
+- verified download/upload artifact workflows with resumable transfer state;
+- offline/network-transition resume behavior across persisted TAF97 continuity;
+- production paired-PC integration inside the same mixed assistant task graph;
+- real mixed Web -> File -> App/Device -> PC acceptance on representative hardware.
+
 Exit: NTD97 can complete useful multi-surface tasks on a real phone with verifiable results and no mock adapter in the canonical path.
 
 ## M14 — Major Block N: Cognitive Quality + Capability Growth
