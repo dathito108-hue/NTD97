@@ -5925,6 +5925,95 @@ fn production_capability_probe(
     )
     .map_err(|error| format!("artifact upload source rollback: {error}"))?;
 
+    let accessibility_scope = AuthorityScope::new("app.accessibility.interact")
+        .map_err(|error| format!("accessibility authority scope: {error:?}"))?;
+    let mut accessibility_descriptor = CapabilityDescriptor::new(
+        CapabilityId("app.action".into()),
+        1,
+        CapabilityDomain::App,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("accessibility app.action descriptor: {error:?}"))?;
+    accessibility_descriptor
+        .required_scopes
+        .push(accessibility_scope.clone());
+    accessibility_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize accessibility app.action descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(accessibility_scope.clone())
+        .permits(&accessibility_descriptor)
+        .is_ok()
+    {
+        return Err("accessibility app interaction was not denied without external-write authority".into());
+    }
+    let mut accessibility_authority = AuthorityGrant::new().with_scope(accessibility_scope);
+    accessibility_authority.allow_external_write = true;
+    accessibility_authority
+        .permits(&accessibility_descriptor)
+        .map_err(|error| format!("accessibility explicit authority rejected: {error:?}"))?;
+
+    let click_view_id = format!("{package_name}:id/ntd_accessibility_probe_button");
+    let text_view_id = format!("{package_name}:id/ntd_accessibility_probe_text");
+    let mut app_accessibility = AndroidAppActionAdapter;
+
+    let missing_target_action = TypedAction::AppAction {
+        app: package_name.to_owned(),
+        action: "accessibility.click".into(),
+        payload: format!("view_id\t{package_name}:id/ntd_accessibility_missing").into_bytes(),
+    };
+    if app_accessibility
+        .execute(ntd_runtime::ActionId(104), &missing_target_action)
+        .is_ok()
+    {
+        return Err("accessibility missing target did not fail closed".into());
+    }
+
+    let click_action = TypedAction::AppAction {
+        app: package_name.to_owned(),
+        action: "accessibility.click".into(),
+        payload: format!("view_id\t{click_view_id}").into_bytes(),
+    };
+    let click_result = app_accessibility
+        .execute(ntd_runtime::ActionId(105), &click_action)
+        .map_err(|error| format!("production accessibility click probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: click_output,
+        ..
+    } = click_result
+    else {
+        return Err("production accessibility click did not complete".into());
+    };
+    if verifier.verify(&accessibility_descriptor, &click_action, &click_output)
+        != ActionVerification::Accept
+    {
+        return Err("production accessibility click evidence verification failed".into());
+    }
+
+    let set_text_action = TypedAction::AppAction {
+        app: package_name.to_owned(),
+        action: "accessibility.set_text".into(),
+        payload: format!("view_id\t{text_view_id}\tNTD97-accessibility").into_bytes(),
+    };
+    let set_text_result = app_accessibility
+        .execute(ntd_runtime::ActionId(106), &set_text_action)
+        .map_err(|error| format!("production accessibility set_text probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: set_text_output,
+        ..
+    } = set_text_result
+    else {
+        return Err("production accessibility set_text did not complete".into());
+    };
+    if verifier.verify(
+        &accessibility_descriptor,
+        &set_text_action,
+        &set_text_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production accessibility set_text evidence verification failed".into());
+    }
+
     let clipboard_scope = AuthorityScope::new("device.clipboard.write")
         .map_err(|error| format!("clipboard authority scope: {error:?}"))?;
     let mut clipboard_descriptor = CapabilityDescriptor::new(
@@ -6015,7 +6104,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\napp_accessibility_authority_block=ok\napp_accessibility_missing_target_block=ok\napp_accessibility_click=ok\napp_accessibility_set_text=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
