@@ -278,9 +278,11 @@ mod tests {
             agent
                 .register_handler(SystemObserveHandler)
                 .expect("register observe");
-            let frame = read_length_prefixed_frame(&mut stream).expect("read request");
-            let reply = agent.handle_encrypted_frame(&frame).expect("agent");
-            write_length_prefixed_frame(&mut stream, &reply).expect("write response");
+            for _ in 0..2 {
+                let frame = read_length_prefixed_frame(&mut stream).expect("read request");
+                let reply = agent.handle_encrypted_frame(&frame).expect("agent");
+                write_length_prefixed_frame(&mut stream, &reply).expect("write response");
+            }
         });
 
         let (session, transport) = connect_paired_tcp(
@@ -294,6 +296,9 @@ mod tests {
         let mut adapter =
             PairedPcAdapter::new("workstation", "pc.system.observe", 1, session, transport)
                 .expect("adapter");
+        let capabilities = adapter.discover_capabilities().expect("discover");
+        assert_eq!(capabilities.len(), 1);
+        assert_eq!(capabilities[0].id, "pc.system.observe");
         let result = adapter
             .execute(
                 ActionId(7),
