@@ -2125,6 +2125,117 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatTrans
     java_bytes(&env, chat_transcript().as_bytes())
 }
 
+fn production_web_capability_probe() -> Result<String, String> {
+    let capability = CapabilityId("web.fetch".into());
+    let action = TypedAction::WebFetch {
+        url: "https://example.com/".into(),
+    };
+    let graph = ntd_runtime::TaskGraph {
+        actions: vec![ntd_runtime::ActionNode {
+            id: 1,
+            capability: capability.clone(),
+            side_effect: SideEffectClass::ReadOnly,
+            verification_required: true,
+        }],
+    };
+
+    let mut registry = CapabilityRegistry::new();
+    registry
+        .register(web_descriptor("web.fetch")?)
+        .map_err(|error| format!("register web.fetch probe capability: {error:?}"))?;
+    let mut fabric = ActionFabric::new(registry);
+    fabric
+        .register_adapter(
+            capability.clone(),
+            ProductionWebAdapter::new(android_web_config())
+                .map_err(|error| format!("build production web probe adapter: {error:?}"))?,
+        )
+        .map_err(|error| format!("register production web probe adapter: {error:?}"))?;
+    let plan = fabric
+        .prepare_plan(13_001, &graph, BTreeMap::from([(1, action.clone())]))
+        .map_err(|error| format!("prepare production web probe: {error:?}"))?;
+
+    let mut verifier = AndroidGovernedVerifier::default();
+    if fabric
+        .execute_next(plan, &AuthorityGrant::new(), &mut verifier)
+        .is_ok()
+    {
+        return Err("web action executed without network.read authority".into());
+    }
+
+    let authority = AuthorityGrant::new().with_scope(
+        AuthorityScope::new("network.read")
+            .map_err(|error| format!("build web probe authority: {error:?}"))?,
+    );
+    let report = fabric
+        .execute_next(plan, &authority, &mut verifier)
+        .map_err(|error| format!("execute production web probe: {error:?}"))?;
+    if report.plan_status != ntd_runtime::ActionPlanStatus::Completed {
+        return Err(format!(
+            "production web probe did not complete: {:?}",
+            report.plan_status
+        ));
+    }
+
+    let state = fabric
+        .state()
+        .plans
+        .get(&plan.0)
+        .ok_or_else(|| "production web probe plan disappeared".to_owned())?;
+    let output = state
+        .actions
+        .first()
+        .and_then(|planned| planned.output.as_ref())
+        .ok_or_else(|| "production web probe has no committed output".to_owned())?;
+    let status = output
+        .evidence
+        .iter()
+        .find_map(|item| item.strip_prefix("status="))
+        .ok_or_else(|| "production web receipt is missing status".to_owned())?;
+    let digest = output
+        .evidence
+        .iter()
+        .find_map(|item| item.strip_prefix("sha256="))
+        .ok_or_else(|| "production web receipt is missing digest".to_owned())?;
+    let bytes = output
+        .evidence
+        .iter()
+        .find_map(|item| item.strip_prefix("bytes="))
+        .ok_or_else(|| "production web receipt is missing byte count".to_owned())?;
+    if status != "200"
+        || digest.len() != 64
+        || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || match bytes.parse::<usize>().ok() {
+            Some(count) => count == 0,
+            None => true,
+        }
+    {
+        return Err("production web receipt failed integrity checks".into());
+    }
+
+    Ok(format!(
+        "web_authority=ok\nweb_fetch=ok\nweb_receipt=ok\nweb_status={status}\nweb_bytes={bytes}\nweb_sha256={digest}\n"
+    ))
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeWebCapabilityProbe(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jbyteArray {
+    match production_web_capability_probe() {
+        Ok(result) => java_bytes(&env, result.as_bytes()),
+        Err(error) => java_bytes(
+            &env,
+            format!(
+                "web_authority=failed\nweb_fetch=failed\nweb_receipt=failed\nerror={error}\n"
+            )
+            .as_bytes(),
+        ),
+    }
+}
+
 fn real_model_probe(
     capsule_path: &str,
     shard_root: &str,
