@@ -12,9 +12,9 @@ use std::{
 };
 
 use jni::{
-    objects::{JByteArray, JClass, JString},
+    objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue},
     sys::{jboolean, jbyteArray, jint, jlong},
-    JNIEnv,
+    JNIEnv, JavaVM,
 };
 use ntd_assimilation::{
     activate_thin_generative_capsule, verify_native_package_with_shards, AssetKind,
@@ -31,7 +31,7 @@ use ntd_runtime::{
     execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
     parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
     ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
-    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, CapabilityAdapter,
+    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope, CapabilityAdapter,
     CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
     CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
     GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
@@ -56,6 +56,13 @@ const CHAT_STATUS_COMPLETE: i32 = 2;
 const CHAT_STATUS_CANCELLED: i32 = 3;
 const CHAT_STATUS_FAILED: i32 = 4;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
+
+const WEB_FETCH_MAX_BYTES: usize = 64 * 1024;
+const WEB_FETCH_CONNECT_TIMEOUT_MS: i32 = 5_000;
+const WEB_FETCH_READ_TIMEOUT_MS: i32 = 5_000;
+const WEB_FETCH_MAX_REDIRECTS: i32 = 5;
+const WEB_RESPONSE_MAGIC: [u8; 6] = *b"NWR97\0";
+const WEB_RESPONSE_VERSION: u16 = 1;
 
 struct NativeChatModel {
     asset_id: String,
@@ -139,6 +146,193 @@ enum NativeActionPlanningOutcome {
     Direct,
     Actions(AssistantActionPlan),
     Invalid,
+}
+
+struct AndroidPlatformWebBridge {
+    vm: JavaVM,
+    object: GlobalRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AndroidWebResponse {
+    status: i32,
+    redirects: u32,
+    final_url: String,
+    content_type: String,
+    body: Vec<u8>,
+    error: String,
+}
+
+impl AndroidPlatformWebBridge {
+    fn new(env: &JNIEnv<'_>, object: JObject<'_>) -> Result<Self, String> {
+        let vm = env
+            .get_java_vm()
+            .map_err(|error| format!("get Android JavaVM: {error}"))?;
+        let object = env
+            .new_global_ref(object)
+            .map_err(|error| format!("retain Android web transport: {error}"))?;
+        Ok(Self { vm, object })
+    }
+
+    fn fetch(&self, url: &str) -> Result<AndroidWebResponse, String> {
+        let mut env = self
+            .vm
+            .attach_current_thread()
+            .map_err(|error| format!("attach Android web transport thread: {error}"))?;
+        let java_url = env
+            .new_string(url)
+            .map_err(|error| format!("encode web URL for Android: {error}"))?;
+        let java_url_object = JObject::from(java_url);
+        let call = env.call_method(
+            self.object.as_obj(),
+            "fetch",
+            "(Ljava/lang/String;IIII)[B",
+            &[
+                JValue::Object(&java_url_object),
+                JValue::Int(
+                    i32::try_from(WEB_FETCH_MAX_BYTES)
+                        .map_err(|_| "web body limit does not fit jint".to_owned())?,
+                ),
+                JValue::Int(WEB_FETCH_CONNECT_TIMEOUT_MS),
+                JValue::Int(WEB_FETCH_READ_TIMEOUT_MS),
+                JValue::Int(WEB_FETCH_MAX_REDIRECTS),
+            ],
+        );
+        let result = match call {
+            Ok(value) => value,
+            Err(error) => {
+                if env.exception_check().unwrap_or(false) {
+                    let _ = env.exception_clear();
+                }
+                return Err(format!("Android web transport call failed: {error}"));
+            }
+        };
+        let object = result
+            .l()
+            .map_err(|error| format!("Android web transport returned invalid value: {error}"))?;
+        let bytes = env
+            .convert_byte_array(&JByteArray::from(object))
+            .map_err(|error| format!("decode Android web transport frame: {error}"))?;
+        decode_android_web_response(&bytes)
+    }
+}
+
+struct AndroidWebFetchAdapter {
+    bridge: Arc<AndroidPlatformWebBridge>,
+}
+
+impl CapabilityAdapter for AndroidWebFetchAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::WebFetch { url } = action else {
+            return Err("Android web adapter only supports web.fetch".into());
+        };
+        let response = self.bridge.fetch(url)?;
+        if !response.error.is_empty() {
+            return Err(response.error);
+        }
+
+        let value = if is_textual_content_type(&response.content_type) {
+            match String::from_utf8(response.body.clone()) {
+                Ok(text) => ActionValue::Text(text),
+                Err(_) => ActionValue::Bytes(response.body.clone()),
+            }
+        } else {
+            ActionValue::Bytes(response.body.clone())
+        };
+        let digest = sha256(&response.body);
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!(
+                    "HTTP {} {}",
+                    response.status,
+                    response.final_url
+                ),
+                value,
+                evidence: vec![
+                    "transport=android-http-url-connection".into(),
+                    format!("http_status={}", response.status),
+                    format!("final_url={}", response.final_url),
+                    format!("content_type={}", response.content_type),
+                    format!("bytes={}", response.body.len()),
+                    format!("sha256={}", digest_hex(&digest)),
+                    format!("redirects={}", response.redirects),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct AndroidWebVerifier;
+
+impl ActionVerifier for AndroidWebVerifier {
+    fn verify(
+        &mut self,
+        descriptor: &CapabilityDescriptor,
+        action: &TypedAction,
+        output: &ActionOutput,
+    ) -> ActionVerification {
+        if descriptor.id.0 != "web.fetch" || !matches!(action, TypedAction::WebFetch { .. }) {
+            return ActionVerification::Reject {
+                reason: "web fetch capability contract mismatch".into(),
+            };
+        }
+
+        let evidence = output
+            .evidence
+            .iter()
+            .filter_map(|item| item.split_once('='))
+            .collect::<BTreeMap<_, _>>();
+        if evidence.get("transport") != Some(&"android-http-url-connection") {
+            return ActionVerification::Reject {
+                reason: "web fetch lacks trusted Android transport evidence".into(),
+            };
+        }
+        let status = evidence
+            .get("http_status")
+            .and_then(|value| value.parse::<u16>().ok());
+        if !status.is_some_and(|value| (200..300).contains(&value)) {
+            return ActionVerification::Reject {
+                reason: "web fetch HTTP status is not successful".into(),
+            };
+        }
+
+        let payload = match &output.value {
+            ActionValue::Text(text) => text.as_bytes(),
+            ActionValue::Bytes(bytes) => bytes.as_slice(),
+            _ => {
+                return ActionVerification::Reject {
+                    reason: "web fetch output is not a body payload".into(),
+                }
+            }
+        };
+        let expected_len = evidence
+            .get("bytes")
+            .and_then(|value| value.parse::<usize>().ok());
+        if expected_len != Some(payload.len()) {
+            return ActionVerification::Reject {
+                reason: "web fetch byte-count evidence mismatch".into(),
+            };
+        }
+        let digest = sha256(payload);
+        if evidence.get("sha256") != Some(&digest_hex(&digest).as_str()) {
+            return ActionVerification::Reject {
+                reason: "web fetch digest evidence mismatch".into(),
+            };
+        }
+        let final_url = evidence.get("final_url").copied().unwrap_or_default();
+        if !(final_url.starts_with("http://") || final_url.starts_with("https://")) {
+            return ActionVerification::Reject {
+                reason: "web fetch final URL is outside the HTTP boundary".into(),
+            };
+        }
+        ActionVerification::Accept
+    }
 }
 
 struct AndroidResourceAdapter {
@@ -256,6 +450,7 @@ struct NativeState {
     resources: ResourceSnapshot,
     input_peak_milli: u16,
     chat_model: Option<Arc<NativeChatModel>>,
+    platform_web: Option<Arc<AndroidPlatformWebBridge>>,
     chat_session: Option<NativeChatSession>,
     chat_submit_in_progress: bool,
     conversation: SovereignConversationState,
@@ -275,6 +470,7 @@ impl Default for NativeState {
             },
             input_peak_milli: 0,
             chat_model: None,
+            platform_web: None,
             chat_session: None,
             chat_submit_in_progress: false,
             conversation: SovereignConversationState::new(CognitiveIdentity(*b"NTD97-ASSISTANT1")),
