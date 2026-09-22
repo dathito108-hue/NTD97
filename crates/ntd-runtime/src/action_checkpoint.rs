@@ -318,6 +318,11 @@ fn encode_typed_action(
             push_string(out, path)?;
             push_bytes(out, bytes)?;
         }
+        TypedAction::ArtifactDownload { url, path } => {
+            push_u8(out, 15);
+            push_string(out, url)?;
+            push_string(out, path)?;
+        }
     }
     Ok(())
 }
@@ -381,6 +386,10 @@ fn decode_typed_action(cursor: &mut Cursor<'_>) -> Result<TypedAction, ActionChe
             peer: cursor.string()?,
             path: cursor.string()?,
             bytes: cursor.bytes()?.to_vec(),
+        }),
+        15 => Ok(TypedAction::ArtifactDownload {
+            url: cursor.string()?,
+            path: cursor.string()?,
         }),
         other => Err(ActionCheckpointError::InvalidActionTag(other)),
     }
