@@ -698,7 +698,7 @@ mod tests {
     }
 
     #[test]
-    fn paired_pc_action_round_trips_in_taf97_minor_three() {
+    fn paired_pc_action_round_trips_in_taf97_minor_four() {
         let mut registry = CapabilityRegistry::new();
         registry
             .register(
@@ -806,6 +806,48 @@ mod tests {
         let encoded = encode_action_fabric_checkpoint(&registry, &state).expect("encode");
         assert_eq!(
             decode_action_fabric_checkpoint(&registry, &encoded).expect("decode"),
+            state
+        );
+    }
+
+    #[test]
+    fn taf97_minor_three_checkpoint_remains_readable() {
+        let registry = registry();
+        let state = ActionFabricState {
+            next_plan_id: 2,
+            next_action_id: 2,
+            plans: BTreeMap::from([(
+                1,
+                ActionPlanState {
+                    id: ActionPlanId(1),
+                    task_id: 9,
+                    cursor: 0,
+                    status: ActionPlanStatus::Suspended,
+                    actions: vec![PlannedAction {
+                        id: ActionId(1),
+                        node_id: 4,
+                        capability: CapabilityId("web.search".into()),
+                        capability_version: 1,
+                        side_effect: SideEffectClass::ReadOnly,
+                        verification_required: true,
+                        action: TypedAction::WebSearch {
+                            query: "NTD97".into(),
+                            max_results: 3,
+                        },
+                        status: ActionStatus::Suspended,
+                        attempts: 1,
+                        output: None,
+                        resume_token: Some(vec![7, 9]),
+                        rollback_token: None,
+                        last_error: Some("network paused".into()),
+                    }],
+                },
+            )]),
+        };
+        let mut encoded = encode_action_fabric_checkpoint(&registry, &state).expect("encode");
+        encoded[10..12].copy_from_slice(&3u16.to_le_bytes());
+        assert_eq!(
+            decode_action_fabric_checkpoint(&registry, &encoded).expect("decode v0.3"),
             state
         );
     }
