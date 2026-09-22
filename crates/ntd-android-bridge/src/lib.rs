@@ -1799,7 +1799,9 @@ fn governed_external_action_plan(
             .get("set clipboard to ".len()..)
             .ok_or_else(|| "clipboard command boundary failed".to_owned())?;
         if value.trim().is_empty()
-            || value.chars().any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+            || value
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
         {
             return Ok(None);
         }
@@ -2284,12 +2286,7 @@ fn submit_chat_reserved(
                 .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
             if let Some((capability, rationale)) = external_write_approval(&action_plan)? {
                 conversation
-                    .record_chat_approval(
-                        task_id,
-                        &capability,
-                        &rationale,
-                        "pending",
-                    )
+                    .record_chat_approval(task_id, &capability, &rationale, "pending")
                     .map_err(|error| format!("record pending chat approval: {error:?}"))?;
                 conversation
                     .record_action_planner_status(task_id, "actions")
@@ -2371,7 +2368,10 @@ fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String
     let (_, _, approval_status) = conversation
         .chat_approval_for_task(task_id)
         .ok_or_else(|| "pending chat approval state is missing".to_owned())?;
-    if !matches!(approval_status, "pending" | "reconfirm" | "approved-executing") {
+    if !matches!(
+        approval_status,
+        "pending" | "reconfirm" | "approved-executing"
+    ) {
         return Err("chat approval is no longer pending".into());
     }
 
@@ -2890,7 +2890,9 @@ fn restore_chat_checkpoint(bytes: &[u8]) -> Result<u64, String> {
         guard
             .conversation
             .set_chat_approval_status(task_id, "reconfirm")
-            .map_err(|error| format!("mark interrupted external write for reconfirmation: {error:?}"))?;
+            .map_err(|error| {
+                format!("mark interrupted external write for reconfirmation: {error:?}")
+            })?;
     }
     let waiting_approval = matches!(
         approval_status.as_deref(),
