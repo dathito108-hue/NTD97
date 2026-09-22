@@ -105,6 +105,25 @@ for ATTEMPT in $(seq 1 90); do
 done
 
 test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+
+PACKAGE_READY=false
+for ATTEMPT in $(seq 1 60); do
+  PACKAGE_PATH="$(adb shell pm path "${PACKAGE}" 2>/dev/null | tr -d '\r' || true)"
+  MAIN_RESOLUTION="$(
+    adb shell cmd package resolve-activity --brief \
+      -a android.intent.action.MAIN \
+      -c android.intent.category.LAUNCHER \
+      "${PACKAGE}" 2>/dev/null | tr -d '\r' || true
+  )"
+  if printf '%s\n' "${PACKAGE_PATH}" | grep -q '^package:' \
+      && printf '%s\n' "${MAIN_RESOLUTION}" | grep -q "${PACKAGE}"; then
+    PACKAGE_READY=true
+    break
+  fi
+  sleep 2
+done
+
+test "${PACKAGE_READY}" = "true"
 adb shell input keyevent 82 || true
 
 adb shell am start -W -n "${MAIN_ACTIVITY}"
