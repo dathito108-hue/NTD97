@@ -1161,6 +1161,48 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .iter()
                         .any(|item| item.starts_with("status:2"))
             }
+            ("web.search", TypedAction::WebSearch { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-https-search")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "provider-boundary:runtime-configured")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("status:2"))
+            }
+            ("browser.observe", TypedAction::BrowserObserve { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-webview-browser")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "operation:observe")
+            }
+            (
+                "browser.interact",
+                TypedAction::BrowserInteract { operation, .. },
+            ) => {
+                (operation == "click" || operation == "set_value")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-webview-browser")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == &format!("operation:{operation}"))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("receipt:android-webview:"))
+            }
             ("file.read", TypedAction::FileRead { .. }) => {
                 output
                     .evidence
