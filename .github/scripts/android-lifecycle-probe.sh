@@ -38,6 +38,11 @@ done
 
 adb shell dumpsys activity services "${PACKAGE}" | grep -q "NtdOverlayService"
 
+# The launcher Activity restores durable NCS97 asynchronously. Restart the app process
+# before the isolated real-model/chat probe so its singleton native state cannot race
+# a legitimately restored Running/WaitingApproval conversation from the lifecycle phase.
+# Durable state stays intact; the probe intentionally does not invoke MainActivity restore.
+adb shell am force-stop "${PACKAGE}"
 adb shell run-as "${PACKAGE}" rm -f files/ntd97-real-model-probe.txt || true
 adb shell am start -W -n "${REAL_MODEL_ACTIVITY}" >/dev/null
 
