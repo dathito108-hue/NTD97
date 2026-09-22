@@ -8,6 +8,12 @@ import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.HttpsURLConnection;
 
@@ -16,11 +22,35 @@ final class NtdWebPlatform {
     private static final int READ_TIMEOUT_MS = 10_000;
     private static final int MAX_BODY_BYTES = 512 * 1024;
     private static final int MAX_REDIRECTS = 3;
+    private static final int PLATFORM_TIMEOUT_SECONDS = 45;
     private static final byte PROTOCOL_VERSION = 1;
+    private static final ExecutorService NETWORK_EXECUTOR =
+            Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "ntd97-https");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private NtdWebPlatform() {}
 
     static byte[] fetch(String rawUrl) {
+        Future<byte[]> future = NETWORK_EXECUTOR.submit(() -> fetchBlocking(rawUrl));
+        try {
+            return future.get(PLATFORM_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            future.cancel(true);
+            return encodeError("HTTPS fetch interrupted");
+        } catch (TimeoutException error) {
+            future.cancel(true);
+            return encodeError("HTTPS fetch timed out");
+        } catch (ExecutionException error) {
+            Throwable cause = error.getCause();
+            return encodeError(cause == null ? "HTTPS fetch failed" : safeMessage(cause));
+        }
+    }
+
+    private static byte[] fetchBlocking(String rawUrl) {
         try {
             URL current = validateUrl(rawUrl);
             for (int redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
@@ -76,8 +106,15 @@ final class NtdWebPlatform {
             }
             throw new IOException("unreachable redirect state");
         } catch (Exception error) {
-            return encodeError(error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+            return encodeError(safeMessage(error));
         }
+    }
+
+    private static String safeMessage(Throwable error) {
+        String message = error.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? error.getClass().getSimpleName()
+                : message;
     }
 
     private static URL validateUrl(String rawUrl) throws IOException {
