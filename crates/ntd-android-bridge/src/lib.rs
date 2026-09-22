@@ -1172,9 +1172,7 @@ fn browser_receipt(result: &str) -> Result<String, String> {
 
 fn browser_platform_field<'a>(result: &'a str, key: &str) -> Option<&'a str> {
     let prefix = format!("{key}=");
-    result
-        .lines()
-        .find_map(|line| line.strip_prefix(&prefix))
+    result.lines().find_map(|line| line.strip_prefix(&prefix))
 }
 
 fn browser_receipt_matches(
@@ -2349,14 +2347,8 @@ impl ActionVerifier for AndroidProductionVerifier {
                     true
                 };
                 semantics_valid
-                    && browser_receipt_matches(
-                        receipt,
-                        operation,
-                        target,
-                        value.as_deref(),
-                    )
-                    && browser_platform_field(platform, "operation")
-                        == Some(operation.as_str())
+                    && browser_receipt_matches(receipt, operation, target, value.as_deref())
+                    && browser_platform_field(platform, "operation") == Some(operation.as_str())
                     && value_hash_valid
                     && fields.get("operation") == Some(operation)
                     && fields.get("target") == Some(target)
