@@ -254,6 +254,34 @@ fn render_action_value(value: &ActionValue) -> String {
     }
 }
 
+pub fn build_compact_verified_answer_prompt(
+    user_message: &str,
+    evidence: &[VerifiedActionEvidence],
+) -> Result<String, VerifiedActionEvidenceError> {
+    if evidence.is_empty() {
+        return Err(VerifiedActionEvidenceError::EmptyPlan);
+    }
+
+    let mut out = String::from("Verified:\n");
+    for item in evidence {
+        out.push_str(&item.node_id.to_string());
+        out.push(' ');
+        out.push_str(&item.capability.0);
+        if !item.value.trim().is_empty() && item.value != "none" {
+            out.push(' ');
+            out.push_str(&item.value.replace('\n', " "));
+        } else {
+            out.push(' ');
+            out.push_str(item.summary.trim());
+        }
+        out.push('\n');
+    }
+    out.push_str("User: ");
+    out.push_str(user_message);
+    out.push_str("\nAssistant:");
+    Ok(out)
+}
+
 pub fn build_verified_answer_prompt(
     user_message: &str,
     evidence: &[VerifiedActionEvidence],
@@ -376,7 +404,7 @@ where
     }
 
     let evidence = collect_verified_action_evidence(plan)?;
-    let synthesis_prompt = build_verified_answer_prompt(user_message, &evidence)?;
+    let synthesis_prompt = build_compact_verified_answer_prompt(user_message, &evidence)?;
     Ok(VerifiedAssistantActionRun {
         plan_id,
         reports,
@@ -573,6 +601,26 @@ Assistant:"
             .register_adapter(CapabilityId("device.observe".into()), DeviceAdapter)
             .expect("adapter");
         fabric
+    }
+
+    #[test]
+    fn compact_verified_prompt_preserves_committed_values_without_verbose_proof_lines() {
+        let evidence = vec![VerifiedActionEvidence {
+            node_id: 1,
+            capability: CapabilityId("device.observe".into()),
+            summary: "verified local device observation for battery".into(),
+            value: "battery_percent=50\ncharging=false".into(),
+            evidence: vec!["android-resource-snapshot".into()],
+        }];
+
+        let prompt =
+            build_compact_verified_answer_prompt("battery?", &evidence).expect("compact prompt");
+
+        assert_eq!(
+            prompt,
+            "Verified:\n1 device.observe battery_percent=50 charging=false\nUser: battery?\nAssistant:"
+        );
+        assert!(!prompt.contains("android-resource-snapshot"));
     }
 
     #[test]
