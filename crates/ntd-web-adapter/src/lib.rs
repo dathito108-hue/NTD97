@@ -672,8 +672,9 @@ mod tests {
             .iter()
             .any(|item| item.starts_with("sha256=")));
 
+        let mut verifier = ProductionWebVerifier;
         assert_eq!(
-            ProductionWebVerifier.verify(&descriptor("web.fetch"), &action, &output),
+            verifier.verify(&descriptor("web.fetch"), &action, &output),
             ActionVerification::Accept
         );
     }
@@ -700,8 +701,9 @@ mod tests {
             output.value,
             ActionValue::TextList(vec!["https://example.com/a".into()])
         );
+        let mut verifier = ProductionWebVerifier;
         assert_eq!(
-            ProductionWebVerifier.verify(&descriptor("web.search"), &action, &output),
+            verifier.verify(&descriptor("web.search"), &action, &output),
             ActionVerification::Accept
         );
     }
@@ -721,8 +723,9 @@ mod tests {
             ],
         };
 
+        let mut verifier = ProductionWebVerifier;
         assert!(matches!(
-            ProductionWebVerifier.verify(&descriptor("web.fetch"), &action, &output),
+            verifier.verify(&descriptor("web.fetch"), &action, &output),
             ActionVerification::Reject { .. }
         ));
     }
