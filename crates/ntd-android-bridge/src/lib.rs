@@ -127,6 +127,190 @@ fn profile_value<'a>(line: &'a str, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("paired-PC profile missing {key}"))
 }
 
+fn fixed_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[usize::from(byte >> 4)] as char);
+        out.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    out
+}
+
+fn os_random<const N: usize>() -> Result<[u8; N], String> {
+    let mut bytes = [0u8; N];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .map_err(|error| format!("read OS random bytes: {error}"))?;
+    Ok(bytes)
+}
+
+fn validate_pc_socket_address(address: SocketAddr) -> Result<SocketAddr, String> {
+    if address.port() == 0 || address.ip().is_unspecified() || address.ip().is_multicast() {
+        return Err("paired-PC socket address is not routable".into());
+    }
+    Ok(address)
+}
+
+fn canonical_pc_pair_directory(root: &Path, create: bool) -> Result<PathBuf, String> {
+    if create {
+        fs::create_dir_all(root)
+            .map_err(|error| format!("create paired-PC capability root: {error}"))?;
+    }
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize paired-PC capability root: {error}"))?;
+    let pairs = root.join("pc-pairs");
+    if create {
+        match fs::symlink_metadata(&pairs) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err("paired-PC profile directory is not a real directory".into());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&pairs)
+                    .map_err(|error| format!("create paired-PC profile directory: {error}"))?;
+            }
+            Err(error) => {
+                return Err(format!("inspect paired-PC profile directory: {error}"));
+            }
+        }
+    }
+    let pairs = fs::canonicalize(&pairs)
+        .map_err(|error| format!("paired-PC profile directory is unavailable: {error}"))?;
+    if !pairs.starts_with(&root) {
+        return Err("paired-PC profile directory escaped capability root".into());
+    }
+    Ok(pairs)
+}
+
+fn provision_pc_pair_profile(
+    root: &Path,
+    peer: &str,
+    address: &str,
+    remote_peer_id_hex: &str,
+    remote_verify_key_hex: &str,
+) -> Result<String, String> {
+    if !valid_pc_peer_alias(peer) {
+        return Err("paired-PC peer alias is invalid".into());
+    }
+    let address = validate_pc_socket_address(
+        address
+            .parse::<SocketAddr>()
+            .map_err(|_| "paired-PC profile address is invalid".to_owned())?,
+    )?;
+    let remote_peer_id = decode_fixed_hex::<16>(remote_peer_id_hex)?;
+    let remote_verify_key = decode_fixed_hex::<32>(remote_verify_key_hex)?;
+    PairingRecord::from_public(remote_peer_id, remote_verify_key)
+        .map_err(|error| format!("paired-PC pinned identity is invalid: {error:?}"))?;
+
+    let pairs = canonical_pc_pair_directory(root, true)?;
+    let target = pairs.join(format!("{peer}.pcp97"));
+    if fs::symlink_metadata(&target).is_ok() {
+        return Err("paired-PC profile already exists; revoke it before replacement".into());
+    }
+
+    let local_seed = os_random::<32>()?;
+    let local = PairedIdentity::from_seed(local_seed);
+    let suffix = fixed_hex(&os_random::<8>()?);
+    let staged = pairs.join(format!(".{peer}.{suffix}.tmp"));
+    let body = format!(
+        "NTD97_PC_PAIR_V1\npeer={peer}\naddress={address}\nlocal_seed={}\nremote_peer_id={}\nremote_verify_key={}\nEND\n",
+        fixed_hex(&local_seed),
+        fixed_hex(&remote_peer_id),
+        fixed_hex(&remote_verify_key),
+    );
+
+    let write_result = (|| -> Result<(), String> {
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&staged)
+            .map_err(|error| format!("create paired-PC staged profile: {error}"))?;
+        file.write_all(body.as_bytes())
+            .map_err(|error| format!("write paired-PC staged profile: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("sync paired-PC staged profile: {error}"))?;
+        drop(file);
+        fs::rename(&staged, &target)
+            .map_err(|error| format!("commit paired-PC profile: {error}"))?;
+        fs::File::open(&pairs)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("sync paired-PC profile directory: {error}"))?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+    write_result?;
+
+    let loaded = load_pc_pair_profile(root, peer)?;
+    if loaded.address != address
+        || loaded.remote_peer_id != remote_peer_id
+        || loaded.remote_verify_key != remote_verify_key
+        || loaded.local_seed != local_seed
+    {
+        let _ = fs::remove_file(&target);
+        return Err("paired-PC committed profile failed verification".into());
+    }
+
+    Ok(format!(
+        "NTD97_PC_PAIR_RECEIPT_V1\npeer={peer}\naddress={address}\nlocal_peer_id={}\nlocal_verify_key={}\nEND\n",
+        fixed_hex(&local.peer_id()),
+        fixed_hex(&local.verify_key()),
+    ))
+}
+
+fn revoke_pc_pair_profile(root: &Path, peer: &str) -> Result<(), String> {
+    if !valid_pc_peer_alias(peer) {
+        return Err("paired-PC peer alias is invalid".into());
+    }
+    let pairs = canonical_pc_pair_directory(root, false)?;
+    let target = pairs.join(format!("{peer}.pcp97"));
+    let metadata = fs::symlink_metadata(&target)
+        .map_err(|error| format!("paired-PC profile is unavailable: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("paired-PC profile is not a regular file".into());
+    }
+    let canonical = fs::canonicalize(&target)
+        .map_err(|error| format!("canonicalize paired-PC profile: {error}"))?;
+    if !canonical.starts_with(&pairs) {
+        return Err("paired-PC profile escaped profile directory".into());
+    }
+    fs::remove_file(&canonical)
+        .map_err(|error| format!("remove paired-PC profile: {error}"))?;
+    fs::File::open(&pairs)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("sync paired-PC profile directory: {error}"))?;
+    Ok(())
+}
+
+fn list_pc_pair_profiles(root: &Path) -> Result<Vec<String>, String> {
+    let pairs = match canonical_pc_pair_directory(root, false) {
+        Ok(pairs) => pairs,
+        Err(error) if error.contains("unavailable") => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut peers = Vec::new();
+    for entry in fs::read_dir(&pairs)
+        .map_err(|error| format!("read paired-PC profile directory: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("read paired-PC profile entry: {error}"))?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(peer) = name.strip_suffix(".pcp97") else {
+            continue;
+        };
+        if valid_pc_peer_alias(peer) && load_pc_pair_profile(root, peer).is_ok() {
+            peers.push(peer.to_owned());
+        }
+    }
+    peers.sort();
+    peers.dedup();
+    Ok(peers)
+}
+
 fn load_pc_pair_profile(root: &Path, expected_peer: &str) -> Result<PcPairProfile, String> {
     if !valid_pc_peer_alias(expected_peer) {
         return Err("paired-PC peer alias is invalid".into());
@@ -162,9 +346,11 @@ fn load_pc_pair_profile(root: &Path, expected_peer: &str) -> Result<PcPairProfil
     if peer != expected_peer || !valid_pc_peer_alias(&peer) {
         return Err("paired-PC profile peer alias mismatch".into());
     }
-    let address = profile_value(lines[2], "address=")?
-        .parse::<SocketAddr>()
-        .map_err(|_| "paired-PC profile address is invalid".to_owned())?;
+    let address = validate_pc_socket_address(
+        profile_value(lines[2], "address=")?
+            .parse::<SocketAddr>()
+            .map_err(|_| "paired-PC profile address is invalid".to_owned())?,
+    )?;
     let local_seed = decode_fixed_hex::<32>(profile_value(lines[3], "local_seed=")?)?;
     let remote_peer_id = decode_fixed_hex::<16>(profile_value(lines[4], "remote_peer_id=")?)?;
     let remote_verify_key = decode_fixed_hex::<32>(profile_value(lines[5], "remote_verify_key=")?)?;
@@ -181,11 +367,7 @@ fn load_pc_pair_profile(root: &Path, expected_peer: &str) -> Result<PcPairProfil
 }
 
 fn fresh_pc_handshake_entropy() -> Result<HandshakeEntropy, String> {
-    let mut seed = [0u8; 32];
-    fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut seed))
-        .map_err(|error| format!("read paired-PC handshake entropy: {error}"))?;
-    Ok(HandshakeEntropy::from_seed(seed))
+    Ok(HandshakeEntropy::from_seed(os_random::<32>()?))
 }
 
 fn expected_remote_pc_capability(
