@@ -503,7 +503,7 @@ Current implementation:
 - `browser.interact` keeps the same canonical action type and ExternalWrite authority but now supports `navigate`, `submit`, `click` and `set_value`; navigation remains public-HTTPS-only, submit requires an exact FORM selector and is accepted only after same-origin main-frame completion, while set_value requires post-event DOM read-back of the exact value;
 - every browser observe/interaction receipt binds `operation + target + value` with SHA-256 and the native verifier recomputes that binding; set_value evidence carries only the value hash, not the entered value itself;
 - browser persistence does not serialize DOM state or enable DOM storage; file/content access, mixed content, geolocation, multiple windows and third-party cookies remain disabled;
-- emulator acceptance proves ambiguous-selector rejection, interaction failure after in-memory session loss, explicit persisted-session resume, receipt-verified navigation, real HTTPS form value read-back + submit, and rejection of a public-HTTPS redirect that attempts to move the main frame to a different origin.
+- emulator acceptance proves ambiguous-selector rejection, interaction failure after in-memory session loss, explicit persisted-session resume, receipt-verified navigation, real HTTPS form value read-back + submit, and rejection of a real cross-origin link click that attempts to move the main frame away from the pinned origin.
 
 Still required before M13 completion:
 
