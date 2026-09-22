@@ -5253,6 +5253,43 @@ fn production_capability_probe(
         return Err("production browser.interact receipt verification failed".into());
     }
 
+    let pc_profile_root = capability_root.join("pc-pairs");
+    if pc_profile_root.exists() {
+        fs::remove_dir_all(&pc_profile_root)
+            .map_err(|error| format!("clear paired-PC probe profiles: {error}"))?;
+    }
+    if load_pc_pair_profile(capability_root, "workstation").is_ok() {
+        return Err("unpaired PC profile did not fail closed".into());
+    }
+
+    let mut pc_execute_descriptor = CapabilityDescriptor::new(
+        CapabilityId("pc.execute".into()),
+        1,
+        CapabilityDomain::Pc,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("pc.execute descriptor: {error:?}"))?;
+    let pc_execute_scope = AuthorityScope::new("pc.execute")
+        .map_err(|error| format!("pc.execute scope: {error:?}"))?;
+    pc_execute_descriptor
+        .required_scopes
+        .push(pc_execute_scope.clone());
+    pc_execute_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize pc.execute descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(pc_execute_scope.clone())
+        .permits(&pc_execute_descriptor)
+        .is_ok()
+    {
+        return Err("paired-PC execute was not denied without external-write authority".into());
+    }
+    let mut pc_execute_authority = AuthorityGrant::new().with_scope(pc_execute_scope);
+    pc_execute_authority.allow_external_write = true;
+    pc_execute_authority
+        .permits(&pc_execute_descriptor)
+        .map_err(|error| format!("paired-PC execute explicit authority rejected: {error:?}"))?;
+
     let relative = "m13/probe.txt";
     let write_action = TypedAction::FileWrite {
         path: relative.into(),
@@ -5662,7 +5699,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
@@ -6154,6 +6191,108 @@ mod tests {
             verifier.verify(&descriptor, action, &rejected),
             ActionVerification::Reject { .. }
         ));
+    }
+
+    #[test]
+    fn paired_pc_commands_require_external_approval_and_authenticated_evidence() {
+        let observe = governed_explicit_action_plan("observe pc workstation system")
+            .expect("observe plan")
+            .expect("observe action");
+        assert_eq!(
+            observe.payloads.get(&1),
+            Some(&TypedAction::PcObserve {
+                peer: "workstation".into(),
+                surface: "system".into(),
+            })
+        );
+        assert_eq!(observe.graph.actions[0].side_effect, SideEffectClass::ReadOnly);
+
+        let execute = governed_explicit_action_plan("execute pc workstation echo")
+            .expect("execute plan")
+            .expect("execute action");
+        assert_eq!(
+            execute.payloads.get(&1),
+            Some(&TypedAction::PcExecute {
+                peer: "workstation".into(),
+                program: "echo".into(),
+                args: Vec::new(),
+                working_dir: None,
+            })
+        );
+        let approval = external_write_approval(&execute)
+            .expect("approval policy")
+            .expect("approval required");
+        assert_eq!(approval.0, "pc.execute");
+
+        let descriptor = CapabilityDescriptor::new(
+            CapabilityId("pc.execute".into()),
+            1,
+            CapabilityDomain::Pc,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("descriptor");
+        let action = execute.payloads.get(&1).expect("action");
+        let accepted = ActionOutput {
+            summary: "remote process completed".into(),
+            value: ActionValue::Fields(BTreeMap::from([("exit_code".into(), "0".into())])),
+            evidence: vec![
+                "success=true".into(),
+                "pcf97-authenticated".into(),
+                "peer:workstation".into(),
+                "remote-capability:pc.process.execute".into(),
+            ],
+        };
+        let mut verifier = AndroidProductionVerifier;
+        assert_eq!(
+            verifier.verify(&descriptor, action, &accepted),
+            ActionVerification::Accept
+        );
+        let mut rejected = accepted;
+        rejected
+            .evidence
+            .retain(|item| item != "pcf97-authenticated");
+        assert!(matches!(
+            verifier.verify(&descriptor, action, &rejected),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
+    #[test]
+    fn paired_pc_profile_is_strictly_pinned_to_alias_and_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "ntd97-pc-profile-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let pairs = root.join("pc-pairs");
+        fs::create_dir_all(&pairs).expect("pairs");
+        let remote = PairedIdentity::from_seed([72; 32]);
+        let hex = |bytes: &[u8]| {
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        let profile = format!(
+            "NTD97_PC_PAIR_V1\npeer=workstation\naddress=127.0.0.1:45970\nlocal_seed={}\nremote_peer_id={}\nremote_verify_key={}\nEND",
+            hex(&[71; 32]),
+            hex(&remote.peer_id()),
+            hex(&remote.verify_key()),
+        );
+        fs::write(pairs.join("workstation.pcp97"), profile).expect("write profile");
+
+        let loaded = load_pc_pair_profile(&root, "workstation").expect("load profile");
+        assert_eq!(loaded.peer, "workstation");
+        assert_eq!(loaded.address, "127.0.0.1:45970".parse().expect("address"));
+        assert_eq!(loaded.local_seed, [71; 32]);
+        assert_eq!(loaded.remote_peer_id, remote.peer_id());
+        assert_eq!(loaded.remote_verify_key, remote.verify_key());
+        assert!(load_pc_pair_profile(&root, "other").is_err());
+
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
