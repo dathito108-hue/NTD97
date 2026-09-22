@@ -83,6 +83,30 @@ final class NtdDeviceAppPlatform {
         }
     }
 
+    static byte[] accessibilityInteract(
+            String packageName,
+            String operation,
+            String payload) {
+        try {
+            if (packageName == null || !PACKAGE_NAME.matcher(packageName).matches()) {
+                throw new IllegalArgumentException("invalid package name");
+            }
+            if (!"accessibility.click".equals(operation)
+                    && !"accessibility.set_text".equals(operation)) {
+                throw new IllegalArgumentException("unsupported accessibility operation");
+            }
+            if (payload == null || payload.isEmpty()) {
+                throw new IllegalArgumentException("accessibility payload is empty");
+            }
+            NtdAccessibilityService.perform(packageName, operation, payload);
+            String digest = sha256Hex(payload.getBytes(StandardCharsets.UTF_8));
+            return encodeSuccess(
+                    "accessibility:" + operation + ":" + packageName + ":" + digest);
+        } catch (Exception error) {
+            return encodeError(safeMessage(error));
+        }
+    }
+
     private static Context requireContext() {
         Context context = appContext;
         if (context == null) {
