@@ -33,7 +33,8 @@ pub use assistant::{
 };
 pub use assistant_actions::{
     build_verified_answer_prompt, collect_verified_action_evidence,
-    execute_verified_assistant_plan, parse_native_action_plan, AssistantActionPlan,
+    continue_verified_assistant_plan, execute_verified_assistant_plan, parse_native_action_plan,
+    AssistantActionPlan,
     AssistantActionRunError, AssistantPlanDecision, AssistantPlanError, VerifiedActionEvidence,
     VerifiedActionEvidenceError, VerifiedAssistantActionRun, NATIVE_ACTION_DIRECT,
     NATIVE_ACTION_PROTOCOL_V1,
