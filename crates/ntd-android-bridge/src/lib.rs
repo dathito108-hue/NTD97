@@ -6246,7 +6246,10 @@ fn production_capability_probe(
         Err(error) => error,
         Ok(_) => return Err("cross-origin browser link unexpectedly completed".into()),
     };
-    if !cross_origin_error.to_ascii_lowercase().contains("cross-origin") {
+    if !cross_origin_error
+        .to_ascii_lowercase()
+        .contains("cross-origin")
+    {
         return Err(format!(
             "cross-origin browser link failed for unexpected reason: {cross_origin_error}"
         ));
