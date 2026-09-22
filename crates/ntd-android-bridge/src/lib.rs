@@ -547,6 +547,26 @@ impl ActionVerifier for AndroidResourceVerifier {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct AndroidGovernedVerifier;
+
+impl ActionVerifier for AndroidGovernedVerifier {
+    fn verify(
+        &mut self,
+        descriptor: &CapabilityDescriptor,
+        action: &TypedAction,
+        output: &ActionOutput,
+    ) -> ActionVerification {
+        match descriptor.id.0.as_str() {
+            "device.observe" => AndroidResourceVerifier.verify(descriptor, action, output),
+            "web.fetch" => AndroidWebVerifier.verify(descriptor, action, output),
+            _ => ActionVerification::Reject {
+                reason: "Android governed verifier does not recognize capability".into(),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativeChatSessionStatus {
     Running,
@@ -1045,7 +1065,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         return Err("max_new_tokens must be greater than zero".into());
     }
 
-    let (model, history, prior_failure, resources) = {
+    let (model, history, prior_failure, resources, platform_web) = {
         let mut guard = lock_state();
         if guard.chat_submit_in_progress
             || guard
@@ -1065,6 +1085,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
             guard.conversation.turns().to_vec(),
             guard.conversation.prior_conversation_failure(),
             guard.resources,
+            guard.platform_web.clone(),
         )
     };
 
@@ -1073,6 +1094,7 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
         &history,
         prior_failure,
         resources,
+        platform_web,
         user_message,
         max_new_tokens,
     );
@@ -1298,45 +1320,85 @@ fn execute_android_verified_actions(
     user_message: &str,
     prompt_limit: usize,
     resources: ResourceSnapshot,
+    platform_web: Option<Arc<AndroidPlatformWebBridge>>,
     action_plan: &AssistantActionPlan,
 ) -> Result<(), String> {
-    if action_plan
-        .graph
-        .actions
-        .iter()
-        .any(|node| node.capability.0 != "device.observe")
-    {
+    if action_plan.graph.actions.iter().any(|node| {
+        !matches!(node.capability.0.as_str(), "device.observe" | "web.fetch")
+    }) {
         conversation
             .record_action_planner_status(task_id, "unsupported")
             .map_err(|error| format!("record unsupported action plan: {error:?}"))?;
-        return Err("model requested a capability without an Android chat adapter".into());
+        return Err("model requested a capability without an Android production adapter".into());
     }
 
     conversation
         .install_action_plan(task_id, action_plan)
         .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
 
+    let needs_device = action_plan
+        .graph
+        .actions
+        .iter()
+        .any(|node| node.capability.0 == "device.observe");
+    let needs_web = action_plan
+        .graph
+        .actions
+        .iter()
+        .any(|node| node.capability.0 == "web.fetch");
+
     let mut registry = CapabilityRegistry::new();
-    registry
-        .register(
-            CapabilityDescriptor::new(
-                CapabilityId("device.observe".into()),
-                1,
-                CapabilityDomain::Device,
-                SideEffectClass::ReadOnly,
+    if needs_device {
+        registry
+            .register(
+                CapabilityDescriptor::new(
+                    CapabilityId("device.observe".into()),
+                    1,
+                    CapabilityDomain::Device,
+                    SideEffectClass::ReadOnly,
+                )
+                .map_err(|error| format!("build device.observe descriptor: {error:?}"))?,
             )
-            .map_err(|error| format!("build device.observe descriptor: {error:?}"))?,
+            .map_err(|error| format!("register device.observe capability: {error:?}"))?;
+    }
+    if needs_web {
+        let mut descriptor = CapabilityDescriptor::new(
+            CapabilityId("web.fetch".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::ReadOnly,
         )
-        .map_err(|error| format!("register device.observe capability: {error:?}"))?;
+        .map_err(|error| format!("build web.fetch descriptor: {error:?}"))?;
+        descriptor.required_scopes.push(
+            AuthorityScope::new("network.read")
+                .map_err(|error| format!("build network.read scope: {error:?}"))?,
+        );
+        registry
+            .register(descriptor)
+            .map_err(|error| format!("register web.fetch capability: {error:?}"))?;
+    }
+
     let mut fabric = ActionFabric::new(registry);
-    fabric
-        .register_adapter(
-            CapabilityId("device.observe".into()),
-            AndroidResourceAdapter {
-                snapshot: resources,
-            },
-        )
-        .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+    if needs_device {
+        fabric
+            .register_adapter(
+                CapabilityId("device.observe".into()),
+                AndroidResourceAdapter {
+                    snapshot: resources,
+                },
+            )
+            .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+    }
+    if needs_web {
+        let bridge = platform_web
+            .ok_or_else(|| "Android web transport is unavailable".to_owned())?;
+        fabric
+            .register_adapter(
+                CapabilityId("web.fetch".into()),
+                AndroidWebFetchAdapter { bridge },
+            )
+            .map_err(|error| format!("register Android web adapter: {error:?}"))?;
+    }
 
     let task = conversation
         .cognition()
@@ -1345,12 +1407,19 @@ fn execute_android_verified_actions(
         .get(&task_id)
         .cloned()
         .ok_or_else(|| "model-grounded cognitive task disappeared".to_owned())?;
+    let mut authority = AuthorityGrant::new();
+    if needs_web {
+        authority = authority.with_scope(
+            AuthorityScope::new("network.read")
+                .map_err(|error| format!("grant network.read scope: {error:?}"))?,
+        );
+    }
     let run = execute_verified_assistant_plan(
         &mut fabric,
         &task,
         action_plan,
-        &AuthorityGrant::new(),
-        &mut AndroidResourceVerifier,
+        &authority,
+        &mut AndroidGovernedVerifier,
         user_message,
     )
     .map_err(|error| format!("execute verified Android action plan: {error:?}"))?;
@@ -1383,6 +1452,7 @@ fn submit_chat_reserved(
     history: &[ntd_runtime::ConversationTurn],
     prior_failure: bool,
     resources: ResourceSnapshot,
+    platform_web: Option<Arc<AndroidPlatformWebBridge>>,
     user_message: &str,
     max_new_tokens: usize,
 ) -> Result<u64, String> {
@@ -1502,6 +1572,7 @@ fn submit_chat_reserved(
                 user_message,
                 prompt_limit,
                 resources,
+                platform_web,
                 &action_plan,
             )?;
         }
