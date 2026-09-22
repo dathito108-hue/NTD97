@@ -1590,9 +1590,8 @@ impl ActionVerifier for AndroidProductionVerifier {
                         })
                     })
                     && output.evidence.iter().any(|item| {
-                        field_hash.is_some_and(|hash| {
-                            item.strip_prefix("sha256:") == Some(hash.as_str())
-                        })
+                        field_hash
+                            .is_some_and(|hash| item.strip_prefix("sha256:") == Some(hash.as_str()))
                     })
                     && output.evidence.iter().any(|item| {
                         field_bytes.is_some_and(|bytes| {
