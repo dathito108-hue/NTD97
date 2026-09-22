@@ -62,6 +62,7 @@ const CHAT_STATUS_WAITING_APPROVAL: i32 = 5;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
 const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
 const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
+const PLATFORM_BROWSER_PROTOCOL_VERSION: u8 = 1;
 const PLATFORM_DEVICE_APP_PROTOCOL_VERSION: u8 = 1;
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
@@ -254,6 +255,71 @@ struct AndroidWebFetchResult {
     body: Vec<u8>,
 }
 
+struct AndroidWebSearchAdapter;
+
+impl CapabilityAdapter for AndroidWebSearchAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::WebSearch { query, max_results } = action else {
+            return Err("Android web search adapter only supports web.search".into());
+        };
+        let result = android_web_search(query, *max_results)?;
+        let text = String::from_utf8(result.body)
+            .map_err(|_| "web.search response is not valid UTF-8 text".to_owned())?;
+        if text.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("web.search text exceeds native evidence limit".into());
+        }
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified HTTPS web search status {}", result.status),
+                value: ActionValue::Text(text),
+                evidence: vec![
+                    "android-https-search".into(),
+                    "provider-boundary:runtime-configured".into(),
+                    format!("status:{}", result.status),
+                    format!("url:{}", result.final_url),
+                    format!("max-results:{max_results}"),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+fn android_web_search(query: &str, max_results: u16) -> Result<AndroidWebFetchResult, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android platform thread: {error}"))?;
+    let jquery = env
+        .new_string(query)
+        .map_err(|error| format!("encode web.search query for Android: {error}"))?;
+    let jquery_object = JObject::from(jquery);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdWebPlatform",
+            "search",
+            "(Ljava/lang/String;I)[B",
+            &[
+                JValue::Object(&jquery_object),
+                JValue::Int(i32::from(max_results)),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android WebSearch platform boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android WebSearch platform response: {error}"))?;
+    decode_android_web_fetch_result(&bytes)
+}
+
 struct AndroidWebFetchAdapter;
 
 impl CapabilityAdapter for AndroidWebFetchAdapter {
@@ -344,6 +410,185 @@ fn decode_android_web_fetch_result(bytes: &[u8]) -> Result<AndroidWebFetchResult
         content_type,
         body,
     })
+}
+
+struct AndroidBrowserObserveAdapter;
+
+impl CapabilityAdapter for AndroidBrowserObserveAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::BrowserObserve { target } = action else {
+            return Err("Android browser observe adapter received wrong action".into());
+        };
+        let observation = android_browser_observe(target)?;
+        if observation.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("browser observation exceeds native evidence limit".into());
+        }
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: "verified Android browser observation".into(),
+                value: ActionValue::Text(observation),
+                evidence: vec![
+                    "android-webview-browser".into(),
+                    "operation:observe".into(),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+struct AndroidBrowserInteractAdapter;
+
+impl CapabilityAdapter for AndroidBrowserInteractAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::BrowserInteract {
+            target,
+            operation,
+            value,
+        } = action
+        else {
+            return Err("Android browser interaction adapter received wrong action".into());
+        };
+        if operation != "click" && operation != "set_value" {
+            return Err("unsupported Android browser interaction operation".into());
+        }
+        if operation == "click" && value.is_some() {
+            return Err("browser click must not carry a value".into());
+        }
+        if operation == "set_value" && value.as_ref().is_none_or(String::is_empty) {
+            return Err("browser set_value requires a value".into());
+        }
+
+        let result = android_browser_interact(target, operation, value.as_deref())?;
+        if result.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("browser interaction receipt exceeds native evidence limit".into());
+        }
+        let receipt = browser_receipt(&result)?;
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified Android browser {operation} interaction"),
+                value: ActionValue::Fields(BTreeMap::from([
+                    ("operation".into(), operation.clone()),
+                    ("target".into(), target.clone()),
+                    ("receipt".into(), receipt.clone()),
+                    ("platform".into(), result),
+                ])),
+                evidence: vec![
+                    "android-webview-browser".into(),
+                    format!("operation:{operation}"),
+                    format!("receipt:{receipt}"),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+fn browser_receipt(result: &str) -> Result<String, String> {
+    let receipt = result
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("receipt="))
+        .ok_or_else(|| "browser interaction is missing a platform receipt".to_owned())?;
+    if !receipt.starts_with("android-webview:") || receipt.len() > 256 {
+        return Err("browser interaction platform receipt is invalid".into());
+    }
+    Ok(receipt.to_owned())
+}
+
+fn android_browser_observe(target: &str) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android browser thread: {error}"))?;
+    let jtarget = env
+        .new_string(target)
+        .map_err(|error| format!("encode browser observe target: {error}"))?;
+    let jtarget_object = JObject::from(jtarget);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdBrowserPlatform",
+            "observe",
+            "(Ljava/lang/String;)[B",
+            &[JValue::Object(&jtarget_object)],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android browser observe boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android browser observe response: {error}"))?;
+    decode_android_browser_result(&bytes)
+}
+
+fn android_browser_interact(
+    target: &str,
+    operation: &str,
+    value: Option<&str>,
+) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android browser thread: {error}"))?;
+    let jtarget = env
+        .new_string(target)
+        .map_err(|error| format!("encode browser interaction target: {error}"))?;
+    let joperation = env
+        .new_string(operation)
+        .map_err(|error| format!("encode browser interaction operation: {error}"))?;
+    let jvalue = env
+        .new_string(value.unwrap_or_default())
+        .map_err(|error| format!("encode browser interaction value: {error}"))?;
+    let jtarget_object = JObject::from(jtarget);
+    let joperation_object = JObject::from(joperation);
+    let jvalue_object = JObject::from(jvalue);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdBrowserPlatform",
+            "interact",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)[B",
+            &[
+                JValue::Object(&jtarget_object),
+                JValue::Object(&joperation_object),
+                JValue::Object(&jvalue_object),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android browser interaction boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android browser interaction response: {error}"))?;
+    decode_android_browser_result(&bytes)
+}
+
+fn decode_android_browser_result(bytes: &[u8]) -> Result<String, String> {
+    let mut cursor = PlatformCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_BROWSER_PROTOCOL_VERSION {
+        return Err("unsupported Android browser platform protocol".into());
+    }
+    let success = cursor.u8()?;
+    let message = cursor.string()?;
+    if !cursor.finished() || message.len() > MAX_PLATFORM_TEXT_BYTES {
+        return Err("invalid Android browser response framing".into());
+    }
+    match success {
+        1 if !message.trim().is_empty() => Ok(message),
+        0 => Err(format!("Android browser operation failed: {message}")),
+        _ => Err("invalid Android browser platform status".into()),
+    }
 }
 
 fn android_platform_receipt(method: &str, value: &str) -> Result<String, String> {
