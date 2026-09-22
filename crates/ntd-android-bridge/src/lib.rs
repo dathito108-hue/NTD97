@@ -1117,9 +1117,10 @@ fn run_constrained_web_planner(
         if !score.is_finite() {
             return Ok(NativeActionPlanningOutcome::Invalid);
         }
-        let replace = best
-            .as_ref()
-            .is_none_or(|(_, best_score)| score > *best_score);
+        let replace = match best.as_ref() {
+            None => true,
+            Some((_, best_score)) => score > *best_score,
+        };
         if replace {
             best = Some((candidate, score));
         }
@@ -1404,9 +1405,15 @@ fn submit_chat_reserved(
         .record_reasoning_cycle_report(task_id, &report)
         .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
 
-    let planner_outcome = match governed_device_surfaces(user_message) {
-        Some(surfaces) => run_constrained_device_planner(model, user_message, &surfaces)?,
-        None => run_native_action_planner(model, user_message)?,
+    let planner_outcome = if let Some(surfaces) = governed_device_surfaces(user_message) {
+        run_constrained_device_planner(model, user_message, &surfaces)?
+    } else {
+        let web_candidates = governed_web_candidates(user_message);
+        if web_candidates.is_empty() {
+            run_native_action_planner(model, user_message)?
+        } else {
+            run_constrained_web_planner(model, user_message, &web_candidates)?
+        }
     };
     match planner_outcome {
         NativeActionPlanningOutcome::Direct => {
