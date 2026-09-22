@@ -52,11 +52,13 @@ const CHAT_EVENT_TOKEN: u8 = 1;
 const CHAT_EVENT_COMPLETE: u8 = 2;
 const CHAT_EVENT_CANCELLED: u8 = 3;
 const CHAT_EVENT_ERROR: u8 = 4;
+const CHAT_EVENT_APPROVAL_REQUIRED: u8 = 5;
 const CHAT_STATUS_MISSING: i32 = 0;
 const CHAT_STATUS_RUNNING: i32 = 1;
 const CHAT_STATUS_COMPLETE: i32 = 2;
 const CHAT_STATUS_CANCELLED: i32 = 3;
 const CHAT_STATUS_FAILED: i32 = 4;
+const CHAT_STATUS_WAITING_APPROVAL: i32 = 5;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
 const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
 const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
@@ -1030,6 +1032,7 @@ impl<'a> PlatformCursor<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativeChatSessionStatus {
     Running,
+    WaitingApproval,
     Complete,
     Cancelled,
     Failed,
@@ -2162,6 +2165,7 @@ fn chat_status(request_id: u64) -> i32 {
     };
     match session.status {
         NativeChatSessionStatus::Running => CHAT_STATUS_RUNNING,
+        NativeChatSessionStatus::WaitingApproval => CHAT_STATUS_WAITING_APPROVAL,
         NativeChatSessionStatus::Complete => CHAT_STATUS_COMPLETE,
         NativeChatSessionStatus::Cancelled => CHAT_STATUS_CANCELLED,
         NativeChatSessionStatus::Failed => CHAT_STATUS_FAILED,
@@ -2343,6 +2347,16 @@ fn terminal_chat_event(request_id: u64) -> Option<Vec<u8>> {
 
     match session.status {
         NativeChatSessionStatus::Running => None,
+        NativeChatSessionStatus::WaitingApproval => {
+            let (capability, rationale, _) = guard
+                .conversation
+                .chat_approval_for_task(session.task_id)?;
+            Some(encode_chat_event(
+                CHAT_EVENT_APPROVAL_REQUIRED,
+                None,
+                &format!("{capability}\n{rationale}"),
+            ))
+        }
         NativeChatSessionStatus::Complete => Some(encode_chat_event(CHAT_EVENT_COMPLETE, None, "")),
         NativeChatSessionStatus::Cancelled => {
             Some(encode_chat_event(CHAT_EVENT_CANCELLED, None, ""))
