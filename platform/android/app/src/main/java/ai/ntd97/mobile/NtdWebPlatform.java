@@ -129,7 +129,7 @@ final class NtdWebPlatform {
                 throw new IOException("web search endpoint is not configured");
             }
             String encodedQuery = URLEncoder
-                    .encode(query.trim(), StandardCharsets.UTF_8)
+                    .encode(query.trim(), StandardCharsets.UTF_8.name())
                     .replace("+", "%20");
             String rendered = template
                     .replace("{query}", encodedQuery)
