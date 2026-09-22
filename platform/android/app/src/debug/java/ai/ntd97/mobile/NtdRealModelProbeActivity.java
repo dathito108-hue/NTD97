@@ -47,6 +47,9 @@ public final class NtdRealModelProbeActivity extends Activity {
             result = result + new String(
                     NtdNativeRuntimeHost.runWebCapabilityProbe(),
                     StandardCharsets.UTF_8);
+            result = result + new String(
+                    NtdNativeRuntimeHost.runWebCapabilityProbe(),
+                    StandardCharsets.UTF_8);
             result = result + runChatApiProbe();
         } catch (Exception error) {
             String message = error.getMessage();
