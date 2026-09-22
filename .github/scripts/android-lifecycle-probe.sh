@@ -98,6 +98,7 @@ for REQUIRED in \
   web_private_block=ok \
   web_search_unconfigured_block=ok \
   web_search_config=ok \
+  web_search_credential_storage=ok \
   web_search_credential_header=ok \
   web_search_credential_redirect_block=ok \
   web_search_opensearch=ok \
