@@ -26,7 +26,9 @@ public final class NtdRealModelProbeActivity extends Activity {
     private String pendingResult;
     private boolean productionProbeStarted;
     private boolean productionCapabilityProbeStarted;
+    private int chatFocusAttempts;
     private int productionFocusAttempts;
+    private boolean chatProbeComplete;
     private String externalApprovalDiagnostic = "not-run";
     private String uploadContinuityDiagnostic = "not-run";
 
@@ -73,12 +75,46 @@ public final class NtdRealModelProbeActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (productionProbeStarted || pendingResult == null) {
+        scheduleChatProbeWhenFocused();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus || pendingResult == null || isFinishing()) {
             return;
         }
+        if (!productionProbeStarted) {
+            scheduleChatProbeWhenFocused();
+        } else if (chatProbeComplete && !productionCapabilityProbeStarted) {
+            scheduleProductionCapabilityProbe();
+        }
+    }
 
-        productionProbeStarted = true;
-        getWindow().getDecorView().postDelayed(this::runProductionProbeAndFinish, 300L);
+    private void scheduleChatProbeWhenFocused() {
+        if (productionProbeStarted || pendingResult == null || isFinishing()) {
+            return;
+        }
+        if (hasWindowFocus()) {
+            productionProbeStarted = true;
+            getWindow().getDecorView().postDelayed(this::runProductionProbeAndFinish, 300L);
+            return;
+        }
+        chatFocusAttempts++;
+        if (chatFocusAttempts > MAX_PRODUCTION_FOCUS_ATTEMPTS) {
+            writeResult(
+                    pendingResult
+                            + "chat_submit=failed\n"
+                            + "chat_external_approval=failed\n"
+                            + "chat_external_approval_detail=initial-window-focus\n"
+                            + "chat_upload_continuity=failed\n"
+                            + "chat_upload_continuity_detail=initial-window-focus\n");
+            finish();
+            return;
+        }
+        getWindow().getDecorView().postDelayed(
+                this::scheduleChatProbeWhenFocused,
+                PRODUCTION_FOCUS_RETRY_MS);
     }
 
     private void runProductionProbeAndFinish() {
@@ -105,6 +141,7 @@ public final class NtdRealModelProbeActivity extends Activity {
             String finalResult = result;
             runOnUiThread(() -> {
                 pendingResult = finalResult;
+                chatProbeComplete = true;
                 restoreProbeForegroundAndSchedule();
             });
         }, "ntd97-chat-acceptance");
