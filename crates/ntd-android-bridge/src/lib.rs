@@ -4433,6 +4433,94 @@ mod tests {
     }
 
     #[test]
+    fn governed_explicit_web_and_browser_commands_materialize_canonical_actions() {
+        let search = governed_explicit_action_plan("search web for NTD97 mobile")
+            .expect("search plan")
+            .expect("search action");
+        assert!(matches!(
+            search.payloads.get(&1),
+            Some(TypedAction::WebSearch {
+                query,
+                max_results: 5
+            }) if query == "NTD97 mobile"
+        ));
+
+        let observe = governed_explicit_action_plan("observe browser https://example.com/")
+            .expect("observe plan")
+            .expect("observe action");
+        assert_eq!(
+            observe.payloads.get(&1),
+            Some(&TypedAction::BrowserObserve {
+                target: "https://example.com/".into(),
+            })
+        );
+
+        let click = governed_explicit_action_plan("browser click body")
+            .expect("click plan")
+            .expect("click action");
+        assert_eq!(
+            click.payloads.get(&1),
+            Some(&TypedAction::BrowserInteract {
+                target: "body".into(),
+                operation: "click".into(),
+                value: None,
+            })
+        );
+        assert_eq!(
+            click.graph.actions[0].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+    }
+
+    #[test]
+    fn browser_interaction_requires_chat_approval_and_receipt_evidence() {
+        let plan = governed_explicit_action_plan("browser click body")
+            .expect("click plan")
+            .expect("click action");
+        let approval = external_write_approval(&plan)
+            .expect("approval policy")
+            .expect("approval requirement");
+        assert_eq!(approval.0, "browser.interact");
+        assert!(approval.1.contains("click"));
+
+        let descriptor = CapabilityDescriptor::new(
+            CapabilityId("browser.interact".into()),
+            1,
+            CapabilityDomain::Browser,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("browser descriptor");
+        let action = plan.payloads.get(&1).expect("browser action");
+        let accepted = ActionOutput {
+            summary: "verified browser click".into(),
+            value: ActionValue::None,
+            evidence: vec![
+                "android-webview-browser".into(),
+                "operation:click".into(),
+                "receipt:android-webview:click:1".into(),
+            ],
+        };
+        let mut verifier = AndroidProductionVerifier;
+        assert_eq!(
+            verifier.verify(&descriptor, action, &accepted),
+            ActionVerification::Accept
+        );
+
+        let rejected = ActionOutput {
+            summary: "browser click claimed".into(),
+            value: ActionValue::None,
+            evidence: vec![
+                "android-webview-browser".into(),
+                "operation:click".into(),
+            ],
+        };
+        assert!(matches!(
+            verifier.verify(&descriptor, action, &rejected),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
+    #[test]
     fn external_write_capabilities_require_scope_and_explicit_write_authority() {
         let clipboard_scope = AuthorityScope::new("device.clipboard.write").expect("scope");
         let mut clipboard = CapabilityDescriptor::new(
