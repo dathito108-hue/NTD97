@@ -348,7 +348,7 @@ Acceptance result:
 
 Exit: complete. At least one real supported external model can be imported once, converted to signed NTD97-native NCC97 assets, then loaded and used for local text generation on Android without the source model runtime or a hosted AI backend.
 
-## M12 — Major Block L: End-to-End Native Assistant Loop
+## M12 — Major Block L: End-to-End Native Assistant Loop — complete
 
 Goal: make the Android product use the real native intelligence path rather than lifecycle/test harnesses.
 
@@ -393,12 +393,21 @@ Current implementation:
 - verified-action synthesis provenance is persisted inside NCS97 and exposed through the production JNI chat contract;
 - the final M12 Android acceptance turn requires a current-battery request to produce a non-empty verified TaskGraph, committed action evidence, verified synthesis provenance and a completed native response in the same request.
 
-Still required before M12 completion:
+Acceptance result:
 
-- obtain green real-model Android evidence for the governed end-to-end acceptance turn on the canonical branch;
-- broader production Android adapters remain future task-surface expansion; M12's governed-action acceptance is intentionally scoped to the verified read-only `device.observe` path.
+- real-model Android governed turn PASS on the canonical native stack;
+- constrained native-logit planner status = actions;
+- non-empty TaskGraph action count = 1;
+- committed verified action count = 1;
+- verified synthesis provenance = ready;
+- native synthesized response streamed 4 tokens and terminated with COMPLETE;
+- final request status = COMPLETE;
+- adaptive reasoning loop, sovereign memory recall, NCS97 restore, cancellation and lifecycle/reboot regression remained green in the same emulator acceptance run;
+- no external AI backend or source model runtime participates in the Android assistant loop after native package creation.
 
-Exit: the canonical APK can hold a useful local conversation, reason through the native model, remember relevant state and resume interrupted work without any external AI backend.
+Broader production Android adapters remain future task-surface expansion rather than an M12 exit blocker; M12's governed-action acceptance is intentionally scoped to the verified read-only `device.observe` path.
+
+Exit: complete. The canonical APK can hold a useful local conversation, reason through the native model, remember relevant state, execute a governed verified local action, synthesize a response from verified evidence and resume interrupted work without any external AI backend.
 
 ## M13 — Major Block M: Real-World Capability Adapters
 
