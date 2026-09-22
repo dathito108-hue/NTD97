@@ -138,6 +138,18 @@ public final class NtdRealModelProbeActivity extends Activity {
         Thread probeThread = new Thread(() -> {
             String result = prefix;
             try {
+                if (!NtdWebPlatform.configureSearchEndpoint(this, "")) {
+                    throw new IOException("failed to clear WebSearch endpoint");
+                }
+                byte[] unconfiguredSearch =
+                        NtdWebPlatform.search("NTD97 unconfigured boundary", 5);
+                if (unconfiguredSearch.length < 2
+                        || unconfiguredSearch[0] != 1
+                        || unconfiguredSearch[1] != 0) {
+                    throw new IOException("unconfigured WebSearch did not fail closed");
+                }
+                result = result + "web_search_unconfigured_block=ok\n";
+
                 boolean searchConfigured = NtdWebPlatform.configureSearchEndpoint(
                         this,
                         "https://example.com/?q={query}&n={count}");
