@@ -142,8 +142,19 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     }
 
     @Override
+    public boolean resolveChatApproval(long requestId, boolean approved) {
+        return nativeResolveChatApproval(requestId, approved);
+    }
+
+    @Override
     public int chatStatus(long requestId) {
         return nativeChatStatus(requestId);
+    }
+
+    @Override
+    public String chatLastError() {
+        byte[] encoded = nativeChatLastError();
+        return encoded == null ? "" : new String(encoded, StandardCharsets.UTF_8);
     }
 
     @Override
@@ -369,7 +380,11 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
 
     private static native boolean nativeCancelChat(long requestId);
 
+    private static native boolean nativeResolveChatApproval(long requestId, boolean approved);
+
     private static native int nativeChatStatus(long requestId);
+
+    private static native byte[] nativeChatLastError();
 
     private static native int nativeChatReasoningBudget(long requestId);
 

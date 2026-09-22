@@ -52,11 +52,13 @@ const CHAT_EVENT_TOKEN: u8 = 1;
 const CHAT_EVENT_COMPLETE: u8 = 2;
 const CHAT_EVENT_CANCELLED: u8 = 3;
 const CHAT_EVENT_ERROR: u8 = 4;
+const CHAT_EVENT_APPROVAL_REQUIRED: u8 = 5;
 const CHAT_STATUS_MISSING: i32 = 0;
 const CHAT_STATUS_RUNNING: i32 = 1;
 const CHAT_STATUS_COMPLETE: i32 = 2;
 const CHAT_STATUS_CANCELLED: i32 = 3;
 const CHAT_STATUS_FAILED: i32 = 4;
+const CHAT_STATUS_WAITING_APPROVAL: i32 = 5;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
 const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
 const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
@@ -1030,6 +1032,7 @@ impl<'a> PlatformCursor<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativeChatSessionStatus {
     Running,
+    WaitingApproval,
     Complete,
     Cancelled,
     Failed,
@@ -1049,6 +1052,7 @@ struct NativeState {
     chat_model: Option<Arc<NativeChatModel>>,
     chat_session: Option<NativeChatSession>,
     chat_submit_in_progress: bool,
+    chat_last_error: String,
     conversation: SovereignConversationState,
     next_chat_request_id: u64,
 }
@@ -1068,6 +1072,7 @@ impl Default for NativeState {
             chat_model: None,
             chat_session: None,
             chat_submit_in_progress: false,
+            chat_last_error: String::new(),
             conversation: SovereignConversationState::new(CognitiveIdentity(*b"NTD97-ASSISTANT1")),
             next_chat_request_id: 1,
         }
@@ -1527,6 +1532,13 @@ fn open_chat_model(
     Ok(())
 }
 
+fn chat_session_active(status: NativeChatSessionStatus) -> bool {
+    matches!(
+        status,
+        NativeChatSessionStatus::Running | NativeChatSessionStatus::WaitingApproval
+    )
+}
+
 fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String> {
     if max_new_tokens == 0 {
         return Err("max_new_tokens must be greater than zero".into());
@@ -1538,9 +1550,27 @@ fn submit_chat(user_message: &str, max_new_tokens: usize) -> Result<u64, String>
             || guard
                 .chat_session
                 .as_ref()
-                .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+                .is_some_and(|session| chat_session_active(session.status))
         {
-            return Err("another native chat request is still running".into());
+            let session = guard
+                .chat_session
+                .as_ref()
+                .map(|session| {
+                    format!(
+                        "request={} task={} status={:?}",
+                        session.request_id, session.task_id, session.status
+                    )
+                })
+                .unwrap_or_else(|| "none".to_owned());
+            let active_task = guard
+                .conversation
+                .active()
+                .map(|active| active.task_id.to_string())
+                .unwrap_or_else(|| "none".to_owned());
+            return Err(format!(
+                "another native chat request is still running: submit_in_progress={} session={} active_task={}",
+                guard.chat_submit_in_progress, session, active_task
+            ));
         }
         let model = guard
             .chat_model
@@ -1778,21 +1808,130 @@ fn run_constrained_device_planner(
     })
 }
 
-fn execute_android_verified_actions(
-    conversation: &mut SovereignConversationState,
-    model: &NativeChatModel,
-    task_id: u64,
+fn governed_external_action_plan(
     user_message: &str,
+) -> Result<Option<AssistantActionPlan>, String> {
+    let trimmed = user_message.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    let canonical = if lower.starts_with("set clipboard to ") {
+        let value = trimmed
+            .get("set clipboard to ".len()..)
+            .ok_or_else(|| "clipboard command boundary failed".to_owned())?;
+        if value.trim().is_empty()
+            || value
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|device.interact|clipboard\tset_text\t{value}\nEND"
+        ))
+    } else if lower.starts_with("open app ") {
+        let package = trimmed
+            .get("open app ".len()..)
+            .ok_or_else(|| "app command boundary failed".to_owned())?;
+        if package.trim().is_empty()
+            || package
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t' | ' '))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|app.action|{package}\tlaunch\nEND"
+        ))
+    } else {
+        None
+    };
+
+    let Some(canonical) = canonical else {
+        return Ok(None);
+    };
+    Ok(match parse_native_action_plan(&canonical) {
+        Ok(AssistantPlanDecision::Actions(plan)) => Some(plan),
+        _ => None,
+    })
+}
+
+fn external_write_approval(
+    action_plan: &AssistantActionPlan,
+) -> Result<Option<(String, String)>, String> {
+    let mut capabilities = std::collections::BTreeSet::new();
+    let mut rationales = Vec::new();
+
+    for node in &action_plan.graph.actions {
+        if node.side_effect != SideEffectClass::ExternalWrite {
+            continue;
+        }
+        let action = action_plan
+            .payloads
+            .get(&node.id)
+            .ok_or_else(|| "external-write action payload is missing".to_owned())?;
+        match action {
+            TypedAction::DeviceInteract {
+                surface,
+                operation,
+                argument,
+            } if surface == "clipboard"
+                && operation == "set_text"
+                && argument.as_ref().is_some_and(|value| !value.is_empty()) =>
+            {
+                capabilities.insert("device.interact".to_owned());
+                rationales.push("write text to the Android clipboard".to_owned());
+            }
+            TypedAction::AppAction {
+                app,
+                action,
+                payload,
+            } if action == "launch" && payload.is_empty() && !app.trim().is_empty() => {
+                capabilities.insert("app.action".to_owned());
+                rationales.push(format!("launch Android app package {app}"));
+            }
+            _ => return Err("unsupported external-write action requested".into()),
+        }
+    }
+
+    if capabilities.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((
+        capabilities.into_iter().collect::<Vec<_>>().join(","),
+        rationales.join("; "),
+    )))
+}
+
+struct AndroidActionExecutionContext<'a> {
+    model: &'a NativeChatModel,
+    task_id: u64,
+    user_message: &'a str,
     prompt_limit: usize,
     resources: ResourceSnapshot,
+    external_approved: bool,
+}
+
+fn execute_android_verified_actions(
+    conversation: &mut SovereignConversationState,
     action_plan: &AssistantActionPlan,
+    context: AndroidActionExecutionContext<'_>,
 ) -> Result<(), String> {
+    let AndroidActionExecutionContext {
+        model,
+        task_id,
+        user_message,
+        prompt_limit,
+        resources,
+        external_approved,
+    } = context;
     let supported = [
         "device.observe",
         "web.fetch",
         "file.read",
         "file.write",
         "artifact.download",
+        "device.interact",
+        "app.action",
     ];
     if action_plan
         .graph
@@ -1805,10 +1944,6 @@ fn execute_android_verified_actions(
             .map_err(|error| format!("record unsupported action plan: {error:?}"))?;
         return Err("model requested a capability without a production Android adapter".into());
     }
-
-    conversation
-        .install_action_plan(task_id, action_plan)
-        .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
 
     let mut registry = CapabilityRegistry::new();
     let mut fabric_capabilities = std::collections::BTreeSet::new();
@@ -1891,6 +2026,36 @@ fn execute_android_verified_actions(
                 }
                 descriptor
             }
+            "device.interact" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("device.interact".into()),
+                    1,
+                    CapabilityDomain::Device,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("device.clipboard.write")
+                            .map_err(|error| format!("clipboard scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "app.action" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("app.action".into()),
+                    1,
+                    CapabilityDomain::App,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("app.launch")
+                            .map_err(|error| format!("app scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
             _ => unreachable!("unsupported capabilities rejected above"),
         }
         .map_err(|error| format!("build Android capability descriptor: {error:?}"))?;
@@ -1939,8 +2104,21 @@ fn execute_android_verified_actions(
             )
             .map_err(|error| format!("register artifact download adapter: {error:?}"))?;
     }
+    if fabric_capabilities.contains("device.interact") {
+        fabric
+            .register_adapter(
+                CapabilityId("device.interact".into()),
+                AndroidDeviceInteractAdapter,
+            )
+            .map_err(|error| format!("register device interaction adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("app.action") {
+        fabric
+            .register_adapter(CapabilityId("app.action".into()), AndroidAppActionAdapter)
+            .map_err(|error| format!("register app action adapter: {error:?}"))?;
+    }
 
-    let authority = AuthorityGrant::new()
+    let mut authority = AuthorityGrant::new()
         .with_scope(
             AuthorityScope::new("network.read")
                 .map_err(|error| format!("network authority scope: {error:?}"))?,
@@ -1949,6 +2127,29 @@ fn execute_android_verified_actions(
             AuthorityScope::new("file.app_private")
                 .map_err(|error| format!("file authority scope: {error:?}"))?,
         );
+    if action_plan
+        .graph
+        .actions
+        .iter()
+        .any(|node| node.side_effect == SideEffectClass::ExternalWrite)
+    {
+        if !external_approved {
+            return Err("external-write action requires explicit chat approval".into());
+        }
+        authority.allow_external_write = true;
+        if fabric_capabilities.contains("device.interact") {
+            authority = authority.with_scope(
+                AuthorityScope::new("device.clipboard.write")
+                    .map_err(|error| format!("clipboard authority scope: {error:?}"))?,
+            );
+        }
+        if fabric_capabilities.contains("app.action") {
+            authority = authority.with_scope(
+                AuthorityScope::new("app.launch")
+                    .map_err(|error| format!("app authority scope: {error:?}"))?,
+            );
+        }
+    }
 
     let task = conversation
         .cognition()
@@ -2029,7 +2230,7 @@ fn submit_chat_reserved(
         if guard
             .chat_session
             .as_ref()
-            .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+            .is_some_and(|session| chat_session_active(session.status))
         {
             return Err("another native chat request started during preflight".into());
         }
@@ -2085,10 +2286,15 @@ fn submit_chat_reserved(
         .record_reasoning_cycle_report(task_id, &report)
         .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
 
-    let planner_outcome = match governed_device_surfaces(user_message) {
-        Some(surfaces) => run_constrained_device_planner(model, user_message, &surfaces)?,
-        None => run_native_action_planner(model, user_message)?,
+    let planner_outcome = if let Some(plan) = governed_external_action_plan(user_message)? {
+        NativeActionPlanningOutcome::Actions(plan)
+    } else {
+        match governed_device_surfaces(user_message) {
+            Some(surfaces) => run_constrained_device_planner(model, user_message, &surfaces)?,
+            None => run_native_action_planner(model, user_message)?,
+        }
     };
+    let mut session_status = NativeChatSessionStatus::Running;
     match planner_outcome {
         NativeActionPlanningOutcome::Direct => {
             conversation
@@ -2107,15 +2313,34 @@ fn submit_chat_reserved(
                 .map_err(|error| format!("record invalid verified action count: {error:?}"))?;
         }
         NativeActionPlanningOutcome::Actions(action_plan) => {
-            execute_android_verified_actions(
-                &mut conversation,
-                model,
-                task_id,
-                user_message,
-                prompt_limit,
-                resources,
-                &action_plan,
-            )?;
+            conversation
+                .install_action_plan(task_id, &action_plan)
+                .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
+            if let Some((capability, rationale)) = external_write_approval(&action_plan)? {
+                conversation
+                    .record_chat_approval(task_id, &capability, &rationale, "pending")
+                    .map_err(|error| format!("record pending chat approval: {error:?}"))?;
+                conversation
+                    .record_action_planner_status(task_id, "actions")
+                    .map_err(|error| format!("record action planner status: {error:?}"))?;
+                conversation
+                    .record_verified_action_count(task_id, 0)
+                    .map_err(|error| format!("record pending verified action count: {error:?}"))?;
+                session_status = NativeChatSessionStatus::WaitingApproval;
+            } else {
+                execute_android_verified_actions(
+                    &mut conversation,
+                    &action_plan,
+                    AndroidActionExecutionContext {
+                        model,
+                        task_id,
+                        user_message,
+                        prompt_limit,
+                        resources,
+                        external_approved: false,
+                    },
+                )?;
+            }
         }
     }
 
@@ -2131,7 +2356,7 @@ fn submit_chat_reserved(
         || guard
             .chat_session
             .as_ref()
-            .is_some_and(|session| session.status == NativeChatSessionStatus::Running)
+            .is_some_and(|session| chat_session_active(session.status))
     {
         return Err("sovereign conversation changed during native reasoning".into());
     }
@@ -2146,9 +2371,169 @@ fn submit_chat_reserved(
         request_id,
         task_id,
         cancel: Arc::new(AtomicBool::new(false)),
-        status: NativeChatSessionStatus::Running,
+        status: session_status,
     });
     Ok(request_id)
+}
+
+fn resolve_chat_approval(request_id: u64, approved: bool) -> Result<bool, String> {
+    let (task_id, model, resources, mut conversation) = {
+        let guard = lock_state();
+        let session = guard
+            .chat_session
+            .as_ref()
+            .filter(|session| {
+                session.request_id == request_id
+                    && session.status == NativeChatSessionStatus::WaitingApproval
+            })
+            .ok_or_else(|| "chat request is not waiting for approval".to_owned())?;
+        let model = guard
+            .chat_model
+            .clone()
+            .ok_or_else(|| "native chat model is not loaded".to_owned())?;
+        (
+            session.task_id,
+            model,
+            guard.resources,
+            guard.conversation.clone(),
+        )
+    };
+
+    let (_, _, approval_status) = conversation
+        .chat_approval_for_task(task_id)
+        .ok_or_else(|| "pending chat approval state is missing".to_owned())?;
+    if !matches!(
+        approval_status,
+        "pending" | "reconfirm" | "approved-executing"
+    ) {
+        return Err("chat approval is no longer pending".into());
+    }
+
+    if !approved {
+        conversation
+            .set_chat_approval_status(task_id, "denied")
+            .map_err(|error| format!("record denied chat approval: {error:?}"))?;
+        conversation
+            .cancel_turn(task_id, "user denied external-write approval")
+            .map_err(|error| format!("cancel denied chat task: {error:?}"))?;
+
+        let mut guard = lock_state();
+        if !guard
+            .chat_session
+            .as_ref()
+            .is_some_and(|session| session.request_id == request_id)
+        {
+            return Err("chat request changed during denial".into());
+        }
+        guard.conversation = conversation;
+        if let Some(session) = guard
+            .chat_session
+            .as_mut()
+            .filter(|session| session.request_id == request_id)
+        {
+            session.status = NativeChatSessionStatus::Cancelled;
+        }
+        return Ok(true);
+    }
+
+    conversation
+        .set_chat_approval_status(task_id, "approved-executing")
+        .map_err(|error| format!("record executing chat approval: {error:?}"))?;
+
+    {
+        let mut guard = lock_state();
+        let session = guard
+            .chat_session
+            .as_ref()
+            .filter(|session| {
+                session.request_id == request_id
+                    && session.status == NativeChatSessionStatus::WaitingApproval
+            })
+            .ok_or_else(|| "chat request changed before approved execution".to_owned())?;
+        if session.task_id != task_id {
+            return Err("chat task changed before approved execution".into());
+        }
+        guard.conversation = conversation.clone();
+    }
+
+    let active = conversation
+        .active()
+        .cloned()
+        .ok_or_else(|| "approved chat task has no active turn".to_owned())?;
+    if active.task_id != task_id {
+        return Err("approved chat task identity mismatch".into());
+    }
+    let protocol = conversation
+        .action_plan_protocol_for_task(task_id)
+        .ok_or_else(|| "approved chat task has no canonical action protocol".to_owned())?
+        .to_owned();
+    let action_plan = match parse_native_action_plan(&protocol)
+        .map_err(|error| format!("reconstruct approved action plan: {error:?}"))?
+    {
+        AssistantPlanDecision::Actions(plan) => plan,
+        AssistantPlanDecision::Direct => {
+            return Err("approved chat protocol did not contain actions".into())
+        }
+    };
+    external_write_approval(&action_plan)?
+        .ok_or_else(|| "approved chat plan no longer contains external writes".to_owned())?;
+
+    let prompt_limit = model
+        .context_limit
+        .saturating_sub(active.max_new_tokens)
+        .max(1);
+    let mut executed = conversation.clone();
+    let execution = execute_android_verified_actions(
+        &mut executed,
+        &action_plan,
+        AndroidActionExecutionContext {
+            model: &model,
+            task_id,
+            user_message: &active.user_message,
+            prompt_limit,
+            resources,
+            external_approved: true,
+        },
+    );
+
+    match execution {
+        Ok(()) => {
+            executed
+                .set_chat_approval_status(task_id, "approved")
+                .map_err(|error| format!("record approved chat execution: {error:?}"))?;
+            let mut guard = lock_state();
+            if guard.conversation != conversation {
+                return Err("sovereign conversation changed during approved execution".into());
+            }
+            if !guard.chat_session.as_ref().is_some_and(|session| {
+                session.request_id == request_id
+                    && session.status == NativeChatSessionStatus::WaitingApproval
+            }) {
+                return Err("chat request changed during approved execution".into());
+            }
+            guard.conversation = executed;
+            if let Some(session) = guard
+                .chat_session
+                .as_mut()
+                .filter(|session| session.request_id == request_id)
+            {
+                session.status = NativeChatSessionStatus::Running;
+            }
+            Ok(true)
+        }
+        Err(error) => {
+            let mut guard = lock_state();
+            if guard.conversation == conversation {
+                guard
+                    .conversation
+                    .set_chat_approval_status(task_id, "reconfirm")
+                    .map_err(|state_error| {
+                        format!("record approval reconfirmation: {state_error:?}")
+                    })?;
+            }
+            Err(error)
+        }
+    }
 }
 
 fn chat_status(request_id: u64) -> i32 {
@@ -2162,6 +2547,7 @@ fn chat_status(request_id: u64) -> i32 {
     };
     match session.status {
         NativeChatSessionStatus::Running => CHAT_STATUS_RUNNING,
+        NativeChatSessionStatus::WaitingApproval => CHAT_STATUS_WAITING_APPROVAL,
         NativeChatSessionStatus::Complete => CHAT_STATUS_COMPLETE,
         NativeChatSessionStatus::Cancelled => CHAT_STATUS_CANCELLED,
         NativeChatSessionStatus::Failed => CHAT_STATUS_FAILED,
@@ -2290,7 +2676,7 @@ fn cancel_chat(request_id: u64) -> bool {
     let (task_id, cancel) = {
         let guard = lock_state();
         let Some(session) = guard.chat_session.as_ref().filter(|session| {
-            session.request_id == request_id && session.status == NativeChatSessionStatus::Running
+            session.request_id == request_id && chat_session_active(session.status)
         }) else {
             return false;
         };
@@ -2343,6 +2729,20 @@ fn terminal_chat_event(request_id: u64) -> Option<Vec<u8>> {
 
     match session.status {
         NativeChatSessionStatus::Running => None,
+        NativeChatSessionStatus::WaitingApproval => {
+            match guard.conversation.chat_approval_for_task(session.task_id) {
+                Some((capability, rationale, _)) => Some(encode_chat_event(
+                    CHAT_EVENT_APPROVAL_REQUIRED,
+                    None,
+                    &format!("{capability}\n{rationale}"),
+                )),
+                None => Some(encode_chat_event(
+                    CHAT_EVENT_ERROR,
+                    None,
+                    "pending approval state is missing",
+                )),
+            }
+        }
         NativeChatSessionStatus::Complete => Some(encode_chat_event(CHAT_EVENT_COMPLETE, None, "")),
         NativeChatSessionStatus::Cancelled => {
             Some(encode_chat_event(CHAT_EVENT_CANCELLED, None, ""))
@@ -2518,11 +2918,31 @@ fn restore_chat_checkpoint(bytes: &[u8]) -> Result<u64, String> {
         .next_chat_request_id
         .checked_add(1)
         .ok_or_else(|| "chat request id overflow".to_owned())?;
+    let approval_status = guard
+        .conversation
+        .chat_approval_for_task(task_id)
+        .map(|(_, _, status)| status.to_owned());
+    if approval_status.as_deref() == Some("approved-executing") {
+        guard
+            .conversation
+            .set_chat_approval_status(task_id, "reconfirm")
+            .map_err(|error| {
+                format!("mark interrupted external write for reconfirmation: {error:?}")
+            })?;
+    }
+    let waiting_approval = matches!(
+        approval_status.as_deref(),
+        Some("pending" | "reconfirm" | "approved-executing")
+    );
     guard.chat_session = Some(NativeChatSession {
         request_id,
         task_id,
         cancel: Arc::new(AtomicBool::new(false)),
-        status: NativeChatSessionStatus::Running,
+        status: if waiting_approval {
+            NativeChatSessionStatus::WaitingApproval
+        } else {
+            NativeChatSessionStatus::Running
+        },
     });
     Ok(request_id)
 }
@@ -2590,18 +3010,25 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
         Err(_) => return 0,
     };
 
-    u8::from(
-        open_chat_model(
-            &asset_id,
-            version,
-            &capsule_path,
-            &shard_root,
-            &verify_key,
-            context_limit,
-            &capability_root,
-        )
-        .is_ok(),
-    )
+    match open_chat_model(
+        &asset_id,
+        version,
+        &capsule_path,
+        &shard_root,
+        &verify_key,
+        context_limit,
+        &capability_root,
+    ) {
+        Ok(()) => {
+            lock_state().chat_last_error.clear();
+            1
+        }
+        Err(error) => {
+            let mut guard = lock_state();
+            guard.chat_last_error = error.chars().take(2048).collect();
+            0
+        }
+    }
 }
 
 #[allow(unsafe_code)]
@@ -2618,10 +3045,17 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeSubmitCha
     let Ok(max_new_tokens) = usize::try_from(max_new_tokens) else {
         return -1;
     };
-    submit_chat(&prompt, max_new_tokens)
-        .ok()
-        .and_then(|request_id| i64::try_from(request_id).ok())
-        .unwrap_or(-1)
+    match submit_chat(&prompt, max_new_tokens) {
+        Ok(request_id) => {
+            lock_state().chat_last_error.clear();
+            i64::try_from(request_id).unwrap_or(-1)
+        }
+        Err(error) => {
+            let mut guard = lock_state();
+            guard.chat_last_error = error.chars().take(2048).collect();
+            -1
+        }
+    }
 }
 
 #[allow(unsafe_code)]
@@ -2744,6 +3178,40 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatVerif
         return 0;
     };
     u8::from(chat_verified_synthesis_ready(request_id))
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeResolveChatApproval(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_id: jlong,
+    approved: jboolean,
+) -> jboolean {
+    let Ok(request_id) = u64::try_from(request_id) else {
+        return 0;
+    };
+    match resolve_chat_approval(request_id, approved != 0) {
+        Ok(value) => {
+            lock_state().chat_last_error.clear();
+            u8::from(value)
+        }
+        Err(error) => {
+            let mut guard = lock_state();
+            guard.chat_last_error = error.chars().take(2048).collect();
+            0
+        }
+    }
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatLastError(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jbyteArray {
+    let error = lock_state().chat_last_error.clone();
+    java_bytes(&env, error.as_bytes())
 }
 
 #[allow(unsafe_code)]

@@ -20,6 +20,8 @@ final class NtdDeviceAppPlatform {
             Pattern.compile("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+");
 
     private static volatile Context appContext;
+    private static volatile long successfulClipboardWrites;
+    private static volatile String lastSuccessfulClipboardText;
 
     private NtdDeviceAppPlatform() {}
 
@@ -54,6 +56,8 @@ final class NtdDeviceAppPlatform {
                     if (clip != null && clip.getItemCount() > 0) {
                         CharSequence observed = clip.getItemAt(0).coerceToText(context);
                         if (observed != null && text.contentEquals(observed)) {
+                            lastSuccessfulClipboardText = text;
+                            successfulClipboardWrites++;
                             return encodeSuccess("clipboard-set:" + encoded.length);
                         }
                         lastFailure = "clipboard read-back mismatch";
@@ -69,6 +73,14 @@ final class NtdDeviceAppPlatform {
         } catch (Exception error) {
             return encodeError(safeMessage(error));
         }
+    }
+
+    static long successfulClipboardWrites() {
+        return successfulClipboardWrites;
+    }
+
+    static boolean lastSuccessfulClipboardTextEquals(String expected) {
+        return expected != null && expected.equals(lastSuccessfulClipboardText);
     }
 
     static byte[] launchApp(String packageName) {

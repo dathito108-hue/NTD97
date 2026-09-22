@@ -324,6 +324,87 @@ impl SovereignConversationState {
             .map(|fact| fact.value.as_str())
     }
 
+    pub fn record_chat_approval(
+        &mut self,
+        task_id: u64,
+        capability: &str,
+        rationale: &str,
+        status: &str,
+    ) -> Result<(), ConversationStateError> {
+        if !matches!(
+            status,
+            "pending" | "approved-executing" | "approved" | "denied" | "reconfirm"
+        ) || capability.trim().is_empty()
+            || rationale.trim().is_empty()
+            || capability.len() > MAX_TEXT_BYTES
+            || rationale.len() > MAX_TEXT_BYTES
+        {
+            return Err(ConversationStateError::InvalidTaskGraph);
+        }
+        if !self.cognition.state().tasks.contains_key(&task_id) {
+            return Err(ConversationStateError::TaskMismatch {
+                expected: task_id,
+                actual: 0,
+            });
+        }
+        let prefix = format!("conversation.task.{task_id}.approval");
+        self.cognition
+            .state_mut()
+            .set_world_fact(format!("{prefix}.capability"), capability)?;
+        self.cognition
+            .state_mut()
+            .set_world_fact(format!("{prefix}.rationale"), rationale)?;
+        self.cognition
+            .state_mut()
+            .set_world_fact(format!("{prefix}.status"), status)?;
+        Ok(())
+    }
+
+    pub fn set_chat_approval_status(
+        &mut self,
+        task_id: u64,
+        status: &str,
+    ) -> Result<(), ConversationStateError> {
+        if !matches!(
+            status,
+            "pending" | "approved-executing" | "approved" | "denied" | "reconfirm"
+        ) {
+            return Err(ConversationStateError::InvalidTaskGraph);
+        }
+        let key = format!("conversation.task.{task_id}.approval.status");
+        if !self.cognition.state().world.contains_key(&key) {
+            return Err(ConversationStateError::InvalidTaskGraph);
+        }
+        self.cognition.state_mut().set_world_fact(key, status)?;
+        Ok(())
+    }
+
+    pub fn chat_approval_for_task(&self, task_id: u64) -> Option<(&str, &str, &str)> {
+        let prefix = format!("conversation.task.{task_id}.approval");
+        let capability = self
+            .cognition
+            .state()
+            .world
+            .get(&format!("{prefix}.capability"))?
+            .value
+            .as_str();
+        let rationale = self
+            .cognition
+            .state()
+            .world
+            .get(&format!("{prefix}.rationale"))?
+            .value
+            .as_str();
+        let status = self
+            .cognition
+            .state()
+            .world
+            .get(&format!("{prefix}.status"))?
+            .value
+            .as_str();
+        Some((capability, rationale, status))
+    }
+
     pub fn action_count_for_task(&self, task_id: u64) -> Option<usize> {
         let key = format!("conversation.task.{task_id}.action_count");
         self.cognition
@@ -1140,6 +1221,34 @@ mod tests {
         state.cancel_turn(task, "cancelled").expect("cancel");
         assert!(state.prior_conversation_failure());
         assert_eq!(memory_recall_limit_for_budget(ReasoningBudget::Recovery), 6);
+    }
+
+    #[test]
+    fn chat_approval_state_survives_ncs97_checkpoint() {
+        let mut state = SovereignConversationState::new(identity());
+        let task = state
+            .begin_turn("model.test", 1, "copy this", vec![1, 2], 4)
+            .expect("begin");
+        state
+            .record_chat_approval(
+                task,
+                "device.interact",
+                "clipboard write requires explicit approval",
+                "pending",
+            )
+            .expect("approval");
+
+        let encoded = encode_conversation_checkpoint(&state).expect("encode");
+        let restored = decode_conversation_checkpoint(&encoded).expect("decode");
+
+        assert_eq!(
+            restored.chat_approval_for_task(task),
+            Some((
+                "device.interact",
+                "clipboard write requires explicit approval",
+                "pending"
+            ))
+        );
     }
 
     #[test]

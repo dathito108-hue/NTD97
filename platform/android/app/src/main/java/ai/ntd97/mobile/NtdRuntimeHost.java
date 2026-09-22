@@ -37,6 +37,7 @@ public interface NtdRuntimeHost {
         public static final int COMPLETE = 2;
         public static final int CANCELLED = 3;
         public static final int ERROR = 4;
+        public static final int APPROVAL_REQUIRED = 5;
 
         public final int kind;
         public final int tokenId;
@@ -71,8 +72,16 @@ public interface NtdRuntimeHost {
         return false;
     }
 
+    default boolean resolveChatApproval(long requestId, boolean approved) {
+        return false;
+    }
+
     default int chatStatus(long requestId) {
         return 0;
+    }
+
+    default String chatLastError() {
+        return "";
     }
 
     default int chatReasoningBudget(long requestId) {

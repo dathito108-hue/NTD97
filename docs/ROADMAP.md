@@ -445,6 +445,16 @@ Current implementation:
 - Android artifact downloads use the hardened HTTPS boundary, stage bytes under the app-private capability root, persist hash + rollback state in the ActionFabric resume token, then hash-verify and atomic-rename only during resume;
 - completed artifact downloads emit SHA-256/path/byte-count receipts, support rollback to the prior file/absent state and preserve staged state across action checkpoints;
 - Android emulator acceptance requires real HTTPS artifact staging, suspended action state, verified resume/commit and rollback.
+- canonical chat ExternalWrite approval is persisted in sovereign cognitive/NCS97 state and emits a dedicated approval-required event, separate from legacy continuity approval;
+- clipboard writes and exact-package app launches remain suspended until explicit user approval; approval derives exact authority scopes from the persisted canonical native action protocol, while deny performs no side effect;
+- interrupted `approved-executing` state restores as `reconfirm` and never replays an ExternalWrite automatically;
+- Android chat UI checkpoints pending approval, routes Approve/Deny through the chat request ID and resumes verified synthesis only after native receipt verification;
+- emulator acceptance proves pending clipboard approval survives NCS97 restore, deny preserves prior clipboard state, and approve produces the exact requested write plus verified synthesis.
+- canonical chat now persists ExternalWrite approval state inside sovereign cognition/NCS97, emits a dedicated approval-required chat event and never reuses the legacy continuity approval state machine;
+- explicit clipboard/app-launch actions are validated from canonical native action protocol, suspended before side effects, and only receive exact ExternalWrite authority after user approval;
+- interrupted `approved-executing` state restores as `reconfirm` rather than replaying an external write automatically;
+- Android chat UI checkpoints pending approvals, separates chat Approve/Deny from continuity approval, resumes verified synthesis after approval and cancels denied tasks without side effects;
+- emulator acceptance proves clipboard state is unchanged before approval and after deny, pending approval survives NCS97 restore, and approved execution produces verified action evidence before generation resumes.
 
 Still required before M13 completion:
 
