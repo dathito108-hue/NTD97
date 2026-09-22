@@ -101,7 +101,9 @@ public final class NtdRealModelProbeActivity extends Activity {
 
         long requestId = host.submitChat("Once", 2);
         if (requestId < 0) {
-            return "chat_submit=failed\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
+            String diagnostic = host.chatLastError().replace('\n', ' ').replace('\r', ' ');
+            return "chat_submit=failed\nchat_error=" + diagnostic
+                    + "\nchat_stream=failed\nchat_reasoning=failed\nchat_reasoning_loop=failed\nchat_action_planner=failed\nchat_action_safety=failed\nchat_governed_e2e=failed\nchat_memory=failed\nchat_restore=failed\nchat_store=failed\nchat_cancel=failed\nchat_status=failed\n";
         }
 
         int tokenCount = 0;
