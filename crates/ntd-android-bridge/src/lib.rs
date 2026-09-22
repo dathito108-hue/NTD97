@@ -2241,10 +2241,15 @@ fn submit_chat_reserved(
         .record_reasoning_cycle_report(task_id, &report)
         .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
 
-    let planner_outcome = match governed_device_surfaces(user_message) {
-        Some(surfaces) => run_constrained_device_planner(model, user_message, &surfaces)?,
-        None => run_native_action_planner(model, user_message)?,
+    let planner_outcome = if let Some(plan) = governed_external_action_plan(user_message)? {
+        NativeActionPlanningOutcome::Actions(plan)
+    } else {
+        match governed_device_surfaces(user_message) {
+            Some(surfaces) => run_constrained_device_planner(model, user_message, &surfaces)?,
+            None => run_native_action_planner(model, user_message)?,
+        }
     };
+    let mut session_status = NativeChatSessionStatus::Running;
     match planner_outcome {
         NativeActionPlanningOutcome::Direct => {
             conversation
@@ -2263,15 +2268,37 @@ fn submit_chat_reserved(
                 .map_err(|error| format!("record invalid verified action count: {error:?}"))?;
         }
         NativeActionPlanningOutcome::Actions(action_plan) => {
-            execute_android_verified_actions(
-                &mut conversation,
-                model,
-                task_id,
-                user_message,
-                prompt_limit,
-                resources,
-                &action_plan,
-            )?;
+            conversation
+                .install_action_plan(task_id, &action_plan)
+                .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
+            if let Some((capability, rationale)) = external_write_approval(&action_plan)? {
+                conversation
+                    .record_chat_approval(
+                        task_id,
+                        &capability,
+                        &rationale,
+                        "pending",
+                    )
+                    .map_err(|error| format!("record pending chat approval: {error:?}"))?;
+                conversation
+                    .record_action_planner_status(task_id, "actions")
+                    .map_err(|error| format!("record action planner status: {error:?}"))?;
+                conversation
+                    .record_verified_action_count(task_id, 0)
+                    .map_err(|error| format!("record pending verified action count: {error:?}"))?;
+                session_status = NativeChatSessionStatus::WaitingApproval;
+            } else {
+                execute_android_verified_actions(
+                    &mut conversation,
+                    model,
+                    task_id,
+                    user_message,
+                    prompt_limit,
+                    resources,
+                    &action_plan,
+                    false,
+                )?;
+            }
         }
     }
 
@@ -2302,7 +2329,7 @@ fn submit_chat_reserved(
         request_id,
         task_id,
         cancel: Arc::new(AtomicBool::new(false)),
-        status: NativeChatSessionStatus::Running,
+        status: session_status,
     });
     Ok(request_id)
 }
