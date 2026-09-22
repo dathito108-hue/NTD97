@@ -676,6 +676,69 @@ final class NtdWebPlatform {
         return results;
     }
 
+    private static List<SearchItem> normalizeOpenSearchResults(
+            byte[] body,
+            int maxResults) throws Exception {
+        if (body.length == 0) {
+            throw new IOException("OpenSearch provider returned empty body");
+        }
+        Object root = new JSONTokener(new String(body, StandardCharsets.UTF_8)).nextValue();
+        if (!(root instanceof JSONArray)) {
+            throw new IOException("OpenSearch response is not an array");
+        }
+        JSONArray envelope = (JSONArray) root;
+        if (envelope.length() < 4
+                || !(envelope.opt(1) instanceof JSONArray)
+                || !(envelope.opt(3) instanceof JSONArray)) {
+            throw new IOException("OpenSearch response lacks title/URL arrays");
+        }
+        JSONArray titles = (JSONArray) envelope.opt(1);
+        JSONArray descriptions = envelope.opt(2) instanceof JSONArray
+                ? (JSONArray) envelope.opt(2)
+                : new JSONArray();
+        JSONArray urls = (JSONArray) envelope.opt(3);
+        if (titles.length() != urls.length()) {
+            throw new IOException("OpenSearch title/URL result counts differ");
+        }
+
+        List<SearchItem> results = new ArrayList<>();
+        Set<String> seenUrls = new HashSet<>();
+        int limit = Math.min(Math.min(titles.length(), maxResults), MAX_SEARCH_RESULTS);
+        for (int index = 0; index < limit; index++) {
+            Object rawTitle = titles.opt(index);
+            Object rawUrl = urls.opt(index);
+            if (!(rawTitle instanceof String) || !(rawUrl instanceof String)) {
+                throw new IOException("OpenSearch result fields are not strings");
+            }
+            String title = normalizeSearchText(
+                    (String) rawTitle,
+                    MAX_SEARCH_TITLE_BYTES,
+                    true);
+            String url;
+            try {
+                url = validatePublicHttpsUrl((String) rawUrl).toExternalForm();
+            } catch (IOException unsafeUrl) {
+                continue;
+            }
+            if (!seenUrls.add(url)) {
+                continue;
+            }
+            String snippet = "";
+            Object rawDescription = descriptions.opt(index);
+            if (rawDescription instanceof String) {
+                snippet = normalizeSearchText(
+                        (String) rawDescription,
+                        MAX_SEARCH_SNIPPET_BYTES,
+                        false);
+            }
+            results.add(new SearchItem(title, url, snippet));
+        }
+        if (titles.length() > 0 && results.isEmpty()) {
+            throw new IOException("OpenSearch returned no safe normalized result");
+        }
+        return results;
+    }
+
     private static Object resolveJsonPath(Object root, String path) throws IOException {
         if (path == null || path.isEmpty()) {
             return root;
@@ -828,6 +891,98 @@ final class NtdWebPlatform {
                 connection.disconnect();
             }
         }
+    }
+
+    private static HttpResult fetchSearchResponse(
+            String rawUrl,
+            SearchConfiguration configuration,
+            String accept) throws IOException {
+        URL initial = validatePublicHttpsUrl(rawUrl);
+        String credentialOrigin =
+                configuration.hasCredential() ? httpsOrigin(initial) : "";
+        URL current = initial;
+        for (int redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
+            if (configuration.hasCredential()
+                    && !httpsOrigin(current).equals(credentialOrigin)) {
+                throw new IOException("credentialed WebSearch changed origin");
+            }
+            HttpsURLConnection connection = (HttpsURLConnection) current.openConnection();
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(READ_TIMEOUT_MS);
+            connection.setRequestMethod("GET");
+            connection.setRequestProperty("Accept", accept);
+            connection.setRequestProperty("User-Agent", "NTD97-Mobile/1");
+            if (configuration.hasCredential()) {
+                connection.setRequestProperty(
+                        configuration.credentialHeaderName,
+                        configuration.credentialHeaderValue);
+            }
+            connection.connect();
+
+            int status = connection.getResponseCode();
+            if (status >= 300 && status < 400) {
+                if (redirect == MAX_REDIRECTS) {
+                    connection.disconnect();
+                    throw new IOException("redirect limit exceeded");
+                }
+                String location = connection.getHeaderField("Location");
+                connection.disconnect();
+                if (location == null || location.trim().isEmpty()) {
+                    throw new IOException("redirect missing location");
+                }
+                URL next = validatePublicHttpsUrl(
+                        new URL(current, location).toExternalForm());
+                if (configuration.hasCredential()
+                        && !httpsOrigin(next).equals(credentialOrigin)) {
+                    throw new IOException(
+                            "credentialed WebSearch cross-origin redirect blocked");
+                }
+                current = next;
+                continue;
+            }
+            if (status < 200 || status >= 300) {
+                connection.disconnect();
+                throw new IOException("HTTP status " + status);
+            }
+
+            long declared = connection.getContentLengthLong();
+            if (declared > MAX_BODY_BYTES) {
+                connection.disconnect();
+                throw new IOException("response exceeds size limit");
+            }
+            String contentType = connection.getContentType();
+            byte[] body;
+            try (InputStream input = connection.getInputStream()) {
+                body = readBounded(input);
+            } finally {
+                connection.disconnect();
+            }
+            return new HttpResult(
+                    status,
+                    current.toExternalForm(),
+                    contentType == null ? "" : contentType,
+                    body);
+        }
+        throw new IOException("unreachable redirect state");
+    }
+
+    private static boolean sameOrigin(String left, String right) throws IOException {
+        return httpsOrigin(validateHttpsSyntax(left))
+                .equals(httpsOrigin(validateHttpsSyntax(right)));
+    }
+
+    private static String httpsOrigin(URL url) throws IOException {
+        if (!"https".equalsIgnoreCase(url.getProtocol())
+                || url.getHost() == null
+                || url.getHost().isEmpty()) {
+            throw new IOException("invalid HTTPS origin");
+        }
+        int port = url.getPort() == -1 ? 443 : url.getPort();
+        return "https://"
+                + url.getHost().toLowerCase(Locale.ROOT)
+                + ":"
+                + port;
     }
 
     private static byte[] fetchBlocking(String rawUrl) {
@@ -1045,17 +1200,26 @@ final class NtdWebPlatform {
 
     private static void clearSearchPreferences(SharedPreferences preferences) {
         preferences.edit()
+                .remove(SEARCH_MODE_KEY)
                 .remove(SEARCH_TEMPLATE_KEY)
+                .remove(SEARCH_OPENSEARCH_DESCRIPTION_KEY)
                 .remove(SEARCH_RESULTS_PATH_KEY)
                 .remove(SEARCH_TITLE_PATH_KEY)
                 .remove(SEARCH_URL_PATH_KEY)
                 .remove(SEARCH_SNIPPET_PATH_KEY)
-                .apply();
+                .remove(SEARCH_CREDENTIAL_HEADER_KEY)
+                .remove(SEARCH_CREDENTIAL_VALUE_KEY)
+                .commit();
     }
 
     private static String value(SharedPreferences preferences, String key) {
         String value = preferences.getString(key, "");
         return value == null ? "" : value.trim();
+    }
+
+    private static String rawValue(SharedPreferences preferences, String key) {
+        String value = preferences.getString(key, "");
+        return value == null ? "" : value;
     }
 
     private static void putBytes(ByteBuffer buffer, byte[] bytes) {
