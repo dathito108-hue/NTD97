@@ -2622,6 +2622,109 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdPhysicalEvidenceActivity_nativeEn
 mod tests {
     use super::*;
 
+    fn encode_test_web_response(
+        status: i32,
+        redirects: u32,
+        final_url: &str,
+        content_type: &str,
+        body: &[u8],
+        error: &str,
+    ) -> Vec<u8> {
+        fn push_field(out: &mut Vec<u8>, bytes: &[u8]) {
+            out.extend_from_slice(&u32::try_from(bytes.len()).expect("field length").to_le_bytes());
+            out.extend_from_slice(bytes);
+        }
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&WEB_RESPONSE_MAGIC);
+        out.extend_from_slice(&WEB_RESPONSE_VERSION.to_le_bytes());
+        out.extend_from_slice(&status.to_le_bytes());
+        out.extend_from_slice(&redirects.to_le_bytes());
+        push_field(&mut out, final_url.as_bytes());
+        push_field(&mut out, content_type.as_bytes());
+        push_field(&mut out, body);
+        push_field(&mut out, error.as_bytes());
+        out
+    }
+
+    #[test]
+    fn android_web_response_decoder_accepts_canonical_success() {
+        let bytes = encode_test_web_response(
+            200,
+            1,
+            "https://example.test/final",
+            "text/plain; charset=utf-8",
+            b"hello",
+            "",
+        );
+
+        assert_eq!(
+            decode_android_web_response(&bytes),
+            Ok(AndroidWebResponse {
+                status: 200,
+                redirects: 1,
+                final_url: "https://example.test/final".into(),
+                content_type: "text/plain; charset=utf-8".into(),
+                body: b"hello".to_vec(),
+                error: String::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn android_web_response_decoder_rejects_oversize_body() {
+        let bytes = encode_test_web_response(
+            200,
+            0,
+            "https://example.test",
+            "application/octet-stream",
+            &vec![0u8; WEB_FETCH_MAX_BYTES + 1],
+            "",
+        );
+
+        assert!(decode_android_web_response(&bytes).is_err());
+    }
+
+    #[test]
+    fn android_web_verifier_binds_body_length_and_digest() {
+        let body = "verified body";
+        let digest = digest_hex(&sha256(body.as_bytes()));
+        let descriptor = CapabilityDescriptor::new(
+            CapabilityId("web.fetch".into()),
+            1,
+            CapabilityDomain::Web,
+            SideEffectClass::ReadOnly,
+        )
+        .expect("descriptor");
+        let action = TypedAction::WebFetch {
+            url: "https://example.test".into(),
+        };
+        let mut output = ActionOutput {
+            summary: "HTTP 200 https://example.test".into(),
+            value: ActionValue::Text(body.into()),
+            evidence: vec![
+                "transport=android-http-url-connection".into(),
+                "http_status=200".into(),
+                "final_url=https://example.test".into(),
+                "content_type=text/plain".into(),
+                format!("bytes={}", body.len()),
+                format!("sha256={digest}"),
+                "redirects=0".into(),
+            ],
+        };
+
+        assert_eq!(
+            AndroidWebVerifier.verify(&descriptor, &action, &output),
+            ActionVerification::Accept
+        );
+
+        output.evidence[5] = format!("sha256={}", "0".repeat(64));
+        assert!(matches!(
+            AndroidWebVerifier.verify(&descriptor, &action, &output),
+            ActionVerification::Reject { .. }
+        ));
+    }
+
     #[test]
     fn governed_device_policy_routes_live_evidence() {
         assert_eq!(
