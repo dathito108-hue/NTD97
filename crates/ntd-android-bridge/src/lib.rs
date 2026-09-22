@@ -2890,6 +2890,32 @@ fn run_constrained_device_planner(
     })
 }
 
+fn valid_android_package(value: &str) -> bool {
+    if value.is_empty() || value.len() > 255 {
+        return false;
+    }
+    let mut segments = value.split('.');
+    let Some(first) = segments.next() else {
+        return false;
+    };
+    if first.is_empty()
+        || !first.as_bytes()[0].is_ascii_alphabetic()
+        || !first
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return false;
+    }
+    let rest = segments.collect::<Vec<_>>();
+    !rest.is_empty()
+        && rest.iter().all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        })
+}
+
 fn granted_command_path(value: &str) -> Option<String> {
     let (alias, relative) = value.split_once('/')?;
     if alias.trim().is_empty()
@@ -3101,15 +3127,56 @@ fn governed_explicit_action_plan(
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|device.interact|clipboard\tset_text\t{value}\nEND"
         ))
+    } else if lower.starts_with("accessibility click ") {
+        let rest = trimmed
+            .get("accessibility click ".len()..)
+            .ok_or_else(|| "accessibility click command boundary failed".to_owned())?;
+        let Some((package, view_id)) = rest.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_android_package(package)
+            || view_id.trim().is_empty()
+            || view_id != view_id.trim()
+            || view_id.len() > 4096
+            || view_id
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t' | ' '))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|app.action|{package}\taccessibility.click\tview_id\t{view_id}\nEND"
+        ))
+    } else if lower.starts_with("accessibility set text ") {
+        let rest = trimmed
+            .get("accessibility set text ".len()..)
+            .ok_or_else(|| "accessibility set_text command boundary failed".to_owned())?;
+        let Some((target, text)) = rest.rsplit_once(" to ") else {
+            return Ok(None);
+        };
+        let Some((package, view_id)) = target.split_once(' ') else {
+            return Ok(None);
+        };
+        if !valid_android_package(package)
+            || view_id.trim().is_empty()
+            || view_id != view_id.trim()
+            || view_id.len() > 4096
+            || text.is_empty()
+            || view_id
+                .chars()
+                .chain(text.chars())
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|app.action|{package}\taccessibility.set_text\tview_id\t{view_id}\t{text}\nEND"
+        ))
     } else if lower.starts_with("open app ") {
         let package = trimmed
             .get("open app ".len()..)
             .ok_or_else(|| "app command boundary failed".to_owned())?;
-        if package.trim().is_empty()
-            || package
-                .chars()
-                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t' | ' '))
-        {
+        if !valid_android_package(package) {
             return Ok(None);
         }
         Some(format!(
@@ -3197,9 +3264,29 @@ fn external_write_approval(
                     action,
                     payload,
                 },
-            ) if action == "launch" && payload.is_empty() && !app.trim().is_empty() => {
+            ) if action == "launch" && payload.is_empty() && valid_android_package(app) => {
                 capabilities.insert("app.action".to_owned());
                 rationales.push(format!("launch Android app package {app}"));
+            }
+            (
+                "app.action",
+                TypedAction::AppAction {
+                    app,
+                    action,
+                    payload,
+                },
+            ) if valid_android_package(app)
+                && matches!(
+                    action.as_str(),
+                    "accessibility.click" | "accessibility.set_text"
+                ) =>
+            {
+                let spec = parse_accessibility_action(action, payload)?;
+                capabilities.insert("app.action".to_owned());
+                rationales.push(format!(
+                    "perform {action} in foreground Android package {app} on {} selector {}",
+                    spec.selector_kind, spec.selector_value
+                ));
             }
             (
                 "pc.execute",
@@ -3240,6 +3327,43 @@ fn external_write_approval(
         capabilities.into_iter().collect::<Vec<_>>().join(","),
         rationales.join("; "),
     )))
+}
+
+fn app_action_scope_names(
+    action_plan: &AssistantActionPlan,
+) -> Result<std::collections::BTreeSet<&'static str>, String> {
+    let mut scopes = std::collections::BTreeSet::new();
+    for node in &action_plan.graph.actions {
+        if node.capability.0 != "app.action" {
+            continue;
+        }
+        let action = action_plan
+            .payloads
+            .get(&node.id)
+            .ok_or_else(|| "app.action payload is missing".to_owned())?;
+        let TypedAction::AppAction {
+            app,
+            action,
+            payload,
+        } = action
+        else {
+            return Err("app.action capability/action mismatch".into());
+        };
+        if !valid_android_package(app) {
+            return Err("app.action package is invalid".into());
+        }
+        match action.as_str() {
+            "launch" if payload.is_empty() => {
+                scopes.insert("app.launch");
+            }
+            "accessibility.click" | "accessibility.set_text" => {
+                parse_accessibility_action(action, payload)?;
+                scopes.insert("app.accessibility.interact");
+            }
+            _ => return Err("unsupported Android app action".into()),
+        }
+    }
+    Ok(scopes)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
