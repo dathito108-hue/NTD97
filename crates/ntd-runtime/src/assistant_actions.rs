@@ -409,7 +409,11 @@ pub struct VerifiedAssistantActionRun {
 pub enum AssistantActionRunError {
     TaskGraphMismatch,
     Fabric(ActionFabricError),
-    Incomplete(ActionPlanStatus),
+    Incomplete {
+        plan_status: ActionPlanStatus,
+        action_status: Option<ActionStatus>,
+        summary: String,
+    },
     Evidence(VerifiedActionEvidenceError),
     MissingPlan,
     StepLimit,
@@ -456,14 +460,30 @@ where
             ActionPlanStatus::Failed
             | ActionPlanStatus::RolledBack
             | ActionPlanStatus::Suspended => {
-                return Err(AssistantActionRunError::Incomplete(status));
+                let summary = reports
+                    .last()
+                    .map(|report| report.summary.clone())
+                    .unwrap_or_default();
+                return Err(AssistantActionRunError::Incomplete {
+                    plan_status: status,
+                    action_status,
+                    summary,
+                });
             }
             ActionPlanStatus::Ready => {
                 if matches!(
                     action_status,
                     Some(ActionStatus::Retryable | ActionStatus::Suspended)
                 ) {
-                    return Err(AssistantActionRunError::Incomplete(status));
+                    let summary = reports
+                        .last()
+                        .map(|report| report.summary.clone())
+                        .unwrap_or_default();
+                    return Err(AssistantActionRunError::Incomplete {
+                        plan_status: status,
+                        action_status,
+                        summary,
+                    });
                 }
             }
         }
@@ -869,7 +889,11 @@ Assistant:"
                 &mut AcceptVerifier,
                 "battery status",
             ),
-            Err(AssistantActionRunError::Incomplete(ActionPlanStatus::Ready))
+            Err(AssistantActionRunError::Incomplete {
+                plan_status: ActionPlanStatus::Ready,
+                action_status: Some(ActionStatus::Retryable),
+                summary,
+            }) if summary == "not ready"
         ));
     }
 
