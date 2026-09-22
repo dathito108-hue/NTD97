@@ -77,6 +77,12 @@ for REQUIRED in \
   chat_status=ok \
   web_fetch=ok \
   web_private_block=ok \
+  web_search_unconfigured_block=ok \
+  web_search_boundary=ok \
+  browser_observe=ok \
+  browser_private_block=ok \
+  browser_interact_authority_block=ok \
+  browser_interact=ok \
   file_write=ok \
   file_read=ok \
   file_rollback=ok \

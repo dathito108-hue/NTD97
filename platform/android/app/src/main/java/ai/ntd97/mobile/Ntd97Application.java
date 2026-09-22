@@ -10,6 +10,8 @@ public final class Ntd97Application extends Application {
         super.onCreate();
         continuityStore = new NtdContinuityStore(this);
         NtdNotificationController.ensureChannels(this);
+        NtdWebPlatform.initialize(this);
+        NtdBrowserPlatform.initialize(this);
         NtdRuntimeBootstrap.attachFirstLocalProvider(this);
     }
 

@@ -134,23 +134,49 @@ public final class NtdRealModelProbeActivity extends Activity {
             return;
         }
 
-        String result = pendingResult;
-        try {
-            result = result + new String(
-                    NtdNativeRuntimeHost.runProductionCapabilityProbe(this),
-                    StandardCharsets.UTF_8);
-        } catch (Exception error) {
-            String message = error.getMessage();
-            if (message == null || message.isEmpty()) {
-                message = error.getClass().getSimpleName();
-            }
-            result = result + "production_capabilities=failed\nerror="
-                    + message.replace('\n', ' ').replace('\r', ' ')
-                    + "\n";
-        }
+        final String prefix = pendingResult;
+        Thread probeThread = new Thread(() -> {
+            String result = prefix;
+            try {
+                if (!NtdWebPlatform.configureSearchEndpoint(this, "")) {
+                    throw new IOException("failed to clear WebSearch endpoint");
+                }
+                byte[] unconfiguredSearch =
+                        NtdWebPlatform.search("NTD97 unconfigured boundary", 5);
+                if (unconfiguredSearch.length < 2
+                        || unconfiguredSearch[0] != 1
+                        || unconfiguredSearch[1] != 0) {
+                    throw new IOException("unconfigured WebSearch did not fail closed");
+                }
+                result = result + "web_search_unconfigured_block=ok\n";
 
-        writeResult(result);
-        finish();
+                boolean searchConfigured = NtdWebPlatform.configureSearchEndpoint(
+                        this,
+                        "https://example.com/?q={query}&n={count}");
+                if (!searchConfigured) {
+                    throw new IOException("failed to configure provider-independent search probe");
+                }
+                result = result + new String(
+                        NtdNativeRuntimeHost.runProductionCapabilityProbe(this),
+                        StandardCharsets.UTF_8);
+            } catch (Exception error) {
+                String message = error.getMessage();
+                if (message == null || message.isEmpty()) {
+                    message = error.getClass().getSimpleName();
+                }
+                result = result + "production_capabilities=failed\nerror="
+                        + message.replace('\n', ' ').replace('\r', ' ')
+                        + "\n";
+            }
+
+            String finalResult = result;
+            runOnUiThread(() -> {
+                writeResult(finalResult);
+                finish();
+            });
+        }, "ntd97-production-capabilities");
+        probeThread.setDaemon(true);
+        probeThread.start();
     }
 
     private String runChatApiProbe() throws IOException {

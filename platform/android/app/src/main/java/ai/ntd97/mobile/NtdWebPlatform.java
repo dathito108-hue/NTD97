@@ -1,10 +1,14 @@
 package ai.ntd97.mobile;
 
+import android.content.Context;
+import android.content.SharedPreferences;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -23,7 +27,12 @@ final class NtdWebPlatform {
     private static final int MAX_BODY_BYTES = 512 * 1024;
     private static final int MAX_REDIRECTS = 3;
     private static final int PLATFORM_TIMEOUT_SECONDS = 45;
+    private static final int MAX_SEARCH_QUERY_BYTES = 2048;
+    private static final int MAX_SEARCH_RESULTS = 20;
     private static final byte PROTOCOL_VERSION = 1;
+    private static final String PREFS_NAME = "ntd97-web";
+    private static final String SEARCH_TEMPLATE_KEY = "search-endpoint-template";
+    private static volatile String searchEndpointTemplate = "";
     private static final ExecutorService NETWORK_EXECUTOR =
             Executors.newSingleThreadExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "ntd97-https");
@@ -32,6 +41,59 @@ final class NtdWebPlatform {
             });
 
     private NtdWebPlatform() {}
+
+    static void initialize(Context context) {
+        Context appContext = context.getApplicationContext();
+        SharedPreferences preferences =
+                appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String configured = preferences.getString(SEARCH_TEMPLATE_KEY, "");
+        if (configured != null && !configured.trim().isEmpty()) {
+            try {
+                validateSearchTemplate(configured);
+                searchEndpointTemplate = configured.trim();
+            } catch (IOException ignored) {
+                preferences.edit().remove(SEARCH_TEMPLATE_KEY).apply();
+                searchEndpointTemplate = "";
+            }
+        }
+    }
+
+    static boolean configureSearchEndpoint(Context context, String template) {
+        Context appContext = context.getApplicationContext();
+        SharedPreferences preferences =
+                appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String normalized = template == null ? "" : template.trim();
+        if (normalized.isEmpty()) {
+            preferences.edit().remove(SEARCH_TEMPLATE_KEY).apply();
+            searchEndpointTemplate = "";
+            return true;
+        }
+        try {
+            validateSearchTemplate(normalized);
+        } catch (IOException error) {
+            return false;
+        }
+        preferences.edit().putString(SEARCH_TEMPLATE_KEY, normalized).apply();
+        searchEndpointTemplate = normalized;
+        return true;
+    }
+
+    static byte[] search(String query, int maxResults) {
+        Future<byte[]> future = NETWORK_EXECUTOR.submit(() -> searchBlocking(query, maxResults));
+        try {
+            return future.get(PLATFORM_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            future.cancel(true);
+            return encodeError("web search interrupted");
+        } catch (TimeoutException error) {
+            future.cancel(true);
+            return encodeError("web search timed out");
+        } catch (ExecutionException error) {
+            Throwable cause = error.getCause();
+            return encodeError(cause == null ? "web search failed" : safeMessage(cause));
+        }
+    }
 
     static byte[] fetch(String rawUrl) {
         Future<byte[]> future = NETWORK_EXECUTOR.submit(() -> fetchBlocking(rawUrl));
@@ -50,9 +112,53 @@ final class NtdWebPlatform {
         }
     }
 
+    private static byte[] searchBlocking(String query, int maxResults) {
+        try {
+            if (query == null || query.trim().isEmpty()) {
+                throw new IOException("empty search query");
+            }
+            byte[] queryBytes = query.getBytes(StandardCharsets.UTF_8);
+            if (queryBytes.length > MAX_SEARCH_QUERY_BYTES) {
+                throw new IOException("search query exceeds size limit");
+            }
+            if (maxResults <= 0 || maxResults > MAX_SEARCH_RESULTS) {
+                throw new IOException("invalid search result limit");
+            }
+            String template = searchEndpointTemplate;
+            if (template == null || template.isEmpty()) {
+                throw new IOException("web search endpoint is not configured");
+            }
+            String encodedQuery = URLEncoder
+                    .encode(query.trim(), StandardCharsets.UTF_8.name())
+                    .replace("+", "%20");
+            String rendered = template
+                    .replace("{query}", encodedQuery)
+                    .replace("{count}", Integer.toString(maxResults));
+            if (rendered.indexOf('{') >= 0 || rendered.indexOf('}') >= 0) {
+                throw new IOException("unsupported search endpoint placeholder");
+            }
+            return fetchBlocking(rendered);
+        } catch (Exception error) {
+            return encodeError(safeMessage(error));
+        }
+    }
+
+    private static void validateSearchTemplate(String template) throws IOException {
+        if (template.length() > 4096 || !template.contains("{query}")) {
+            throw new IOException("search endpoint must contain {query}");
+        }
+        String rendered = template
+                .replace("{query}", "ntd97")
+                .replace("{count}", "5");
+        if (rendered.indexOf('{') >= 0 || rendered.indexOf('}') >= 0) {
+            throw new IOException("unsupported search endpoint placeholder");
+        }
+        validateHttpsSyntax(rendered);
+    }
+
     private static byte[] fetchBlocking(String rawUrl) {
         try {
-            URL current = validateUrl(rawUrl);
+            URL current = validatePublicHttpsUrl(rawUrl);
             for (int redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
                 HttpsURLConnection connection = (HttpsURLConnection) current.openConnection();
                 connection.setInstanceFollowRedirects(false);
@@ -75,7 +181,7 @@ final class NtdWebPlatform {
                     if (location == null || location.trim().isEmpty()) {
                         throw new IOException("redirect missing location");
                     }
-                    current = validateUrl(new URL(current, location).toExternalForm());
+                    current = validatePublicHttpsUrl(new URL(current, location).toExternalForm());
                     continue;
                 }
 
@@ -117,7 +223,7 @@ final class NtdWebPlatform {
                 : message;
     }
 
-    private static URL validateUrl(String rawUrl) throws IOException {
+    private static URL validateHttpsSyntax(String rawUrl) throws IOException {
         if (rawUrl == null || rawUrl.length() > 4096) {
             throw new IOException("invalid URL");
         }
@@ -131,7 +237,11 @@ final class NtdWebPlatform {
         if (url.getPort() != -1 && url.getPort() != 443) {
             throw new IOException("non-standard HTTPS port is not allowed");
         }
+        return url;
+    }
 
+    static URL validatePublicHttpsUrl(String rawUrl) throws IOException {
+        URL url = validateHttpsSyntax(rawUrl);
         InetAddress[] addresses = InetAddress.getAllByName(url.getHost());
         if (addresses.length == 0) {
             throw new IOException("host did not resolve");

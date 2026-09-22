@@ -62,6 +62,7 @@ const CHAT_STATUS_WAITING_APPROVAL: i32 = 5;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
 const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
 const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
+const PLATFORM_BROWSER_PROTOCOL_VERSION: u8 = 1;
 const PLATFORM_DEVICE_APP_PROTOCOL_VERSION: u8 = 1;
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
@@ -254,6 +255,71 @@ struct AndroidWebFetchResult {
     body: Vec<u8>,
 }
 
+struct AndroidWebSearchAdapter;
+
+impl CapabilityAdapter for AndroidWebSearchAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::WebSearch { query, max_results } = action else {
+            return Err("Android web search adapter only supports web.search".into());
+        };
+        let result = android_web_search(query, *max_results)?;
+        let text = String::from_utf8(result.body)
+            .map_err(|_| "web.search response is not valid UTF-8 text".to_owned())?;
+        if text.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("web.search text exceeds native evidence limit".into());
+        }
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified HTTPS web search status {}", result.status),
+                value: ActionValue::Text(text),
+                evidence: vec![
+                    "android-https-search".into(),
+                    "provider-boundary:runtime-configured".into(),
+                    format!("status:{}", result.status),
+                    format!("url:{}", result.final_url),
+                    format!("max-results:{max_results}"),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+fn android_web_search(query: &str, max_results: u16) -> Result<AndroidWebFetchResult, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android platform thread: {error}"))?;
+    let jquery = env
+        .new_string(query)
+        .map_err(|error| format!("encode web.search query for Android: {error}"))?;
+    let jquery_object = JObject::from(jquery);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdWebPlatform",
+            "search",
+            "(Ljava/lang/String;I)[B",
+            &[
+                JValue::Object(&jquery_object),
+                JValue::Int(i32::from(max_results)),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android WebSearch platform boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android WebSearch platform response: {error}"))?;
+    decode_android_web_fetch_result(&bytes)
+}
+
 struct AndroidWebFetchAdapter;
 
 impl CapabilityAdapter for AndroidWebFetchAdapter {
@@ -344,6 +410,182 @@ fn decode_android_web_fetch_result(bytes: &[u8]) -> Result<AndroidWebFetchResult
         content_type,
         body,
     })
+}
+
+struct AndroidBrowserObserveAdapter;
+
+impl CapabilityAdapter for AndroidBrowserObserveAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::BrowserObserve { target } = action else {
+            return Err("Android browser observe adapter received wrong action".into());
+        };
+        let observation = android_browser_observe(target)?;
+        if observation.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("browser observation exceeds native evidence limit".into());
+        }
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: "verified Android browser observation".into(),
+                value: ActionValue::Text(observation),
+                evidence: vec!["android-webview-browser".into(), "operation:observe".into()],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+struct AndroidBrowserInteractAdapter;
+
+impl CapabilityAdapter for AndroidBrowserInteractAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::BrowserInteract {
+            target,
+            operation,
+            value,
+        } = action
+        else {
+            return Err("Android browser interaction adapter received wrong action".into());
+        };
+        if operation != "click" && operation != "set_value" {
+            return Err("unsupported Android browser interaction operation".into());
+        }
+        if operation == "click" && value.is_some() {
+            return Err("browser click must not carry a value".into());
+        }
+        if operation == "set_value" && !value.as_ref().is_some_and(|value| !value.is_empty()) {
+            return Err("browser set_value requires a value".into());
+        }
+
+        let result = android_browser_interact(target, operation, value.as_deref())?;
+        if result.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("browser interaction receipt exceeds native evidence limit".into());
+        }
+        let receipt = browser_receipt(&result)?;
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified Android browser {operation} interaction"),
+                value: ActionValue::Fields(BTreeMap::from([
+                    ("operation".into(), operation.to_owned()),
+                    ("target".into(), target.to_owned()),
+                    ("receipt".into(), receipt.clone()),
+                    ("platform".into(), result),
+                ])),
+                evidence: vec![
+                    "android-webview-browser".into(),
+                    format!("operation:{operation}"),
+                    format!("receipt:{receipt}"),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+fn browser_receipt(result: &str) -> Result<String, String> {
+    let receipt = result
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("receipt="))
+        .ok_or_else(|| "browser interaction is missing a platform receipt".to_owned())?;
+    if !receipt.starts_with("android-webview:") || receipt.len() > 256 {
+        return Err("browser interaction platform receipt is invalid".into());
+    }
+    Ok(receipt.to_owned())
+}
+
+fn android_browser_observe(target: &str) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android browser thread: {error}"))?;
+    let jtarget = env
+        .new_string(target)
+        .map_err(|error| format!("encode browser observe target: {error}"))?;
+    let jtarget_object = JObject::from(jtarget);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdBrowserPlatform",
+            "observe",
+            "(Ljava/lang/String;)[B",
+            &[JValue::Object(&jtarget_object)],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android browser observe boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android browser observe response: {error}"))?;
+    decode_android_browser_result(&bytes)
+}
+
+fn android_browser_interact(
+    target: &str,
+    operation: &str,
+    value: Option<&str>,
+) -> Result<String, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android browser thread: {error}"))?;
+    let jtarget = env
+        .new_string(target)
+        .map_err(|error| format!("encode browser interaction target: {error}"))?;
+    let joperation = env
+        .new_string(operation)
+        .map_err(|error| format!("encode browser interaction operation: {error}"))?;
+    let jvalue = env
+        .new_string(value.unwrap_or_default())
+        .map_err(|error| format!("encode browser interaction value: {error}"))?;
+    let jtarget_object = JObject::from(jtarget);
+    let joperation_object = JObject::from(joperation);
+    let jvalue_object = JObject::from(jvalue);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdBrowserPlatform",
+            "interact",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)[B",
+            &[
+                JValue::Object(&jtarget_object),
+                JValue::Object(&joperation_object),
+                JValue::Object(&jvalue_object),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android browser interaction boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android browser interaction response: {error}"))?;
+    decode_android_browser_result(&bytes)
+}
+
+fn decode_android_browser_result(bytes: &[u8]) -> Result<String, String> {
+    let mut cursor = PlatformCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_BROWSER_PROTOCOL_VERSION {
+        return Err("unsupported Android browser platform protocol".into());
+    }
+    let success = cursor.u8()?;
+    let message = cursor.string()?;
+    if !cursor.finished() || message.len() > MAX_PLATFORM_TEXT_BYTES {
+        return Err("invalid Android browser response framing".into());
+    }
+    match success {
+        1 if !message.trim().is_empty() => Ok(message),
+        0 => Err(format!("Android browser operation failed: {message}")),
+        _ => Err("invalid Android browser platform status".into()),
+    }
 }
 
 fn android_platform_receipt(method: &str, value: &str) -> Result<String, String> {
@@ -913,6 +1155,45 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .evidence
                         .iter()
                         .any(|item| item.starts_with("status:2"))
+            }
+            ("web.search", TypedAction::WebSearch { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-https-search")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "provider-boundary:runtime-configured")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("status:2"))
+            }
+            ("browser.observe", TypedAction::BrowserObserve { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-webview-browser")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "operation:observe")
+            }
+            ("browser.interact", TypedAction::BrowserInteract { operation, .. }) => {
+                (operation == "click" || operation == "set_value")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "android-webview-browser")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.strip_prefix("operation:") == Some(operation.as_str()))
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("receipt:android-webview:"))
             }
             ("file.read", TypedAction::FileRead { .. }) => {
                 output
@@ -1808,13 +2089,55 @@ fn run_constrained_device_planner(
     })
 }
 
-fn governed_external_action_plan(
+fn governed_explicit_action_plan(
     user_message: &str,
 ) -> Result<Option<AssistantActionPlan>, String> {
     let trimmed = user_message.trim();
     let lower = trimmed.to_ascii_lowercase();
 
-    let canonical = if lower.starts_with("set clipboard to ") {
+    let canonical = if lower.starts_with("search web for ") {
+        let query = trimmed
+            .get("search web for ".len()..)
+            .ok_or_else(|| "web search command boundary failed".to_owned())?;
+        if query.trim().is_empty()
+            || query
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|web.search|{query}\nEND"
+        ))
+    } else if lower.starts_with("observe browser ") {
+        let target = trimmed
+            .get("observe browser ".len()..)
+            .ok_or_else(|| "browser observe command boundary failed".to_owned())?;
+        if target.trim().is_empty()
+            || target
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.observe|{target}\nEND"
+        ))
+    } else if lower.starts_with("browser click ") {
+        let target = trimmed
+            .get("browser click ".len()..)
+            .ok_or_else(|| "browser interaction command boundary failed".to_owned())?;
+        if target.trim().is_empty()
+            || target
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tclick\nEND"
+        ))
+    } else if lower.starts_with("set clipboard to ") {
         let value = trimmed
             .get("set clipboard to ".len()..)
             .ok_or_else(|| "clipboard command boundary failed".to_owned())?;
@@ -1870,6 +2193,19 @@ fn external_write_approval(
             .get(&node.id)
             .ok_or_else(|| "external-write action payload is missing".to_owned())?;
         match action {
+            TypedAction::BrowserInteract {
+                target,
+                operation,
+                value,
+            } if (operation == "click" && value.is_none())
+                || (operation == "set_value"
+                    && value.as_ref().is_some_and(|value| !value.is_empty())) =>
+            {
+                capabilities.insert("browser.interact".to_owned());
+                rationales.push(format!(
+                    "interact with the controlled browser using {operation} on selector {target}"
+                ));
+            }
             TypedAction::DeviceInteract {
                 surface,
                 operation,
@@ -1926,7 +2262,10 @@ fn execute_android_verified_actions(
     } = context;
     let supported = [
         "device.observe",
+        "web.search",
         "web.fetch",
+        "browser.observe",
+        "browser.interact",
         "file.read",
         "file.write",
         "artifact.download",
@@ -1959,6 +2298,21 @@ fn execute_android_verified_actions(
                 CapabilityDomain::Device,
                 SideEffectClass::ReadOnly,
             ),
+            "web.search" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("web.search".into()),
+                    1,
+                    CapabilityDomain::Web,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
             "web.fetch" => {
                 let mut descriptor = CapabilityDescriptor::new(
                     CapabilityId("web.fetch".into()),
@@ -1971,6 +2325,40 @@ fn execute_android_verified_actions(
                         AuthorityScope::new("network.read")
                             .map_err(|error| format!("network scope: {error:?}"))?,
                     );
+                }
+                descriptor
+            }
+            "browser.observe" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("browser.observe".into()),
+                    1,
+                    CapabilityDomain::Browser,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.extend([
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                        AuthorityScope::new("browser.observe")
+                            .map_err(|error| format!("browser observe scope: {error:?}"))?,
+                    ]);
+                }
+                descriptor
+            }
+            "browser.interact" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("browser.interact".into()),
+                    1,
+                    CapabilityDomain::Browser,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.extend([
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                        AuthorityScope::new("browser.interact")
+                            .map_err(|error| format!("browser interaction scope: {error:?}"))?,
+                    ]);
                 }
                 descriptor
             }
@@ -2078,10 +2466,31 @@ fn execute_android_verified_actions(
             )
             .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
     }
+    if fabric_capabilities.contains("web.search") {
+        fabric
+            .register_adapter(CapabilityId("web.search".into()), AndroidWebSearchAdapter)
+            .map_err(|error| format!("register Android WebSearch adapter: {error:?}"))?;
+    }
     if fabric_capabilities.contains("web.fetch") {
         fabric
             .register_adapter(CapabilityId("web.fetch".into()), AndroidWebFetchAdapter)
             .map_err(|error| format!("register Android HTTPS adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("browser.observe") {
+        fabric
+            .register_adapter(
+                CapabilityId("browser.observe".into()),
+                AndroidBrowserObserveAdapter,
+            )
+            .map_err(|error| format!("register Android browser observe adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("browser.interact") {
+        fabric
+            .register_adapter(
+                CapabilityId("browser.interact".into()),
+                AndroidBrowserInteractAdapter,
+            )
+            .map_err(|error| format!("register Android browser interaction adapter: {error:?}"))?;
     }
     if fabric_capabilities.contains("file.read") || fabric_capabilities.contains("file.write") {
         let adapter = AndroidScopedFileAdapter::new(model.capability_root.clone())?;
@@ -2127,6 +2536,12 @@ fn execute_android_verified_actions(
             AuthorityScope::new("file.app_private")
                 .map_err(|error| format!("file authority scope: {error:?}"))?,
         );
+    if fabric_capabilities.contains("browser.observe") {
+        authority = authority.with_scope(
+            AuthorityScope::new("browser.observe")
+                .map_err(|error| format!("browser observe authority scope: {error:?}"))?,
+        );
+    }
     if action_plan
         .graph
         .actions
@@ -2137,6 +2552,12 @@ fn execute_android_verified_actions(
             return Err("external-write action requires explicit chat approval".into());
         }
         authority.allow_external_write = true;
+        if fabric_capabilities.contains("browser.interact") {
+            authority = authority.with_scope(
+                AuthorityScope::new("browser.interact")
+                    .map_err(|error| format!("browser interaction authority scope: {error:?}"))?,
+            );
+        }
         if fabric_capabilities.contains("device.interact") {
             authority = authority.with_scope(
                 AuthorityScope::new("device.clipboard.write")
@@ -2286,7 +2707,7 @@ fn submit_chat_reserved(
         .record_reasoning_cycle_report(task_id, &report)
         .map_err(|error| format!("record reasoning cycle evidence: {error:?}"))?;
 
-    let planner_outcome = if let Some(plan) = governed_external_action_plan(user_message)? {
+    let planner_outcome = if let Some(plan) = governed_explicit_action_plan(user_message)? {
         NativeActionPlanningOutcome::Actions(plan)
     } else {
         match governed_device_surfaces(user_message) {
@@ -3322,6 +3743,170 @@ fn production_capability_probe(
         return Err("private-network web.fetch was not rejected".into());
     }
 
+    let search_action = TypedAction::WebSearch {
+        query: "NTD97 sovereign mobile intelligence".into(),
+        max_results: 5,
+    };
+    let mut search_descriptor = CapabilityDescriptor::new(
+        CapabilityId("web.search".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("web.search descriptor: {error:?}"))?;
+    let search_network_scope = AuthorityScope::new("network.read")
+        .map_err(|error| format!("web.search network scope: {error:?}"))?;
+    search_descriptor
+        .required_scopes
+        .push(search_network_scope.clone());
+    search_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize web.search descriptor: {error:?}"))?;
+    if AuthorityGrant::new().permits(&search_descriptor).is_ok() {
+        return Err("web.search was not denied without network authority".into());
+    }
+    AuthorityGrant::new()
+        .with_scope(search_network_scope)
+        .permits(&search_descriptor)
+        .map_err(|error| format!("web.search explicit authority rejected: {error:?}"))?;
+    let mut search = AndroidWebSearchAdapter;
+    let search_result = search
+        .execute(ntd_runtime::ActionId(97), &search_action)
+        .map_err(|error| format!("production web.search probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: search_output,
+        ..
+    } = search_result
+    else {
+        return Err("production web.search probe did not complete".into());
+    };
+    if verifier.verify(&search_descriptor, &search_action, &search_output)
+        != ActionVerification::Accept
+    {
+        return Err("production web.search evidence verification failed".into());
+    }
+
+    let browser_observe_action = TypedAction::BrowserObserve {
+        target: "https://example.com/".into(),
+    };
+    let mut browser_observe_descriptor = CapabilityDescriptor::new(
+        CapabilityId("browser.observe".into()),
+        1,
+        CapabilityDomain::Browser,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("browser.observe descriptor: {error:?}"))?;
+    let browser_network_scope = AuthorityScope::new("network.read")
+        .map_err(|error| format!("browser network scope: {error:?}"))?;
+    let browser_observe_scope = AuthorityScope::new("browser.observe")
+        .map_err(|error| format!("browser observe scope: {error:?}"))?;
+    browser_observe_descriptor
+        .required_scopes
+        .extend([browser_network_scope.clone(), browser_observe_scope.clone()]);
+    browser_observe_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize browser.observe descriptor: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(browser_network_scope.clone())
+        .permits(&browser_observe_descriptor)
+        .is_ok()
+    {
+        return Err("browser observe was not denied without browser scope".into());
+    }
+    AuthorityGrant::new()
+        .with_scope(browser_network_scope.clone())
+        .with_scope(browser_observe_scope)
+        .permits(&browser_observe_descriptor)
+        .map_err(|error| format!("browser observe explicit authority rejected: {error:?}"))?;
+    let mut browser_observe = AndroidBrowserObserveAdapter;
+    let browser_observe_result = browser_observe
+        .execute(ntd_runtime::ActionId(98), &browser_observe_action)
+        .map_err(|error| format!("production browser.observe probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_observe_output,
+        ..
+    } = browser_observe_result
+    else {
+        return Err("production browser.observe probe did not complete".into());
+    };
+    if verifier.verify(
+        &browser_observe_descriptor,
+        &browser_observe_action,
+        &browser_observe_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.observe evidence verification failed".into());
+    }
+
+    let browser_private_blocked = browser_observe
+        .execute(
+            ntd_runtime::ActionId(99),
+            &TypedAction::BrowserObserve {
+                target: "https://127.0.0.1/".into(),
+            },
+        )
+        .is_err();
+    if !browser_private_blocked {
+        return Err("private-network browser target was not rejected".into());
+    }
+
+    let browser_interact_scope = AuthorityScope::new("browser.interact")
+        .map_err(|error| format!("browser interaction scope: {error:?}"))?;
+    let mut browser_interact_descriptor = CapabilityDescriptor::new(
+        CapabilityId("browser.interact".into()),
+        1,
+        CapabilityDomain::Browser,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("browser.interact descriptor: {error:?}"))?;
+    browser_interact_descriptor
+        .required_scopes
+        .extend([browser_network_scope, browser_interact_scope.clone()]);
+    browser_interact_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize browser.interact descriptor: {error:?}"))?;
+    let browser_interact_network_scope = AuthorityScope::new("network.read")
+        .map_err(|error| format!("browser interaction network scope: {error:?}"))?;
+    if AuthorityGrant::new()
+        .with_scope(browser_interact_network_scope.clone())
+        .with_scope(browser_interact_scope.clone())
+        .permits(&browser_interact_descriptor)
+        .is_ok()
+    {
+        return Err("browser interaction was not denied without external-write authority".into());
+    }
+    let mut browser_interact_authority = AuthorityGrant::new()
+        .with_scope(browser_interact_network_scope)
+        .with_scope(browser_interact_scope);
+    browser_interact_authority.allow_external_write = true;
+    browser_interact_authority
+        .permits(&browser_interact_descriptor)
+        .map_err(|error| format!("browser interaction explicit authority rejected: {error:?}"))?;
+    let browser_interact_action = TypedAction::BrowserInteract {
+        target: "body".into(),
+        operation: "click".into(),
+        value: None,
+    };
+    let mut browser_interact = AndroidBrowserInteractAdapter;
+    let browser_interact_result = browser_interact
+        .execute(ntd_runtime::ActionId(100), &browser_interact_action)
+        .map_err(|error| format!("production browser.interact probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_interact_output,
+        ..
+    } = browser_interact_result
+    else {
+        return Err("production browser.interact probe did not complete".into());
+    };
+    if verifier.verify(
+        &browser_interact_descriptor,
+        &browser_interact_action,
+        &browser_interact_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.interact receipt verification failed".into());
+    }
+
     let relative = "m13/probe.txt";
     let write_action = TypedAction::FileWrite {
         path: relative.into(),
@@ -3561,7 +4146,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_interact=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
@@ -3837,6 +4422,91 @@ mod tests {
             None
         );
         assert_eq!(governed_device_surfaces("tell me a story"), None);
+    }
+
+    #[test]
+    fn governed_explicit_web_and_browser_commands_materialize_canonical_actions() {
+        let search = governed_explicit_action_plan("search web for NTD97 mobile")
+            .expect("search plan")
+            .expect("search action");
+        assert!(matches!(
+            search.payloads.get(&1),
+            Some(TypedAction::WebSearch {
+                query,
+                max_results: 5
+            }) if query == "NTD97 mobile"
+        ));
+
+        let observe = governed_explicit_action_plan("observe browser https://example.com/")
+            .expect("observe plan")
+            .expect("observe action");
+        assert_eq!(
+            observe.payloads.get(&1),
+            Some(&TypedAction::BrowserObserve {
+                target: "https://example.com/".into(),
+            })
+        );
+
+        let click = governed_explicit_action_plan("browser click body")
+            .expect("click plan")
+            .expect("click action");
+        assert_eq!(
+            click.payloads.get(&1),
+            Some(&TypedAction::BrowserInteract {
+                target: "body".into(),
+                operation: "click".into(),
+                value: None,
+            })
+        );
+        assert_eq!(
+            click.graph.actions[0].side_effect,
+            SideEffectClass::ExternalWrite
+        );
+    }
+
+    #[test]
+    fn browser_interaction_requires_chat_approval_and_receipt_evidence() {
+        let plan = governed_explicit_action_plan("browser click body")
+            .expect("click plan")
+            .expect("click action");
+        let approval = external_write_approval(&plan)
+            .expect("approval policy")
+            .expect("approval requirement");
+        assert_eq!(approval.0, "browser.interact");
+        assert!(approval.1.contains("click"));
+
+        let descriptor = CapabilityDescriptor::new(
+            CapabilityId("browser.interact".into()),
+            1,
+            CapabilityDomain::Browser,
+            SideEffectClass::ExternalWrite,
+        )
+        .expect("browser descriptor");
+        let action = plan.payloads.get(&1).expect("browser action");
+        let accepted = ActionOutput {
+            summary: "verified browser click".into(),
+            value: ActionValue::None,
+            evidence: vec![
+                "android-webview-browser".into(),
+                "operation:click".into(),
+                "receipt:android-webview:click:1".into(),
+            ],
+        };
+        let mut verifier = AndroidProductionVerifier;
+        assert_eq!(
+            verifier.verify(&descriptor, action, &accepted),
+            ActionVerification::Accept
+        );
+
+        let rejected = ActionOutput {
+            summary: "browser click claimed".into(),
+            value: ActionValue::None,
+            evidence: vec!["android-webview-browser".into(), "operation:click".into()],
+        };
+        assert!(matches!(
+            verifier.verify(&descriptor, action, &rejected),
+            ActionVerification::Reject { .. }
+        ));
     }
 
     #[test]
