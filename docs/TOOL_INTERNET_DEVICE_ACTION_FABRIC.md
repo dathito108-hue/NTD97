@@ -62,6 +62,23 @@ The registry rejects domain mismatches before adapter execution.
 
 These are portable action contracts, not implementations of HTTP, WebView, Android Accessibility, Storage Access Framework or another platform API.
 
+## 3.1 Production WebSearch normalization
+
+The Android WebSearch platform boundary remains provider-independent. NTD97 does not ship a search-provider SDK, hostname or provider-specific JSON schema.
+
+A user configuration supplies:
+
+- a public-HTTPS endpoint template containing `{query}` and optionally `{count}`;
+- a dot-separated path to the result array;
+- relative title and URL paths;
+- an optional snippet path.
+
+The Android boundary fetches the provider JSON through the same hardened public-HTTPS transport, maps it to bounded canonical `title / URL / snippet` items, drops unsafe/non-public result URLs and deduplicates URLs before data crosses into native cognition.
+
+The native bridge receives a binary normalized-search response rather than raw provider JSON. It materializes an `ActionValue::TextList`, binds the result count and canonical SHA-256 digest into evidence, and the production verifier recomputes both before commit. Endpoint evidence exposes only the final HTTPS source host, not the configured path/query.
+
+Clearing the configuration disables WebSearch immediately and restores fail-closed behavior.
+
 ## 4. Authority model
 
 `AuthorityGrant` contains the scopes granted for the current execution attempt plus explicit switches for external writes and irreversible actions.

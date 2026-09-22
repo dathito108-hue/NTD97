@@ -256,7 +256,8 @@ public final class NtdRealModelProbeActivity extends Activity {
         Thread probeThread = new Thread(() -> {
             String result = prefix;
             try {
-                if (!NtdWebPlatform.configureSearchEndpoint(this, "")) {
+                if (!NtdWebPlatform.configureSearchProvider(
+                        this, "", "", "", "", "")) {
                     throw new IOException("failed to clear WebSearch endpoint");
                 }
                 byte[] unconfiguredSearch =
@@ -268,12 +269,27 @@ public final class NtdRealModelProbeActivity extends Activity {
                 }
                 result = result + "web_search_unconfigured_block=ok\n";
 
-                boolean searchConfigured = NtdWebPlatform.configureSearchEndpoint(
+                boolean searchConfigured = NtdWebPlatform.configureSearchProvider(
                         this,
-                        "https://example.com/?q={query}&n={count}");
+                        "https://api.github.com/search/repositories?q={query}&per_page={count}",
+                        "items",
+                        "full_name",
+                        "html_url",
+                        "description");
                 if (!searchConfigured) {
                     throw new IOException("failed to configure provider-independent search probe");
                 }
+                NtdWebPlatform.initialize(this);
+                NtdWebPlatform.SearchConfiguration searchConfiguration =
+                        NtdWebPlatform.searchConfiguration();
+                if (!searchConfiguration.configured()
+                        || !"items".equals(searchConfiguration.resultsPath)
+                        || !"full_name".equals(searchConfiguration.titlePath)
+                        || !"html_url".equals(searchConfiguration.urlPath)
+                        || !"description".equals(searchConfiguration.snippetPath)) {
+                    throw new IOException("WebSearch configuration did not persist/reload");
+                }
+                result = result + "web_search_config=ok\n";
                 result = result + new String(
                         NtdNativeRuntimeHost.runProductionCapabilityProbe(this),
                         StandardCharsets.UTF_8);
