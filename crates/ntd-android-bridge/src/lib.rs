@@ -1318,6 +1318,102 @@ impl CapabilityAdapter for AndroidArtifactDownloadAdapter {
     }
 }
 
+#[derive(Debug, Clone)]
+struct AndroidArtifactUploadAdapter {
+    file: AndroidScopedFileAdapter,
+}
+
+impl AndroidArtifactUploadAdapter {
+    fn new(root: PathBuf) -> Result<Self, String> {
+        Ok(Self {
+            file: AndroidScopedFileAdapter::new(root)?,
+        })
+    }
+
+    fn source_bytes(&self, relative: &str) -> Result<Vec<u8>, String> {
+        let target = self.file.scoped_path(relative)?;
+        let bytes = fs::read(&target).map_err(|error| format!("read upload source: {error}"))?;
+        if bytes.is_empty() || bytes.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("upload source is empty or exceeds native limit".into());
+        }
+        Ok(bytes)
+    }
+}
+
+impl CapabilityAdapter for AndroidArtifactUploadAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::ArtifactUpload { path, .. } = action else {
+            return Err("Android artifact upload adapter received wrong action".into());
+        };
+        let bytes = self.source_bytes(path)?;
+        let digest = sha256(&bytes);
+        let mut resume_token = Vec::with_capacity(33);
+        resume_token.push(1);
+        resume_token.extend_from_slice(&digest);
+        Ok(AdapterResult::Suspended {
+            resume_token,
+            note: "artifact upload source hashed and ready for idempotent PUT".into(),
+        })
+    }
+
+    fn resume(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+        resume_token: &[u8],
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::ArtifactUpload { url, path } = action else {
+            return Err("Android artifact upload adapter received wrong resume action".into());
+        };
+        if resume_token.len() != 33 || resume_token[0] != 1 {
+            return Err("invalid artifact upload resume token".into());
+        }
+        let mut expected = [0u8; 32];
+        expected.copy_from_slice(&resume_token[1..]);
+        let bytes = self.source_bytes(path)?;
+        let digest = sha256(&bytes);
+        if digest != expected {
+            return Err("artifact upload source changed after suspension".into());
+        }
+
+        let result = match android_https_put(url, &bytes, &digest) {
+            Ok(result) => result,
+            Err(reason) => {
+                return Ok(AdapterResult::Retryable {
+                    reason,
+                    resume_token: Some(resume_token.to_vec()),
+                })
+            }
+        };
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified idempotent artifact upload: {path}"),
+                value: ActionValue::Fields(BTreeMap::from([
+                    ("path".into(), path.clone()),
+                    ("bytes".into(), bytes.len().to_string()),
+                    ("sha256".into(), digest_hex(&digest)),
+                    ("url".into(), result.final_url.clone()),
+                    ("status".into(), result.status.to_string()),
+                ])),
+                evidence: vec![
+                    "android-artifact-upload".into(),
+                    "transport:https-put".into(),
+                    format!("status:{}", result.status),
+                    format!("sha256:{}", digest_hex(&digest)),
+                    format!("bytes:{}", bytes.len()),
+                    format!("url:{}", result.final_url),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 struct AndroidProductionVerifier;
 
