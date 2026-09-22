@@ -188,7 +188,7 @@ fn parse_action_line(
         "file.read" | "file.grant.read" => TypedAction::FileRead {
             path: payload.to_owned(),
         },
-        "file.write" | "file.grant.write" => {
+        "file.write" => {
             let (path, text) = payload
                 .split_once('\t')
                 .ok_or(AssistantPlanError::InvalidPayload)?;
@@ -202,6 +202,26 @@ fn parse_action_line(
             }
             TypedAction::FileWrite {
                 path: path.to_owned(),
+                bytes: text.as_bytes().to_vec(),
+            }
+        }
+        "file.grant.write" => {
+            let mut parts = payload.splitn(3, '\t');
+            let alias = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let path = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let text = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            if alias.trim().is_empty()
+                || path.trim().is_empty()
+                || alias != alias.trim()
+                || path != path.trim()
+                || text.is_empty()
+                || text.contains('\r')
+                || text.contains('\n')
+            {
+                return Err(AssistantPlanError::InvalidPayload);
+            }
+            TypedAction::FileWrite {
+                path: format!("{alias}\t{path}"),
                 bytes: text.as_bytes().to_vec(),
             }
         }
@@ -689,6 +709,13 @@ END",
             plan.payloads.get(&1),
             Some(&TypedAction::FileRead {
                 path: "shared\tnotes/read.txt".into(),
+            })
+        );
+        assert_eq!(
+            plan.payloads.get(&2),
+            Some(&TypedAction::FileWrite {
+                path: "shared\tnotes/write.txt".into(),
+                bytes: b"hello".to_vec(),
             })
         );
         assert_eq!(
