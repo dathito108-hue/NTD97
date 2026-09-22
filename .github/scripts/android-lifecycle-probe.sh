@@ -66,7 +66,12 @@ for REQUIRED in \
   chat_restore=ok \
   chat_store=ok \
   chat_cancel=ok \
-  chat_status=ok
+  chat_status=ok \
+  web_fetch=ok \
+  web_private_block=ok \
+  file_write=ok \
+  file_read=ok \
+  file_rollback=ok
 do
   printf '%s\n' "${REAL_MODEL_PROBE}" | grep -Fxq "${REQUIRED}"
 done
