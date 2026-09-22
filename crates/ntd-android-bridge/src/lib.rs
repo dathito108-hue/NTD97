@@ -4,6 +4,8 @@
 use std::{
     collections::BTreeMap,
     fs,
+    io::Write,
+    path::{Component, Path, PathBuf},
     ptr::null_mut,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -12,9 +14,9 @@ use std::{
 };
 
 use jni::{
-    objects::{JByteArray, JClass, JString},
+    objects::{JByteArray, JClass, JObject, JString, JValue},
     sys::{jboolean, jbyteArray, jint, jlong},
-    JNIEnv,
+    JNIEnv, JavaVM,
 };
 use ntd_assimilation::{
     activate_thin_generative_capsule, verify_native_package_with_shards, AssetKind,
@@ -31,7 +33,7 @@ use ntd_runtime::{
     execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
     parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
     ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
-    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, CapabilityAdapter,
+    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope, CapabilityAdapter,
     CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
     CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
     GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
@@ -56,6 +58,10 @@ const CHAT_STATUS_COMPLETE: i32 = 2;
 const CHAT_STATUS_CANCELLED: i32 = 3;
 const CHAT_STATUS_FAILED: i32 = 4;
 const ACTION_PLANNER_MAX_NEW_TOKENS: usize = 20;
+const MAX_PLATFORM_TEXT_BYTES: usize = 512 * 1024;
+const PLATFORM_WEB_PROTOCOL_VERSION: u8 = 1;
+
+static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 
 struct NativeChatModel {
     asset_id: String,
@@ -64,6 +70,7 @@ struct NativeChatModel {
     resolver: FileBackedTensorResolver,
     tokenizer: LlamaSpmTokenizer,
     context_limit: usize,
+    capability_root: PathBuf,
 }
 
 struct NativeModelReasoningProbe<'a> {
@@ -233,6 +240,397 @@ impl ActionVerifier for AndroidResourceVerifier {
             };
         }
         ActionVerification::Accept
+    }
+}
+
+#[derive(Debug)]
+struct AndroidWebFetchResult {
+    status: u32,
+    final_url: String,
+    content_type: String,
+    body: Vec<u8>,
+}
+
+struct AndroidWebFetchAdapter;
+
+impl CapabilityAdapter for AndroidWebFetchAdapter {
+    fn execute(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        let TypedAction::WebFetch { url } = action else {
+            return Err("Android web adapter only supports web.fetch".into());
+        };
+        let result = android_https_fetch(url)?;
+        let text = String::from_utf8(result.body)
+            .map_err(|_| "web.fetch response is not valid UTF-8 text".to_owned())?;
+        if text.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("web.fetch text exceeds native evidence limit".into());
+        }
+
+        Ok(AdapterResult::Completed {
+            output: ActionOutput {
+                summary: format!("verified HTTPS fetch status {}", result.status),
+                value: ActionValue::Text(text),
+                evidence: vec![
+                    "android-https-fetch".into(),
+                    format!("status:{}", result.status),
+                    format!("url:{}", result.final_url),
+                    format!("content-type:{}", result.content_type),
+                ],
+            },
+            rollback_token: None,
+        })
+    }
+}
+
+fn android_https_fetch(url: &str) -> Result<AndroidWebFetchResult, String> {
+    let vm = JAVA_VM.get().ok_or_else(|| {
+        "Android JavaVM is not attached to the native capability runtime".to_owned()
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|error| format!("attach Android platform thread: {error}"))?;
+    let jurl = env
+        .new_string(url)
+        .map_err(|error| format!("encode web.fetch URL for Android: {error}"))?;
+    let jurl_object = JObject::from(jurl);
+    let encoded = env
+        .call_static_method(
+            "ai/ntd97/mobile/NtdWebPlatform",
+            "fetch",
+            "(Ljava/lang/String;)[B",
+            &[JValue::Object(&jurl_object)],
+        )
+        .and_then(|value| value.l())
+        .map_err(|error| format!("invoke Android HTTPS platform boundary: {error}"))?;
+    let encoded = JByteArray::from(encoded);
+    let bytes = env
+        .convert_byte_array(&encoded)
+        .map_err(|error| format!("decode Android HTTPS platform response: {error}"))?;
+    decode_android_web_fetch_result(&bytes)
+}
+
+fn decode_android_web_fetch_result(bytes: &[u8]) -> Result<AndroidWebFetchResult, String> {
+    let mut cursor = PlatformCursor::new(bytes);
+    if cursor.u8()? != PLATFORM_WEB_PROTOCOL_VERSION {
+        return Err("unsupported Android web platform protocol".into());
+    }
+    let success = cursor.u8()?;
+    if success == 0 {
+        return Err(format!("Android HTTPS fetch failed: {}", cursor.string()?));
+    }
+    if success != 1 {
+        return Err("invalid Android web platform status".into());
+    }
+
+    let status = cursor.u32()?;
+    if !(200..300).contains(&status) {
+        return Err(format!("Android HTTPS fetch returned status {status}"));
+    }
+    let final_url = cursor.string()?;
+    let content_type = cursor.string()?;
+    let body = cursor.bytes()?;
+    if body.len() > MAX_PLATFORM_TEXT_BYTES || !cursor.finished() {
+        return Err("invalid Android HTTPS response framing".into());
+    }
+    Ok(AndroidWebFetchResult {
+        status,
+        final_url,
+        content_type,
+        body,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct AndroidScopedFileAdapter {
+    root: PathBuf,
+}
+
+impl AndroidScopedFileAdapter {
+    fn new(root: PathBuf) -> Result<Self, String> {
+        fs::create_dir_all(&root)
+            .map_err(|error| format!("create app-private capability root: {error}"))?;
+        let root = fs::canonicalize(root)
+            .map_err(|error| format!("canonicalize app-private capability root: {error}"))?;
+        Ok(Self { root })
+    }
+
+    fn scoped_path(&self, relative: &str) -> Result<PathBuf, String> {
+        let path = Path::new(relative);
+        if relative.trim().is_empty() || path.is_absolute() {
+            return Err("file capability path must be relative to app-private storage".into());
+        }
+        let mut target = self.root.clone();
+        for component in path.components() {
+            match component {
+                Component::Normal(name) => target.push(name),
+                _ => return Err("file capability path traversal is not allowed".into()),
+            }
+        }
+
+        let mut current = self.root.clone();
+        if let Ok(relative_target) = target.strip_prefix(&self.root) {
+            for component in relative_target.components() {
+                current.push(component.as_os_str());
+                if current.exists()
+                    && fs::symlink_metadata(&current)
+                        .map_err(|error| format!("inspect app-private path: {error}"))?
+                        .file_type()
+                        .is_symlink()
+                {
+                    return Err(
+                        "symbolic links are not allowed in app-private capability paths".into(),
+                    );
+                }
+            }
+        }
+        Ok(target)
+    }
+
+    fn read_text(&self, relative: &str) -> Result<String, String> {
+        let target = self.scoped_path(relative)?;
+        let bytes = fs::read(&target).map_err(|error| format!("read app-private file: {error}"))?;
+        if bytes.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("app-private file exceeds native evidence limit".into());
+        }
+        String::from_utf8(bytes).map_err(|_| "app-private file is not UTF-8 text".into())
+    }
+
+    fn write_atomic(
+        &self,
+        action_id: ntd_runtime::ActionId,
+        relative: &str,
+        bytes: &[u8],
+    ) -> Result<Vec<u8>, String> {
+        if bytes.len() > MAX_PLATFORM_TEXT_BYTES {
+            return Err("app-private file write exceeds native limit".into());
+        }
+        let target = self.scoped_path(relative)?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| "app-private file path has no parent".to_owned())?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create app-private file directory: {error}"))?;
+        let canonical_parent = fs::canonicalize(parent)
+            .map_err(|error| format!("canonicalize app-private file directory: {error}"))?;
+        if !canonical_parent.starts_with(&self.root) {
+            return Err("app-private file directory escaped capability root".into());
+        }
+
+        let rollback = match fs::read(&target) {
+            Ok(previous) => {
+                if previous.len() > MAX_PLATFORM_TEXT_BYTES {
+                    return Err("existing app-private file exceeds rollback limit".into());
+                }
+                let mut token = Vec::with_capacity(previous.len() + 5);
+                token.push(1);
+                token.extend_from_slice(
+                    &u32::try_from(previous.len())
+                        .map_err(|_| "rollback length overflow".to_owned())?
+                        .to_le_bytes(),
+                );
+                token.extend_from_slice(&previous);
+                token
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => vec![0],
+            Err(error) => return Err(format!("snapshot app-private file for rollback: {error}")),
+        };
+
+        let file_name = target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "invalid app-private file name".to_owned())?;
+        let temp = canonical_parent.join(format!(".{file_name}.ntd97-{}", action_id.0));
+        let mut output = fs::File::create(&temp)
+            .map_err(|error| format!("create app-private temp file: {error}"))?;
+        output
+            .write_all(bytes)
+            .map_err(|error| format!("write app-private temp file: {error}"))?;
+        output
+            .sync_all()
+            .map_err(|error| format!("sync app-private temp file: {error}"))?;
+        drop(output);
+        fs::rename(&temp, &target).map_err(|error| format!("commit app-private file: {error}"))?;
+        Ok(rollback)
+    }
+
+    fn rollback_write(&self, relative: &str, token: &[u8]) -> Result<(), String> {
+        let target = self.scoped_path(relative)?;
+        match token.first().copied() {
+            Some(0) if token.len() == 1 => match fs::remove_file(&target) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(format!("rollback app-private file removal: {error}")),
+            },
+            Some(1) if token.len() >= 5 => {
+                let len = u32::from_le_bytes([token[1], token[2], token[3], token[4]]) as usize;
+                if len > MAX_PLATFORM_TEXT_BYTES || token.len() != len + 5 {
+                    return Err("invalid app-private rollback token".into());
+                }
+                let parent = target
+                    .parent()
+                    .ok_or_else(|| "rollback path has no parent".to_owned())?;
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("create rollback directory: {error}"))?;
+                fs::write(target, &token[5..])
+                    .map_err(|error| format!("restore app-private rollback bytes: {error}"))
+            }
+            _ => Err("invalid app-private rollback token".into()),
+        }
+    }
+}
+
+impl CapabilityAdapter for AndroidScopedFileAdapter {
+    fn execute(
+        &mut self,
+        action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+    ) -> Result<AdapterResult, String> {
+        match action {
+            TypedAction::FileRead { path } => {
+                let text = self.read_text(path)?;
+                Ok(AdapterResult::Completed {
+                    output: ActionOutput {
+                        summary: format!("verified app-private file read: {path}"),
+                        value: ActionValue::Text(text),
+                        evidence: vec![
+                            "android-app-private-file".into(),
+                            format!("path:{path}"),
+                            "operation:read".into(),
+                        ],
+                    },
+                    rollback_token: None,
+                })
+            }
+            TypedAction::FileWrite { path, bytes } => {
+                let rollback = self.write_atomic(action_id, path, bytes)?;
+                Ok(AdapterResult::Completed {
+                    output: ActionOutput {
+                        summary: format!("verified app-private file write: {path}"),
+                        value: ActionValue::Text(format!("{} bytes", bytes.len())),
+                        evidence: vec![
+                            "android-app-private-file".into(),
+                            format!("path:{path}"),
+                            "operation:write".into(),
+                        ],
+                    },
+                    rollback_token: Some(rollback),
+                })
+            }
+            _ => Err("Android scoped file adapter only supports file.read/file.write".into()),
+        }
+    }
+
+    fn rollback(
+        &mut self,
+        _action_id: ntd_runtime::ActionId,
+        action: &TypedAction,
+        rollback_token: &[u8],
+    ) -> Result<(), String> {
+        let TypedAction::FileWrite { path, .. } = action else {
+            return Err("rollback is only supported for file.write".into());
+        };
+        self.rollback_write(path, rollback_token)
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct AndroidProductionVerifier;
+
+impl ActionVerifier for AndroidProductionVerifier {
+    fn verify(
+        &mut self,
+        descriptor: &CapabilityDescriptor,
+        action: &TypedAction,
+        output: &ActionOutput,
+    ) -> ActionVerification {
+        let trusted = match (descriptor.id.0.as_str(), action) {
+            ("device.observe", TypedAction::DeviceObserve { .. }) => output
+                .evidence
+                .iter()
+                .any(|item| item == "android-resource-snapshot"),
+            ("web.fetch", TypedAction::WebFetch { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-https-fetch")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("status:2"))
+            }
+            ("file.read", TypedAction::FileRead { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-app-private-file")
+                    && output.evidence.iter().any(|item| item == "operation:read")
+            }
+            ("file.write", TypedAction::FileWrite { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-app-private-file")
+                    && output.evidence.iter().any(|item| item == "operation:write")
+            }
+            _ => false,
+        };
+        if !trusted || output.summary.trim().is_empty() {
+            ActionVerification::Reject {
+                reason: "Android production capability output lacks trusted evidence".into(),
+            }
+        } else {
+            ActionVerification::Accept
+        }
+    }
+}
+
+struct PlatformCursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> PlatformCursor<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8], String> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| "platform response length overflow".to_owned())?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or_else(|| "truncated platform response".to_owned())?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn u8(&mut self) -> Result<u8, String> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u32(&mut self) -> Result<u32, String> {
+        let bytes = self.take(4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    fn bytes(&mut self) -> Result<Vec<u8>, String> {
+        let len = usize::try_from(self.u32()?)
+            .map_err(|_| "platform response length does not fit usize".to_owned())?;
+        Ok(self.take(len)?.to_vec())
+    }
+
+    fn string(&mut self) -> Result<String, String> {
+        String::from_utf8(self.bytes()?).map_err(|_| "platform response is not UTF-8".into())
+    }
+
+    fn finished(&self) -> bool {
+        self.offset == self.bytes.len()
     }
 }
 
@@ -680,8 +1078,13 @@ fn open_chat_model(
     shard_root: &str,
     verify_key: &[u8],
     context_limit: usize,
+    capability_root: &str,
 ) -> Result<(), String> {
-    if asset_id.trim().is_empty() || version == 0 || context_limit == 0 {
+    if asset_id.trim().is_empty()
+        || version == 0
+        || context_limit == 0
+        || capability_root.trim().is_empty()
+    {
         return Err("invalid native chat model identity or context limit".into());
     }
     let verify_key: [u8; 32] = verify_key
@@ -712,6 +1115,11 @@ fn open_chat_model(
         return Err("native chat tokenizer vocabulary mismatch".into());
     }
     let resolver = FileBackedTensorResolver::from_activation(shard_store, &activation);
+    let capability_root = PathBuf::from(capability_root);
+    fs::create_dir_all(&capability_root)
+        .map_err(|error| format!("create native capability root: {error}"))?;
+    let capability_root = fs::canonicalize(capability_root)
+        .map_err(|error| format!("canonicalize native capability root: {error}"))?;
 
     let mut guard = lock_state();
     guard.chat_model = Some(Arc::new(NativeChatModel {
@@ -721,6 +1129,7 @@ fn open_chat_model(
         resolver,
         tokenizer,
         context_limit,
+        capability_root,
     }));
     Ok(())
 }
@@ -985,16 +1394,17 @@ fn execute_android_verified_actions(
     resources: ResourceSnapshot,
     action_plan: &AssistantActionPlan,
 ) -> Result<(), String> {
+    let supported = ["device.observe", "web.fetch", "file.read", "file.write"];
     if action_plan
         .graph
         .actions
         .iter()
-        .any(|node| node.capability.0 != "device.observe")
+        .any(|node| !supported.contains(&node.capability.0.as_str()))
     {
         conversation
             .record_action_planner_status(task_id, "unsupported")
             .map_err(|error| format!("record unsupported action plan: {error:?}"))?;
-        return Err("model requested a capability without an Android chat adapter".into());
+        return Err("model requested a capability without a production Android adapter".into());
     }
 
     conversation
@@ -1002,26 +1412,115 @@ fn execute_android_verified_actions(
         .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
 
     let mut registry = CapabilityRegistry::new();
-    registry
-        .register(
-            CapabilityDescriptor::new(
+    let mut fabric_capabilities = std::collections::BTreeSet::new();
+    for node in &action_plan.graph.actions {
+        if !fabric_capabilities.insert(node.capability.0.clone()) {
+            continue;
+        }
+
+        let mut descriptor = match node.capability.0.as_str() {
+            "device.observe" => CapabilityDescriptor::new(
                 CapabilityId("device.observe".into()),
                 1,
                 CapabilityDomain::Device,
                 SideEffectClass::ReadOnly,
-            )
-            .map_err(|error| format!("build device.observe descriptor: {error:?}"))?,
-        )
-        .map_err(|error| format!("register device.observe capability: {error:?}"))?;
+            ),
+            "web.fetch" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("web.fetch".into()),
+                    1,
+                    CapabilityDomain::Web,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("network.read")
+                            .map_err(|error| format!("network scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "file.read" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("file.read".into()),
+                    1,
+                    CapabilityDomain::File,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.app_private")
+                            .map_err(|error| format!("file scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "file.write" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("file.write".into()),
+                    1,
+                    CapabilityDomain::File,
+                    SideEffectClass::Reversible,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.rollback_supported = true;
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("file.app_private")
+                            .map_err(|error| format!("file scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            _ => unreachable!("unsupported capabilities rejected above"),
+        }
+        .map_err(|error| format!("build Android capability descriptor: {error:?}"))?;
+        descriptor
+            .normalize()
+            .map_err(|error| format!("normalize Android capability descriptor: {error:?}"))?;
+        registry
+            .register(descriptor)
+            .map_err(|error| format!("register Android capability: {error:?}"))?;
+    }
+
     let mut fabric = ActionFabric::new(registry);
-    fabric
-        .register_adapter(
-            CapabilityId("device.observe".into()),
-            AndroidResourceAdapter {
-                snapshot: resources,
-            },
+    if fabric_capabilities.contains("device.observe") {
+        fabric
+            .register_adapter(
+                CapabilityId("device.observe".into()),
+                AndroidResourceAdapter {
+                    snapshot: resources,
+                },
+            )
+            .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("web.fetch") {
+        fabric
+            .register_adapter(CapabilityId("web.fetch".into()), AndroidWebFetchAdapter)
+            .map_err(|error| format!("register Android HTTPS adapter: {error:?}"))?;
+    }
+    if fabric_capabilities.contains("file.read") || fabric_capabilities.contains("file.write") {
+        let adapter = AndroidScopedFileAdapter::new(model.capability_root.clone())?;
+        if fabric_capabilities.contains("file.read") {
+            fabric
+                .register_adapter(CapabilityId("file.read".into()), adapter.clone())
+                .map_err(|error| format!("register app-private file.read adapter: {error:?}"))?;
+        }
+        if fabric_capabilities.contains("file.write") {
+            fabric
+                .register_adapter(CapabilityId("file.write".into()), adapter)
+                .map_err(|error| format!("register app-private file.write adapter: {error:?}"))?;
+        }
+    }
+
+    let authority = AuthorityGrant::new()
+        .with_scope(
+            AuthorityScope::new("network.read")
+                .map_err(|error| format!("network authority scope: {error:?}"))?,
         )
-        .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+        .with_scope(
+            AuthorityScope::new("file.app_private")
+                .map_err(|error| format!("file authority scope: {error:?}"))?,
+        );
 
     let task = conversation
         .cognition()
@@ -1034,8 +1533,8 @@ fn execute_android_verified_actions(
         &mut fabric,
         &task,
         action_plan,
-        &AuthorityGrant::new(),
-        &mut AndroidResourceVerifier,
+        &authority,
+        &mut AndroidProductionVerifier,
         user_message,
     )
     .map_err(|error| format!("execute verified Android action plan: {error:?}"))?;
@@ -1630,6 +2129,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
     version: jint,
     capsule_path: JString<'_>,
     shard_root: JString<'_>,
+    capability_root: JString<'_>,
     verify_key: JByteArray<'_>,
     context_limit: jint,
 ) -> jboolean {
@@ -1642,6 +2142,15 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
     let Some(shard_root) = java_string(&mut env, &shard_root) else {
         return 0;
     };
+    let Some(capability_root) = java_string(&mut env, &capability_root) else {
+        return 0;
+    };
+    if JAVA_VM.get().is_none() {
+        let Ok(vm) = env.get_java_vm() else {
+            return 0;
+        };
+        let _ = JAVA_VM.set(vm);
+    }
     let Ok(version) = u32::try_from(version) else {
         return 0;
     };
@@ -1661,6 +2170,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeOpenChatM
             &shard_root,
             &verify_key,
             context_limit,
+            &capability_root,
         )
         .is_ok(),
     )
@@ -1870,6 +2380,138 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatTrans
     _class: JClass<'_>,
 ) -> jbyteArray {
     java_bytes(&env, chat_transcript().as_bytes())
+}
+
+fn production_capability_probe(capability_root: &str) -> Result<String, String> {
+    let root = PathBuf::from(capability_root);
+    let mut file = AndroidScopedFileAdapter::new(root.clone())?;
+    let mut verifier = AndroidProductionVerifier;
+
+    let mut web = AndroidWebFetchAdapter;
+    let web_action = TypedAction::WebFetch {
+        url: "https://example.com/".into(),
+    };
+    let web_result = web
+        .execute(ntd_runtime::ActionId(90), &web_action)
+        .map_err(|error| format!("production web.fetch probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: web_output, ..
+    } = web_result
+    else {
+        return Err("production web.fetch probe did not complete".into());
+    };
+    let web_descriptor = CapabilityDescriptor::new(
+        CapabilityId("web.fetch".into()),
+        1,
+        CapabilityDomain::Web,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("web.fetch probe descriptor: {error:?}"))?;
+    if verifier.verify(&web_descriptor, &web_action, &web_output) != ActionVerification::Accept {
+        return Err("production web.fetch evidence verification failed".into());
+    }
+
+    let private_blocked = web
+        .execute(
+            ntd_runtime::ActionId(91),
+            &TypedAction::WebFetch {
+                url: "https://127.0.0.1/".into(),
+            },
+        )
+        .is_err();
+    if !private_blocked {
+        return Err("private-network web.fetch was not rejected".into());
+    }
+
+    let relative = "m13/probe.txt";
+    let write_action = TypedAction::FileWrite {
+        path: relative.into(),
+        bytes: b"NTD97-M13-PRODUCTION".to_vec(),
+    };
+    let write_result = file
+        .execute(ntd_runtime::ActionId(92), &write_action)
+        .map_err(|error| format!("production file.write probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: write_output,
+        rollback_token: Some(rollback_token),
+    } = write_result
+    else {
+        return Err("production file.write probe lacked rollback token".into());
+    };
+    let write_descriptor = {
+        let mut descriptor = CapabilityDescriptor::new(
+            CapabilityId("file.write".into()),
+            1,
+            CapabilityDomain::File,
+            SideEffectClass::Reversible,
+        )
+        .map_err(|error| format!("file.write probe descriptor: {error:?}"))?;
+        descriptor.rollback_supported = true;
+        descriptor
+    };
+    if verifier.verify(&write_descriptor, &write_action, &write_output)
+        != ActionVerification::Accept
+    {
+        return Err("production file.write evidence verification failed".into());
+    }
+
+    let read_action = TypedAction::FileRead {
+        path: relative.into(),
+    };
+    let read_result = file
+        .execute(ntd_runtime::ActionId(93), &read_action)
+        .map_err(|error| format!("production file.read probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: read_output,
+        ..
+    } = read_result
+    else {
+        return Err("production file.read probe did not complete".into());
+    };
+    let read_descriptor = CapabilityDescriptor::new(
+        CapabilityId("file.read".into()),
+        1,
+        CapabilityDomain::File,
+        SideEffectClass::ReadOnly,
+    )
+    .map_err(|error| format!("file.read probe descriptor: {error:?}"))?;
+    if verifier.verify(&read_descriptor, &read_action, &read_output) != ActionVerification::Accept {
+        return Err("production file.read evidence verification failed".into());
+    }
+    if read_output.value != ActionValue::Text("NTD97-M13-PRODUCTION".into()) {
+        return Err("production file.read returned unexpected content".into());
+    }
+
+    file.rollback(ntd_runtime::ActionId(92), &write_action, &rollback_token)
+        .map_err(|error| format!("production file.write rollback: {error}"))?;
+    let rollback_ok = file.read_text(relative).is_err();
+    if !rollback_ok {
+        return Err("production file.write rollback did not restore absent state".into());
+    }
+
+    Ok(
+        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\n"
+            .into(),
+    )
+}
+
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeProductionCapabilityProbe(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    capability_root: JString<'_>,
+) -> jbyteArray {
+    let Some(capability_root) = java_string(&mut env, &capability_root) else {
+        return java_bytes(&env, b"production_capabilities=failed\n");
+    };
+    match production_capability_probe(&capability_root) {
+        Ok(result) => java_bytes(&env, result.as_bytes()),
+        Err(error) => java_bytes(
+            &env,
+            format!("production_capabilities=failed\nerror={error}\n").as_bytes(),
+        ),
+    }
 }
 
 fn real_model_probe(

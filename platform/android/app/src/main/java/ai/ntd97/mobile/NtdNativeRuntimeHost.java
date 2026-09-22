@@ -2,6 +2,8 @@ package ai.ntd97.mobile;
 
 import android.content.Context;
 
+import java.io.File;
+
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -41,6 +43,17 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
                 expectedTokenIds);
         return result == null ? new byte[0] : result;
     }
+
+    static byte[] runProductionCapabilityProbe(Context context) {
+        if (!ensureLoaded()) {
+            return "production_capabilities=failed\nerror=native library unavailable\n"
+                    .getBytes(StandardCharsets.UTF_8);
+        }
+        File root = new File(context.getFilesDir(), "ntd97-capability-probe");
+        byte[] result = nativeProductionCapabilityProbe(root.getAbsolutePath());
+        return result == null ? new byte[0] : result;
+    }
+
 
     private static synchronized boolean ensureLoaded() {
         if (!loadAttempted) {
@@ -96,6 +109,7 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
                     1,
                     model.capsule.getAbsolutePath(),
                     model.shardRoot.getAbsolutePath(),
+                    new File(context.getFilesDir(), "ntd97-capability-files").getAbsolutePath(),
                     model.verifyKey,
                     128);
             return chatModelReady;
@@ -341,6 +355,7 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
             int version,
             String capsulePath,
             String shardRoot,
+            String capabilityRoot,
             byte[] verifyKey,
             int contextLimit);
 
@@ -371,6 +386,8 @@ final class NtdNativeRuntimeHost implements NtdRuntimeHost {
     private static native long nativeRestoreChatCheckpoint(byte[] checkpoint);
 
     private static native byte[] nativeChatTranscript();
+
+    private static native byte[] nativeProductionCapabilityProbe(String capabilityRoot);
 
     private static native byte[] nativeRealModelProbe(
             String capsulePath,
