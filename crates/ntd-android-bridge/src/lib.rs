@@ -2499,27 +2499,6 @@ fn governed_explicit_action_plan(
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|file.grant.write|{path}\t{text}\nEND"
         ))
-    } else if lower.starts_with("upload artifact ") {
-        let rest = trimmed
-            .get("upload artifact ".len()..)
-            .ok_or_else(|| "artifact upload command boundary failed".to_owned())?;
-        let Some((url, path)) = rest.split_once(" from ") else {
-            return Ok(None);
-        };
-        if url.trim().is_empty()
-            || path.trim().is_empty()
-            || url != url.trim()
-            || path != path.trim()
-            || url
-                .chars()
-                .chain(path.chars())
-                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
-        {
-            return Ok(None);
-        }
-        Some(format!(
-            "{NATIVE_ACTION_PROTOCOL_V1}\n1|artifact.upload|{url}\t{path}\nEND"
-        ))
     } else if lower.starts_with("set clipboard to ") {
         let value = trimmed
             .get("set clipboard to ".len()..)
@@ -5204,18 +5183,14 @@ mod tests {
             .expect("write approval required");
         assert_eq!(write_approval.0, "file.grant.write");
 
-        let upload = governed_explicit_action_plan(
-            "upload artifact https://example.com/upload from artifacts/report.bin",
+        let upload = match parse_native_action_plan(
+            "NTD97_ACTIONS_V1\n1|artifact.upload|https://example.com/upload\tartifacts/report.bin\nEND",
         )
-        .expect("upload plan")
-        .expect("upload action");
-        assert_eq!(
-            upload.payloads.get(&1),
-            Some(&TypedAction::ArtifactUpload {
-                url: "https://example.com/upload".into(),
-                path: "artifacts/report.bin".into(),
-            })
-        );
+        .expect("upload protocol")
+        {
+            AssistantPlanDecision::Actions(plan) => plan,
+            AssistantPlanDecision::Direct => panic!("expected upload action plan"),
+        };
         let upload_approval = external_write_approval(&upload)
             .expect("upload approval")
             .expect("upload approval required");
