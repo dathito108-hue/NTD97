@@ -394,6 +394,32 @@ impl SovereignConversationState {
             .ok()
     }
 
+    pub fn record_verified_synthesis_ready(
+        &mut self,
+        task_id: u64,
+    ) -> Result<(), ConversationStateError> {
+        if !self.cognition.state().tasks.contains_key(&task_id) {
+            return Err(ConversationStateError::TaskMismatch {
+                expected: task_id,
+                actual: 0,
+            });
+        }
+        self.cognition.state_mut().set_world_fact(
+            format!("conversation.task.{task_id}.verified_synthesis"),
+            "ready",
+        )?;
+        Ok(())
+    }
+
+    pub fn verified_synthesis_ready_for_task(&self, task_id: u64) -> bool {
+        let key = format!("conversation.task.{task_id}.verified_synthesis");
+        self.cognition
+            .state()
+            .world
+            .get(&key)
+            .is_some_and(|fact| fact.value == "ready")
+    }
+
     pub fn replace_active_prompt_tokens(
         &mut self,
         task_id: u64,
@@ -1013,6 +1039,9 @@ mod tests {
             .record_verified_action_count(task, 0)
             .expect("verified count");
         state
+            .record_verified_synthesis_ready(task)
+            .expect("verified synthesis");
+        state
             .replace_active_prompt_tokens(task, vec![3, 4, 5])
             .expect("replace prompt");
 
@@ -1024,6 +1053,7 @@ mod tests {
             Some("direct")
         );
         assert_eq!(restored.verified_action_count_for_task(task), Some(0));
+        assert!(restored.verified_synthesis_ready_for_task(task));
         assert_eq!(
             restored.active().expect("active").prompt_tokens,
             vec![3, 4, 5]
