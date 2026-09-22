@@ -3095,6 +3095,42 @@ struct AndroidActionExecutionContext<'a> {
     prepare_only: bool,
 }
 
+fn pc_peer_for_capability(
+    action_plan: &AssistantActionPlan,
+    capability: &str,
+) -> Result<String, String> {
+    let mut peer: Option<String> = None;
+    for node in &action_plan.graph.actions {
+        if node.capability.0 != capability {
+            continue;
+        }
+        let action = action_plan
+            .payloads
+            .get(&node.id)
+            .ok_or_else(|| "paired-PC action payload is missing".to_owned())?;
+        let action_peer = match action {
+            TypedAction::PcObserve { peer, .. }
+            | TypedAction::PcExecute { peer, .. }
+            | TypedAction::PcArtifactRead { peer, .. }
+            | TypedAction::PcArtifactWrite { peer, .. } => peer,
+            _ => return Err("paired-PC capability/action mismatch".into()),
+        };
+        if !valid_pc_peer_alias(action_peer) {
+            return Err("paired-PC action peer alias is invalid".into());
+        }
+        match &peer {
+            None => peer = Some(action_peer.clone()),
+            Some(existing) if existing == action_peer => {}
+            Some(_) => {
+                return Err(
+                    "one paired-PC capability cannot target multiple peers in one plan".into(),
+                )
+            }
+        }
+    }
+    peer.ok_or_else(|| "paired-PC capability has no target peer".to_owned())
+}
+
 fn execute_android_verified_actions(
     conversation: &mut SovereignConversationState,
     action_plan: &AssistantActionPlan,
@@ -3123,6 +3159,10 @@ fn execute_android_verified_actions(
         "artifact.upload",
         "device.interact",
         "app.action",
+        "pc.observe",
+        "pc.execute",
+        "pc.artifact.read",
+        "pc.artifact.write",
     ];
     if action_plan
         .graph
@@ -3346,6 +3386,66 @@ fn execute_android_verified_actions(
                 }
                 descriptor
             }
+            "pc.observe" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("pc.observe".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("pc.observe")
+                            .map_err(|error| format!("paired-PC observe scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "pc.execute" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("pc.execute".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("pc.execute")
+                            .map_err(|error| format!("paired-PC execute scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "pc.artifact.read" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("pc.artifact.read".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ReadOnly,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("pc.artifact.read")
+                            .map_err(|error| format!("paired-PC artifact read scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
+            "pc.artifact.write" => {
+                let mut descriptor = CapabilityDescriptor::new(
+                    CapabilityId("pc.artifact.write".into()),
+                    1,
+                    CapabilityDomain::Pc,
+                    SideEffectClass::ExternalWrite,
+                );
+                if let Ok(descriptor) = descriptor.as_mut() {
+                    descriptor.required_scopes.push(
+                        AuthorityScope::new("pc.artifact.write")
+                            .map_err(|error| format!("paired-PC artifact write scope: {error:?}"))?,
+                    );
+                }
+                descriptor
+            }
             _ => unreachable!("unsupported capabilities rejected above"),
         }
         .map_err(|error| format!("build Android capability descriptor: {error:?}"))?;
@@ -3463,6 +3563,21 @@ fn execute_android_verified_actions(
             .register_adapter(CapabilityId("app.action".into()), AndroidAppActionAdapter)
             .map_err(|error| format!("register app action adapter: {error:?}"))?;
     }
+    for capability in [
+        "pc.observe",
+        "pc.execute",
+        "pc.artifact.read",
+        "pc.artifact.write",
+    ] {
+        if fabric_capabilities.contains(capability) {
+            let peer = pc_peer_for_capability(action_plan, capability)?;
+            let adapter =
+                AndroidPairedPcAdapter::connect(&model.capability_root, &peer, capability)?;
+            fabric
+                .register_adapter(CapabilityId(capability.into()), adapter)
+                .map_err(|error| format!("register paired-PC adapter {capability}: {error:?}"))?;
+        }
+    }
 
     let mut authority = AuthorityGrant::new()
         .with_scope(
@@ -3483,6 +3598,18 @@ fn execute_android_verified_actions(
         authority = authority.with_scope(
             AuthorityScope::new("file.user_grant.read")
                 .map_err(|error| format!("granted file read authority scope: {error:?}"))?,
+        );
+    }
+    if fabric_capabilities.contains("pc.observe") {
+        authority = authority.with_scope(
+            AuthorityScope::new("pc.observe")
+                .map_err(|error| format!("paired-PC observe authority scope: {error:?}"))?,
+        );
+    }
+    if fabric_capabilities.contains("pc.artifact.read") {
+        authority = authority.with_scope(
+            AuthorityScope::new("pc.artifact.read")
+                .map_err(|error| format!("paired-PC artifact read authority scope: {error:?}"))?,
         );
     }
     if action_plan
@@ -3523,6 +3650,18 @@ fn execute_android_verified_actions(
             authority = authority.with_scope(
                 AuthorityScope::new("app.launch")
                     .map_err(|error| format!("app authority scope: {error:?}"))?,
+            );
+        }
+        if fabric_capabilities.contains("pc.execute") {
+            authority = authority.with_scope(
+                AuthorityScope::new("pc.execute")
+                    .map_err(|error| format!("paired-PC execute authority scope: {error:?}"))?,
+            );
+        }
+        if fabric_capabilities.contains("pc.artifact.write") {
+            authority = authority.with_scope(
+                AuthorityScope::new("pc.artifact.write")
+                    .map_err(|error| format!("paired-PC artifact write authority scope: {error:?}"))?,
             );
         }
     }
