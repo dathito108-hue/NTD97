@@ -1,0 +1,4 @@
+NTD97 M13 production WebFetch acceptance fixture.
+capability=web.fetch
+transport=android-http-url-connection
+governance=ActionFabric
