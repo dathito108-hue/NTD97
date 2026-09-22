@@ -61,6 +61,7 @@ for REQUIRED in \
   chat_reasoning_loop=ok \
   chat_action_planner=ok \
   chat_action_safety=ok \
+  chat_governed_e2e=ok \
   chat_memory=ok \
   chat_restore=ok \
   chat_store=ok \
