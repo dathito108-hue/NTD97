@@ -302,7 +302,7 @@ fn parse_action_line(
             let mut parts = payload.splitn(4, '\t');
             let peer = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
             let program = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
-            let working_dir = parts.next().ok_or(AssistantPlanError::InvalidPayload)?;
+            let working_dir = parts.next().unwrap_or_default();
             let args = parts.next().unwrap_or_default();
             if peer.trim().is_empty()
                 || program.trim().is_empty()
