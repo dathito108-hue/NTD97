@@ -14,6 +14,7 @@ jni = { version = "0.21.1", default-features = false }
 ntd-assimilation = { path = "../ntd-assimilation" }
 ntd-capsule = { path = "../ntd-capsule" }
 ntd-mobile-shell = { path = "../ntd-mobile-shell" }
+ntd-pc-fabric = { path = "../ntd-pc-fabric" }
 ntd-runtime = { path = "../ntd-runtime" }
 ntd-validation = { path = "../ntd-validation" }
 
