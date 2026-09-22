@@ -199,6 +199,31 @@ fn describe_pc_pair_profile(root: &Path, peer: &str) -> Result<String, String> {
     Ok(pc_pair_public_receipt(&profile))
 }
 
+fn sync_pc_pair_directory(pairs: &Path) -> Result<(), String> {
+    fs::File::open(pairs)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("sync paired-PC profile directory: {error}"))
+}
+
+fn rollback_pc_pair_commit(pairs: &Path, target: &Path, staged: &Path) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for path in [target, staged] {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!("remove {}: {error}", path.display())),
+        }
+    }
+    if let Err(error) = sync_pc_pair_directory(pairs) {
+        errors.push(error);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
 fn provision_pc_pair_profile(
     root: &Path,
     peer: &str,
@@ -250,28 +275,58 @@ fn provision_pc_pair_profile(
         file.sync_all()
             .map_err(|error| format!("sync paired-PC staged profile: {error}"))?;
         drop(file);
+
         fs::hard_link(&staged, &target)
             .map_err(|error| format!("commit paired-PC profile without replacement: {error}"))?;
-        fs::remove_file(&staged)
-            .map_err(|error| format!("remove paired-PC staged profile: {error}"))?;
-        fs::File::open(&pairs)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| format!("sync paired-PC profile directory: {error}"))?;
+        if let Err(error) = fs::remove_file(&staged) {
+            let rollback = rollback_pc_pair_commit(&pairs, &target, &staged);
+            return Err(match rollback {
+                Ok(()) => format!("remove paired-PC staged profile: {error}"),
+                Err(rollback_error) => format!(
+                    "remove paired-PC staged profile: {error}; rollback failed: {rollback_error}"
+                ),
+            });
+        }
+        if let Err(error) = sync_pc_pair_directory(&pairs) {
+            let rollback = rollback_pc_pair_commit(&pairs, &target, &staged);
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback_error) => {
+                    format!("{error}; rollback failed: {rollback_error}")
+                }
+            });
+        }
         Ok(())
     })();
-    if write_result.is_err() {
+    if let Err(error) = write_result {
         let _ = fs::remove_file(&staged);
+        return Err(error);
     }
-    write_result?;
 
-    let loaded = load_pc_pair_profile(root, peer)?;
+    let loaded = match load_pc_pair_profile(root, peer) {
+        Ok(profile) => profile,
+        Err(error) => {
+            let rollback = rollback_pc_pair_commit(&pairs, &target, &staged);
+            return Err(match rollback {
+                Ok(()) => format!("paired-PC committed profile failed reload: {error}"),
+                Err(rollback_error) => format!(
+                    "paired-PC committed profile failed reload: {error}; rollback failed: {rollback_error}"
+                ),
+            });
+        }
+    };
     if loaded.address != address
         || loaded.remote_peer_id != remote_peer_id
         || loaded.remote_verify_key != remote_verify_key
         || loaded.local_seed != local_seed
     {
-        let _ = fs::remove_file(&target);
-        return Err("paired-PC committed profile failed verification".into());
+        let rollback = rollback_pc_pair_commit(&pairs, &target, &staged);
+        return Err(match rollback {
+            Ok(()) => "paired-PC committed profile failed verification".into(),
+            Err(rollback_error) => format!(
+                "paired-PC committed profile failed verification; rollback failed: {rollback_error}"
+            ),
+        });
     }
 
     Ok(pc_pair_public_receipt(&loaded))
@@ -295,9 +350,7 @@ fn revoke_pc_pair_profile(root: &Path, peer: &str) -> Result<(), String> {
     }
     fs::remove_file(&canonical)
         .map_err(|error| format!("remove paired-PC profile: {error}"))?;
-    fs::File::open(&pairs)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| format!("sync paired-PC profile directory: {error}"))?;
+    sync_pc_pair_directory(&pairs)?;
     Ok(())
 }
 
