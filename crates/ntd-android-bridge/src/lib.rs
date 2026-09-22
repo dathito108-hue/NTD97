@@ -706,9 +706,7 @@ impl ActionVerifier for AndroidProductionVerifier {
             (
                 "device.interact",
                 TypedAction::DeviceInteract {
-                    surface,
-                    operation,
-                    ..
+                    surface, operation, ..
                 },
             ) => {
                 surface == "clipboard"
@@ -2659,7 +2657,9 @@ fn production_capability_probe(
         SideEffectClass::ExternalWrite,
     )
     .map_err(|error| format!("device.interact descriptor: {error:?}"))?;
-    clipboard_descriptor.required_scopes.push(clipboard_scope.clone());
+    clipboard_descriptor
+        .required_scopes
+        .push(clipboard_scope.clone());
     clipboard_descriptor
         .normalize()
         .map_err(|error| format!("normalize device.interact descriptor: {error:?}"))?;
@@ -2668,8 +2668,9 @@ fn production_capability_probe(
         operation: "set_text".into(),
         argument: Some("NTD97-M13-CLIPBOARD".into()),
     };
-    let clipboard_authority_blocked =
-        AuthorityGrant::new().permits(&clipboard_descriptor).is_err();
+    let clipboard_authority_blocked = AuthorityGrant::new()
+        .permits(&clipboard_descriptor)
+        .is_err();
     if !clipboard_authority_blocked {
         return Err("clipboard external write was not denied by default".into());
     }
@@ -2689,11 +2690,8 @@ fn production_capability_probe(
     else {
         return Err("production clipboard probe did not complete".into());
     };
-    if verifier.verify(
-        &clipboard_descriptor,
-        &clipboard_action,
-        &clipboard_output,
-    ) != ActionVerification::Accept
+    if verifier.verify(&clipboard_descriptor, &clipboard_action, &clipboard_output)
+        != ActionVerification::Accept
     {
         return Err("production clipboard evidence verification failed".into());
     }
@@ -2730,8 +2728,7 @@ fn production_capability_probe(
         .execute(ntd_runtime::ActionId(95), &app_action)
         .map_err(|error| format!("production app launch probe: {error}"))?;
     let AdapterResult::Completed {
-        output: app_output,
-        ..
+        output: app_output, ..
     } = app_result
     else {
         return Err("production app launch probe did not complete".into());
