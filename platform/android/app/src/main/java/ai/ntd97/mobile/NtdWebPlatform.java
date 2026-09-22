@@ -7,6 +7,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -365,16 +366,39 @@ final class NtdWebPlatform {
             String encodedQuery = URLEncoder
                     .encode(query.trim(), StandardCharsets.UTF_8.name())
                     .replace("+", "%20");
-            String rendered = configuration.endpointTemplate
-                    .replace("{query}", encodedQuery)
-                    .replace("{count}", Integer.toString(maxResults));
-            if (rendered.indexOf('{') >= 0 || rendered.indexOf('}') >= 0) {
-                throw new IOException("unsupported search endpoint placeholder");
+            HttpResult response;
+            List<SearchItem> items;
+            if (SEARCH_MODE_OPENSEARCH.equals(configuration.mode)) {
+                HttpResult descriptor = fetchSearchResponse(
+                        configuration.openSearchDescription,
+                        configuration,
+                        "application/opensearchdescription+xml,application/xml,text/xml;q=0.9,*/*;q=0.1");
+                String template = discoverOpenSearchTemplate(descriptor.body);
+                String rendered = expandOpenSearchTemplate(template, encodedQuery, maxResults);
+                if (configuration.hasCredential()
+                        && !sameOrigin(descriptor.finalUrl, rendered)) {
+                    throw new IOException(
+                            "credentialed OpenSearch template changed origin");
+                }
+                response = fetchSearchResponse(
+                        rendered,
+                        configuration,
+                        "application/x-suggestions+json,application/json;q=0.9,*/*;q=0.1");
+                items = normalizeOpenSearchResults(response.body, maxResults);
+            } else {
+                String rendered = configuration.endpointTemplate
+                        .replace("{query}", encodedQuery)
+                        .replace("{count}", Integer.toString(maxResults));
+                if (rendered.indexOf('{') >= 0 || rendered.indexOf('}') >= 0) {
+                    throw new IOException("unsupported search endpoint placeholder");
+                }
+                response = fetchSearchResponse(
+                        rendered,
+                        configuration,
+                        "application/json,text/plain;q=0.5,*/*;q=0.1");
+                items = normalizeSearchResults(response.body, configuration, maxResults);
             }
 
-            HttpResult response = fetchResponse(rendered);
-            List<SearchItem> items =
-                    normalizeSearchResults(response.body, configuration, maxResults);
             return encodeSearch(
                     response.status,
                     searchSource(response.finalUrl),
@@ -385,23 +409,120 @@ final class NtdWebPlatform {
     }
 
     private static SearchConfiguration buildSearchConfiguration(
-            String template,
+            String mode,
+            String endpointTemplate,
+            String openSearchDescription,
             String resultsPath,
             String titlePath,
             String urlPath,
-            String snippetPath) throws IOException {
-        String normalizedTemplate = template == null ? "" : template.trim();
+            String snippetPath,
+            String credentialHeaderName,
+            String credentialHeaderValue) throws IOException {
+        String normalizedMode = mode == null
+                ? SEARCH_MODE_JSON
+                : mode.trim().toLowerCase(Locale.ROOT);
+        String normalizedHeader = normalizeCredentialHeaderName(credentialHeaderName);
+        String normalizedCredential =
+                normalizeCredentialHeaderValue(normalizedHeader, credentialHeaderValue);
+
+        if (SEARCH_MODE_OPENSEARCH.equals(normalizedMode)) {
+            String descriptor =
+                    openSearchDescription == null ? "" : openSearchDescription.trim();
+            if (descriptor.isEmpty() || descriptor.length() > 4096) {
+                throw new IOException("OpenSearch description URL is required");
+            }
+            validateHttpsSyntax(descriptor);
+            return new SearchConfiguration(
+                    SEARCH_MODE_OPENSEARCH,
+                    "",
+                    descriptor,
+                    "",
+                    "",
+                    "",
+                    "",
+                    normalizedHeader,
+                    normalizedCredential);
+        }
+        if (!SEARCH_MODE_JSON.equals(normalizedMode)) {
+            throw new IOException("unsupported WebSearch profile mode");
+        }
+
+        String normalizedTemplate = endpointTemplate == null ? "" : endpointTemplate.trim();
         String normalizedResults = normalizeMappingPath(resultsPath, true);
         String normalizedTitle = normalizeMappingPath(titlePath, false);
         String normalizedUrl = normalizeMappingPath(urlPath, false);
         String normalizedSnippet = normalizeMappingPath(snippetPath, true);
         validateSearchTemplate(normalizedTemplate);
         return new SearchConfiguration(
+                SEARCH_MODE_JSON,
                 normalizedTemplate,
+                "",
                 normalizedResults,
                 normalizedTitle,
                 normalizedUrl,
-                normalizedSnippet);
+                normalizedSnippet,
+                normalizedHeader,
+                normalizedCredential);
+    }
+
+    private static String normalizeCredentialHeaderName(String rawName) throws IOException {
+        String name = rawName == null ? "" : rawName.trim();
+        if (name.isEmpty()) {
+            return "";
+        }
+        if (name.getBytes(StandardCharsets.US_ASCII).length > MAX_SEARCH_HEADER_NAME_BYTES) {
+            throw new IOException("credential header name exceeds limit");
+        }
+        for (int index = 0; index < name.length(); index++) {
+            char value = name.charAt(index);
+            boolean valid = (value >= 'A' && value <= 'Z')
+                    || (value >= 'a' && value <= 'z')
+                    || (value >= '0' && value <= '9')
+                    || value == '-';
+            if (!valid) {
+                throw new IOException("credential header name is invalid");
+            }
+        }
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.equals("host")
+                || lower.equals("connection")
+                || lower.equals("content-length")
+                || lower.equals("transfer-encoding")
+                || lower.equals("cookie")
+                || lower.equals("set-cookie")
+                || lower.equals("proxy-authorization")
+                || lower.equals("proxy-authenticate")
+                || lower.equals("te")
+                || lower.equals("trailer")
+                || lower.equals("upgrade")) {
+            throw new IOException("credential header name is reserved");
+        }
+        return name;
+    }
+
+    private static String normalizeCredentialHeaderValue(
+            String headerName,
+            String rawValue) throws IOException {
+        String value = rawValue == null ? "" : rawValue;
+        if (headerName.isEmpty()) {
+            if (!value.isEmpty()) {
+                throw new IOException("credential value requires a header name");
+            }
+            return "";
+        }
+        if (value.isEmpty()) {
+            throw new IOException("credential header value is empty");
+        }
+        if (value.getBytes(StandardCharsets.UTF_8).length > MAX_SEARCH_CREDENTIAL_BYTES) {
+            throw new IOException("credential header value exceeds limit");
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char ch = value.charAt(index);
+            if (ch == '\r' || ch == '\n' || ch == '\0') {
+                throw new IOException("credential header value contains controls");
+            }
+        }
+        return value;
     }
 
     private static void validateSearchTemplate(String template) throws IOException {
@@ -415,6 +536,61 @@ final class NtdWebPlatform {
             throw new IOException("unsupported search endpoint placeholder");
         }
         validateHttpsSyntax(rendered);
+    }
+
+    private static String discoverOpenSearchTemplate(byte[] body) throws Exception {
+        if (body.length == 0 || body.length > MAX_BODY_BYTES) {
+            throw new IOException("OpenSearch description is empty or oversized");
+        }
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature(
+                "http://apache.org/xml/features/nonvalidating/load-external-dtd",
+                false);
+        Document document;
+        try (ByteArrayInputStream input = new ByteArrayInputStream(body)) {
+            document = factory.newDocumentBuilder().parse(input);
+        }
+        NodeList urls = document.getElementsByTagNameNS("*", "Url");
+        for (int index = 0; index < urls.getLength(); index++) {
+            Node node = urls.item(index);
+            if (!(node instanceof Element)) {
+                continue;
+            }
+            Element element = (Element) node;
+            String type = element.getAttribute("type").trim().toLowerCase(Locale.ROOT);
+            String template = element.getAttribute("template").trim();
+            if (("application/x-suggestions+json".equals(type)
+                            || "application/json".equals(type))
+                    && !template.isEmpty()
+                    && (template.contains("{searchTerms}")
+                            || template.contains("{searchTerms?}"))) {
+                String probe = expandOpenSearchTemplate(template, "ntd97", 5);
+                validateHttpsSyntax(probe);
+                return template;
+            }
+        }
+        throw new IOException("OpenSearch description has no JSON result template");
+    }
+
+    private static String expandOpenSearchTemplate(
+            String template,
+            String encodedQuery,
+            int maxResults) throws IOException {
+        String rendered = template
+                .replace("{searchTerms}", encodedQuery)
+                .replace("{searchTerms?}", encodedQuery)
+                .replace("{count}", Integer.toString(maxResults))
+                .replace("{count?}", Integer.toString(maxResults));
+        if (rendered.indexOf('{') >= 0 || rendered.indexOf('}') >= 0) {
+            throw new IOException("OpenSearch template contains unsupported parameters");
+        }
+        return validateHttpsSyntax(rendered).toExternalForm();
     }
 
     private static String normalizeMappingPath(String rawPath, boolean allowEmpty)
