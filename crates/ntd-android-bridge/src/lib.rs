@@ -1171,43 +1171,102 @@ fn execute_android_verified_actions(
     resources: ResourceSnapshot,
     action_plan: &AssistantActionPlan,
 ) -> Result<(), String> {
-    if action_plan
-        .graph
-        .actions
-        .iter()
-        .any(|node| node.capability.0 != "device.observe")
-    {
+    let supported = action_plan.graph.actions.iter().all(|node| {
+        matches!(
+            node.capability.0.as_str(),
+            "device.observe" | "web.search" | "web.fetch"
+        )
+    });
+    if !supported {
         conversation
             .record_action_planner_status(task_id, "unsupported")
             .map_err(|error| format!("record unsupported action plan: {error:?}"))?;
-        return Err("model requested a capability without an Android chat adapter".into());
+        return Err("model requested a capability without a production Android adapter".into());
     }
 
     conversation
         .install_action_plan(task_id, action_plan)
         .map_err(|error| format!("install model-grounded action plan: {error:?}"))?;
 
+    let needs_device = action_plan
+        .graph
+        .actions
+        .iter()
+        .any(|node| node.capability.0 == "device.observe");
+    let needs_search = action_plan
+        .graph
+        .actions
+        .iter()
+        .any(|node| node.capability.0 == "web.search");
+    let needs_fetch = action_plan
+        .graph
+        .actions
+        .iter()
+        .any(|node| node.capability.0 == "web.fetch");
+    let needs_web = needs_search || needs_fetch;
+
     let mut registry = CapabilityRegistry::new();
-    registry
-        .register(
-            CapabilityDescriptor::new(
-                CapabilityId("device.observe".into()),
-                1,
-                CapabilityDomain::Device,
-                SideEffectClass::ReadOnly,
+    if needs_device {
+        registry
+            .register(
+                CapabilityDescriptor::new(
+                    CapabilityId("device.observe".into()),
+                    1,
+                    CapabilityDomain::Device,
+                    SideEffectClass::ReadOnly,
+                )
+                .map_err(|error| format!("build device.observe descriptor: {error:?}"))?,
             )
-            .map_err(|error| format!("build device.observe descriptor: {error:?}"))?,
-        )
-        .map_err(|error| format!("register device.observe capability: {error:?}"))?;
+            .map_err(|error| format!("register device.observe capability: {error:?}"))?;
+    }
+    if needs_search {
+        registry
+            .register(web_descriptor("web.search")?)
+            .map_err(|error| format!("register web.search capability: {error:?}"))?;
+    }
+    if needs_fetch {
+        registry
+            .register(web_descriptor("web.fetch")?)
+            .map_err(|error| format!("register web.fetch capability: {error:?}"))?;
+    }
+
     let mut fabric = ActionFabric::new(registry);
-    fabric
-        .register_adapter(
-            CapabilityId("device.observe".into()),
-            AndroidResourceAdapter {
-                snapshot: resources,
-            },
-        )
-        .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+    if needs_device {
+        fabric
+            .register_adapter(
+                CapabilityId("device.observe".into()),
+                AndroidResourceAdapter {
+                    snapshot: resources,
+                },
+            )
+            .map_err(|error| format!("register Android resource adapter: {error:?}"))?;
+    }
+    if needs_search {
+        fabric
+            .register_adapter(
+                CapabilityId("web.search".into()),
+                ProductionWebAdapter::new(android_web_config())
+                    .map_err(|error| format!("build web.search adapter: {error:?}"))?,
+            )
+            .map_err(|error| format!("register web.search adapter: {error:?}"))?;
+    }
+    if needs_fetch {
+        fabric
+            .register_adapter(
+                CapabilityId("web.fetch".into()),
+                ProductionWebAdapter::new(android_web_config())
+                    .map_err(|error| format!("build web.fetch adapter: {error:?}"))?,
+            )
+            .map_err(|error| format!("register web.fetch adapter: {error:?}"))?;
+    }
+
+    let mut authority = AuthorityGrant::new();
+    if needs_web {
+        authority = authority.with_scope(
+            AuthorityScope::new("network.read")
+                .map_err(|error| format!("build network.read authority: {error:?}"))?,
+        );
+    }
 
     let task = conversation
         .cognition()
@@ -1216,12 +1275,13 @@ fn execute_android_verified_actions(
         .get(&task_id)
         .cloned()
         .ok_or_else(|| "model-grounded cognitive task disappeared".to_owned())?;
+    let mut verifier = AndroidGovernedVerifier::default();
     let run = execute_verified_assistant_plan(
         &mut fabric,
         &task,
         action_plan,
-        &AuthorityGrant::new(),
-        &mut AndroidResourceVerifier,
+        &authority,
+        &mut verifier,
         user_message,
     )
     .map_err(|error| format!("execute verified Android action plan: {error:?}"))?;
