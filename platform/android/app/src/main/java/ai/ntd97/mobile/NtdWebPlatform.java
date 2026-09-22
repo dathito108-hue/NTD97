@@ -95,7 +95,7 @@ final class NtdWebPlatform {
         final String urlPath;
         final String snippetPath;
         final String credentialHeaderName;
-        final String credentialHeaderValue;
+        private final String credentialHeaderValue;
 
         SearchConfiguration(
                 String mode,
@@ -248,6 +248,17 @@ final class NtdWebPlatform {
             return true;
         }
 
+        String normalizedHeaderInput =
+                credentialHeaderName == null ? "" : credentialHeaderName.trim();
+        String credentialInput = credentialHeaderValue == null ? "" : credentialHeaderValue;
+        SearchConfiguration current = searchConfiguration;
+        if (!normalizedHeaderInput.isEmpty()
+                && credentialInput.isEmpty()
+                && current.hasCredential()
+                && current.credentialHeaderName.equalsIgnoreCase(normalizedHeaderInput)) {
+            credentialInput = current.credentialHeaderValue;
+        }
+
         final SearchConfiguration configuration;
         try {
             configuration = buildSearchConfiguration(
@@ -258,8 +269,8 @@ final class NtdWebPlatform {
                     titlePath,
                     urlPath,
                     snippetPath,
-                    credentialHeaderName,
-                    credentialHeaderValue);
+                    normalizedHeaderInput,
+                    credentialInput);
         } catch (IOException error) {
             return false;
         }
@@ -344,6 +355,34 @@ final class NtdWebPlatform {
                 && !encoded.isEmpty()
                 && !encoded.contains(plaintext)
                 && !encoded.equals(plaintext);
+    }
+
+    static boolean probeSearchCredentialPreserveForTest(
+            Context context,
+            String headerName) {
+        if (!BuildConfig.DEBUG || headerName == null || headerName.trim().isEmpty()) {
+            return false;
+        }
+        SearchConfiguration before = searchConfiguration;
+        if (!before.hasCredential()
+                || !before.credentialHeaderName.equalsIgnoreCase(headerName.trim())) {
+            return false;
+        }
+        String expected = before.credentialHeaderValue;
+        boolean saved = configureSearchProfile(
+                context,
+                before.mode,
+                before.endpointTemplate,
+                before.openSearchDescription,
+                before.resultsPath,
+                before.titlePath,
+                before.urlPath,
+                before.snippetPath,
+                before.credentialHeaderName,
+                "");
+        return saved
+                && searchConfiguration.hasCredential()
+                && searchConfiguration.credentialHeaderValue.equals(expected);
     }
 
     static boolean probeSearchCredentialHeaderForTest() {
