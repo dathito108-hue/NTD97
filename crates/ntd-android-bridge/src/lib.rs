@@ -2408,6 +2408,22 @@ fn run_constrained_device_planner(
     })
 }
 
+fn granted_command_path(value: &str) -> Option<String> {
+    let (alias, relative) = value.split_once('/')?;
+    if alias.trim().is_empty()
+        || relative.trim().is_empty()
+        || alias != alias.trim()
+        || relative != relative.trim()
+        || alias
+            .chars()
+            .chain(relative.chars())
+            .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+    {
+        return None;
+    }
+    Some(format!("{alias}\t{relative}"))
+}
+
 fn governed_explicit_action_plan(
     user_message: &str,
 ) -> Result<Option<AssistantActionPlan>, String> {
@@ -2455,6 +2471,54 @@ fn governed_explicit_action_plan(
         }
         Some(format!(
             "{NATIVE_ACTION_PROTOCOL_V1}\n1|browser.interact|{target}\tclick\nEND"
+        ))
+    } else if lower.starts_with("read granted file ") {
+        let path = trimmed
+            .get("read granted file ".len()..)
+            .and_then(granted_command_path);
+        path.map(|path| {
+            format!("{NATIVE_ACTION_PROTOCOL_V1}\n1|file.grant.read|{path}\nEND")
+        })
+    } else if lower.starts_with("write granted file ") {
+        let rest = trimmed
+            .get("write granted file ".len()..)
+            .ok_or_else(|| "granted file write command boundary failed".to_owned())?;
+        let Some((path, text)) = rest.split_once(" to ") else {
+            return Ok(None);
+        };
+        let Some(path) = granted_command_path(path) else {
+            return Ok(None);
+        };
+        if text.is_empty()
+            || text
+                .chars()
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|file.grant.write|{path}\t{text}\nEND"
+        ))
+    } else if lower.starts_with("upload artifact ") {
+        let rest = trimmed
+            .get("upload artifact ".len()..)
+            .ok_or_else(|| "artifact upload command boundary failed".to_owned())?;
+        let Some((url, path)) = rest.split_once(" from ") else {
+            return Ok(None);
+        };
+        if url.trim().is_empty()
+            || path.trim().is_empty()
+            || url != url.trim()
+            || path != path.trim()
+            || url
+                .chars()
+                .chain(path.chars())
+                .any(|ch| matches!(ch, '\r' | '\n' | '|' | '\t'))
+        {
+            return Ok(None);
+        }
+        Some(format!(
+            "{NATIVE_ACTION_PROTOCOL_V1}\n1|artifact.upload|{url}\t{path}\nEND"
         ))
     } else if lower.starts_with("set clipboard to ") {
         let value = trimmed
@@ -2511,12 +2575,33 @@ fn external_write_approval(
             .payloads
             .get(&node.id)
             .ok_or_else(|| "external-write action payload is missing".to_owned())?;
-        match action {
-            TypedAction::BrowserInteract {
-                target,
-                operation,
-                value,
-            } if (operation == "click" && value.is_none())
+        match (node.capability.0.as_str(), action) {
+            (
+                "artifact.upload",
+                TypedAction::ArtifactUpload { url, path },
+            ) if !url.trim().is_empty() && !path.trim().is_empty() => {
+                capabilities.insert("artifact.upload".to_owned());
+                rationales.push(format!(
+                    "upload app-private artifact {path} to {url} using idempotent HTTPS PUT"
+                ));
+            }
+            ("file.grant.write", TypedAction::FileWrite { path, bytes })
+                if !path.trim().is_empty() && !bytes.is_empty() =>
+            {
+                capabilities.insert("file.grant.write".to_owned());
+                rationales.push(format!(
+                    "write {} bytes to user-granted Android storage",
+                    bytes.len()
+                ));
+            }
+            (
+                "browser.interact",
+                TypedAction::BrowserInteract {
+                    target,
+                    operation,
+                    value,
+                },
+            ) if (operation == "click" && value.is_none())
                 || (operation == "set_value"
                     && value.as_ref().is_some_and(|value| !value.is_empty())) =>
             {
@@ -2525,22 +2610,28 @@ fn external_write_approval(
                     "interact with the controlled browser using {operation} on selector {target}"
                 ));
             }
-            TypedAction::DeviceInteract {
-                surface,
-                operation,
-                argument,
-            } if surface == "clipboard"
+            (
+                "device.interact",
+                TypedAction::DeviceInteract {
+                    surface,
+                    operation,
+                    argument,
+                },
+            ) if surface == "clipboard"
                 && operation == "set_text"
                 && argument.as_ref().is_some_and(|value| !value.is_empty()) =>
             {
                 capabilities.insert("device.interact".to_owned());
                 rationales.push("write text to the Android clipboard".to_owned());
             }
-            TypedAction::AppAction {
-                app,
-                action,
-                payload,
-            } if action == "launch" && payload.is_empty() && !app.trim().is_empty() => {
+            (
+                "app.action",
+                TypedAction::AppAction {
+                    app,
+                    action,
+                    payload,
+                },
+            ) if action == "launch" && payload.is_empty() && !app.trim().is_empty() => {
                 capabilities.insert("app.action".to_owned());
                 rationales.push(format!("launch Android app package {app}"));
             }
