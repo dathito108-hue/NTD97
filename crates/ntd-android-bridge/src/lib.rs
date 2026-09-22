@@ -1492,6 +1492,24 @@ impl ActionVerifier for AndroidProductionVerifier {
                     .any(|item| item == "android-app-private-file")
                     && output.evidence.iter().any(|item| item == "operation:write")
             }
+            ("file.grant.read", TypedAction::FileRead { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-user-granted-file")
+                    && output.evidence.iter().any(|item| item == "operation:read")
+            }
+            ("file.grant.write", TypedAction::FileWrite { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-user-granted-file")
+                    && output.evidence.iter().any(|item| item == "operation:write")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("receipt:grant-write:"))
+            }
             ("artifact.download", TypedAction::ArtifactDownload { .. }) => {
                 output
                     .evidence
@@ -1501,6 +1519,24 @@ impl ActionVerifier for AndroidProductionVerifier {
                         .evidence
                         .iter()
                         .any(|item| item == "operation:download")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("sha256:"))
+            }
+            ("artifact.upload", TypedAction::ArtifactUpload { .. }) => {
+                output
+                    .evidence
+                    .iter()
+                    .any(|item| item == "android-artifact-upload")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item == "transport:https-put")
+                    && output
+                        .evidence
+                        .iter()
+                        .any(|item| item.starts_with("status:2"))
                     && output
                         .evidence
                         .iter()
