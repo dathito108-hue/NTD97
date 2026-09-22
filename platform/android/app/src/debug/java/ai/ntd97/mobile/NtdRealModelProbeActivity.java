@@ -247,6 +247,12 @@ public final class NtdRealModelProbeActivity extends Activity {
             finish();
             return;
         }
+        if (productionFocusAttempts % FOREGROUND_REASSERT_INTERVAL == 0) {
+            Intent foreground = new Intent(this, NtdRealModelProbeActivity.class);
+            foreground.addFlags(
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(foreground);
+        }
         getWindow().getDecorView().postDelayed(
                 this::scheduleProductionCapabilityProbe,
                 PRODUCTION_FOCUS_RETRY_MS);
