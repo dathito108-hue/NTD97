@@ -151,6 +151,16 @@ public final class MainActivity extends Activity {
                         0,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         1.0f));
+
+        Button accessibility = new Button(this);
+        accessibility.setText("Accessibility");
+        accessibility.setOnClickListener(view -> openAccessibilitySettings());
+        actionRow.addView(
+                accessibility,
+                new LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1.0f));
         controls.addView(actionRow);
 
         if (BuildConfig.DEBUG) {
@@ -540,6 +550,14 @@ public final class MainActivity extends Activity {
                 this,
                 getPackageName() + ".NtdPhysicalEvidenceActivity");
         startActivity(validation);
+    }
+
+    private void openAccessibilitySettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+        } catch (RuntimeException error) {
+            statusView.setText("Accessibility settings unavailable");
+        }
     }
 
     private void requestStorageGrant() {
