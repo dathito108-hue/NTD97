@@ -378,13 +378,8 @@ fn parse_action_line(
     let capability_id = CapabilityId(capability.to_owned());
     let side_effect = match capability {
         "file.write" | "artifact.download" => SideEffectClass::Reversible,
-        "artifact.upload"
-        | "file.grant.write"
-        | "browser.interact"
-        | "device.interact"
-        | "app.action"
-        | "pc.execute"
-        | "pc.artifact.write" => SideEffectClass::ExternalWrite,
+        "artifact.upload" | "file.grant.write" | "browser.interact" | "device.interact"
+        | "app.action" | "pc.execute" | "pc.artifact.write" => SideEffectClass::ExternalWrite,
         _ => SideEffectClass::ReadOnly,
     };
     let node = ActionNode {
@@ -877,9 +872,15 @@ END",
             panic!("expected actions");
         };
         assert_eq!(plan.graph.actions[0].side_effect, SideEffectClass::ReadOnly);
-        assert_eq!(plan.graph.actions[1].side_effect, SideEffectClass::ExternalWrite);
+        assert_eq!(
+            plan.graph.actions[1].side_effect,
+            SideEffectClass::ExternalWrite
+        );
         assert_eq!(plan.graph.actions[2].side_effect, SideEffectClass::ReadOnly);
-        assert_eq!(plan.graph.actions[3].side_effect, SideEffectClass::ExternalWrite);
+        assert_eq!(
+            plan.graph.actions[3].side_effect,
+            SideEffectClass::ExternalWrite
+        );
         assert_eq!(
             plan.payloads.get(&2),
             Some(&TypedAction::PcExecute {
