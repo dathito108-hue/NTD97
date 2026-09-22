@@ -6291,6 +6291,44 @@ fn production_capability_probe(
         return Err("production browser.set_value receipt verification failed".into());
     }
 
+    let browser_submit_action = TypedAction::BrowserInteract {
+        target: "form".into(),
+        operation: "submit".into(),
+        value: None,
+    };
+    let browser_submit_result = browser_interact
+        .execute(ntd_runtime::ActionId(106), &browser_submit_action)
+        .map_err(|error| format!("production browser.submit probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: browser_submit_output,
+        ..
+    } = browser_submit_result
+    else {
+        return Err("production browser.submit did not complete".into());
+    };
+    if verifier.verify(
+        &browser_interact_descriptor,
+        &browser_submit_action,
+        &browser_submit_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production browser.submit receipt verification failed".into());
+    }
+
+    let cross_origin_blocked = browser_interact
+        .execute(
+            ntd_runtime::ActionId(107),
+            &TypedAction::BrowserInteract {
+                target: "https://httpbin.org/redirect-to?url=https%3A%2F%2Fexample.com%2F".into(),
+                operation: "navigate".into(),
+                value: None,
+            },
+        )
+        .is_err();
+    if !cross_origin_blocked {
+        return Err("cross-origin browser main-frame redirect did not fail closed".into());
+    }
+
     let capability_root_path = Path::new(capability_root);
     let pc_profile_root = capability_root_path.join("pc-pairs");
     if pc_profile_root.exists() {
@@ -6829,7 +6867,7 @@ fn production_capability_probe(
     }
 
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nweb_search_normalized=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_selector_ambiguity_block=ok\nbrowser_session_loss_block=ok\nbrowser_session_resume=ok\nbrowser_interact=ok\nbrowser_navigate=ok\nbrowser_set_value=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\napp_accessibility_authority_block=ok\napp_accessibility_missing_target_block=ok\napp_accessibility_click=ok\napp_accessibility_set_text=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nweb_search_boundary=ok\nweb_search_normalized=ok\nbrowser_observe=ok\nbrowser_private_block=ok\nbrowser_interact_authority_block=ok\nbrowser_selector_ambiguity_block=ok\nbrowser_session_loss_block=ok\nbrowser_session_resume=ok\nbrowser_interact=ok\nbrowser_navigate=ok\nbrowser_set_value=ok\nbrowser_submit=ok\nbrowser_cross_origin_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\nstorage_grant_runtime_scope=ok\nstorage_grant_missing_block=ok\nstorage_grant_write_authority_block=ok\nstorage_grant_write_missing_block=ok\npc_pair_missing_block=ok\npc_execute_authority_block=ok\nartifact_download_suspend=ok\nartifact_download_resume=ok\nartifact_download_rollback=ok\nartifact_upload_authority_block=ok\nartifact_upload_suspend=ok\nartifact_upload_resume=ok\nartifact_upload_receipt=ok\napp_accessibility_authority_block=ok\napp_accessibility_missing_target_block=ok\napp_accessibility_click=ok\napp_accessibility_set_text=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
