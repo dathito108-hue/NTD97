@@ -1898,6 +1898,7 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeSubmitCha
     prompt: JString<'_>,
     max_new_tokens: jint,
 ) -> jlong {
+    remember_platform_vm(&env);
     let Some(prompt) = java_string(&mut env, &prompt) else {
         return -1;
     };
