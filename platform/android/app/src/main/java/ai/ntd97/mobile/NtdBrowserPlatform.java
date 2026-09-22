@@ -2,6 +2,7 @@ package ai.ntd97.mobile;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.net.http.SslError;
 import android.os.Handler;
 import android.os.Looper;
@@ -759,6 +760,27 @@ final class NtdBrowserPlatform {
             this.latch = latch;
             this.completed = completed;
             this.expectedMainFrameOrigin = expectedMainFrameOrigin;
+        }
+
+        @Override
+        public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            if (completed.get()) {
+                return;
+            }
+            try {
+                URL verified = validatePublicHttps(url);
+                if (!browserOrigin(verified).equals(expectedMainFrameOrigin)) {
+                    view.stopLoading();
+                    finish(
+                            completed,
+                            result,
+                            latch,
+                            encodeError("blocked cross-origin browser navigation"));
+                }
+            } catch (Exception error) {
+                view.stopLoading();
+                finish(completed, result, latch, encodeError("blocked browser navigation"));
+            }
         }
 
         @Override
