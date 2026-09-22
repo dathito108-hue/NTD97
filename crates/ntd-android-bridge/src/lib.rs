@@ -27,8 +27,9 @@ use ntd_mobile_shell::{
     MobileContinuityBundle, MobileContinuityState, WakeReason,
 };
 use ntd_runtime::{
-    choose_reasoning_budget, decode_conversation_checkpoint, encode_conversation_checkpoint,
-    execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
+    build_compact_verified_answer_prompt, choose_reasoning_budget, decode_conversation_checkpoint,
+    encode_conversation_checkpoint, execute_verified_assistant_plan, memory_recall_limit_for_budget,
+    model_inference_signals,
     parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
     ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
     AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope,
@@ -38,7 +39,7 @@ use ntd_runtime::{
     GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
     NativeChatPromptCompiler, NativeReasoningProbe, ResourceSnapshot, SamplingMode,
     SideEffectClass, SovereignConversationState, TaskStatus, ThermalState, TypedAction,
-    NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
+    VerifiedActionEvidence, NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
 };
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
