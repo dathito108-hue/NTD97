@@ -429,12 +429,16 @@ Required contract:
 Current implementation:
 
 - production Android `web.fetch` adapter uses the OS HTTPS stack rather than a hosted AI/tool backend;
+- provider-configured `web.search` uses an OpenSearch description document outside the Rust/native action contract, discovers a JSON suggestion template at runtime and can switch providers by configuration rather than native code changes;
+- OpenSearch descriptor, search request and returned result URLs reuse the same HTTPS/public-address enforcement boundary; result count/query/body sizes are bounded and unsupported OpenSearch template parameters fail closed;
+- `web.search` remains a ReadOnly Web-domain ActionFabric capability requiring `network.read`, with trusted OpenSearch descriptor/response/result-count receipts verified before synthesis;
+- explicit `search web for …` / `web search …` assistant turns install a canonical `web.search` TaskGraph action and resume generation only from verified search evidence;
 - HTTPS boundary is GET-only, timeout-bounded and response-size-bounded, re-validates redirects, rejects user-info/non-443 endpoints and blocks loopback/link-local/site-local/multicast/IPv6-ULA destinations;
 - native ActionFabric retains ActionId, authority, verification and commit ownership while Java supplies only the Android HTTPS transport boundary;
 - production `file.read` / `file.write` adapters are restricted to an app-private capability root, reject absolute/traversal/symlink paths and cap evidence/write size;
 - app-private file writes use sync + atomic rename and emit rollback tokens restoring the previous bytes or removing newly-created files;
 - native action protocol now represents `file.write` as a reversible side effect instead of a read-only action;
-- Android production TaskGraph execution accepts only allowlisted `device.observe`, `web.fetch`, `file.read` and `file.write` capabilities; unsupported domains remain fail-closed;
+- Android production TaskGraph execution accepts only registered/verified capabilities including `device.observe`, `web.search`, `web.fetch`, scoped file/artifact operations and explicitly-authorized app/device writes; unsupported domains remain fail-closed;
 - Android emulator acceptance performs a real HTTPS fetch, rejects a private-network HTTPS target, verifies app-private write/read content and verifies rollback to the absent state;
 - native action protocol represents `device.interact` and `app.action` as `ExternalWrite` side effects rather than read-only operations;
 - production Android `device.interact` currently supports explicit-authority clipboard `set_text` with platform read-back verification and a native evidence receipt, without persisting the previous clipboard content;
@@ -458,10 +462,9 @@ Current implementation:
 
 Still required before M13 completion:
 
-- provider-independent real WebSearch boundary;
 - browser observe/interact production adapter;
 - broader Android storage surfaces through explicit platform/user grants;
-- connect production app/device external-write adapters to the canonical chat approval/suspend/resume flow; accessibility-assisted interaction remains fail-closed until its explicit-authority adapter is implemented;
+- accessibility-assisted interaction remains fail-closed until its explicit-authority adapter is implemented;
 - verified upload handling and broader resumable network transitions beyond bounded artifact downloads;
 - paired-PC integration into the same production mixed TaskGraph;
 - real mixed Web -> File -> App/Device -> PC acceptance on representative phone hardware.
