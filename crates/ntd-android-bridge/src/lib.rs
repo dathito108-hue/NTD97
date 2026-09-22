@@ -7435,10 +7435,57 @@ mod tests {
             click.graph.actions[0].side_effect,
             SideEffectClass::ExternalWrite
         );
+
+        let resume = governed_explicit_action_plan("resume browser")
+            .expect("resume plan")
+            .expect("resume action");
+        assert_eq!(
+            resume.payloads.get(&1),
+            Some(&TypedAction::BrowserObserve {
+                target: "session".into(),
+            })
+        );
+
+        let navigate = governed_explicit_action_plan("browser navigate https://example.com/docs")
+            .expect("navigate plan")
+            .expect("navigate action");
+        assert_eq!(
+            navigate.payloads.get(&1),
+            Some(&TypedAction::BrowserInteract {
+                target: "https://example.com/docs".into(),
+                operation: "navigate".into(),
+                value: None,
+            })
+        );
+
+        let set_value =
+            governed_explicit_action_plan("browser set input[name='q'] to NTD97 mobile")
+                .expect("set_value plan")
+                .expect("set_value action");
+        assert_eq!(
+            set_value.payloads.get(&1),
+            Some(&TypedAction::BrowserInteract {
+                target: "input[name='q']".into(),
+                operation: "set_value".into(),
+                value: Some("NTD97 mobile".into()),
+            })
+        );
+
+        let submit = governed_explicit_action_plan("browser submit form#search")
+            .expect("submit plan")
+            .expect("submit action");
+        assert_eq!(
+            submit.payloads.get(&1),
+            Some(&TypedAction::BrowserInteract {
+                target: "form#search".into(),
+                operation: "submit".into(),
+                value: None,
+            })
+        );
     }
 
     #[test]
-    fn browser_interaction_requires_chat_approval_and_receipt_evidence() {
+    fn browser_interaction_requires_chat_approval_and_action_bound_receipt() {
         let plan = governed_explicit_action_plan("browser click body")
             .expect("click plan")
             .expect("click action");
@@ -7456,13 +7503,23 @@ mod tests {
         )
         .expect("browser descriptor");
         let action = plan.payloads.get(&1).expect("browser action");
+        let digest = digest_hex(&sha256(b"click\nbody\n"));
+        let receipt = format!("android-webview:click:1:{digest}");
+        let platform = format!(
+            "receipt={receipt}\noperation=click\ntarget=body\nurl=https://example.com/\ntitle=Example Domain\ntag=BODY"
+        );
         let accepted = ActionOutput {
             summary: "verified browser click".into(),
-            value: ActionValue::None,
+            value: ActionValue::Fields(BTreeMap::from([
+                ("operation".into(), "click".into()),
+                ("target".into(), "body".into()),
+                ("receipt".into(), receipt.clone()),
+                ("platform".into(), platform),
+            ])),
             evidence: vec![
                 "android-webview-browser".into(),
                 "operation:click".into(),
-                "receipt:android-webview:click:1".into(),
+                format!("receipt:{receipt}"),
             ],
         };
         let mut verifier = AndroidProductionVerifier;
@@ -7471,13 +7528,57 @@ mod tests {
             ActionVerification::Accept
         );
 
-        let rejected = ActionOutput {
-            summary: "browser click claimed".into(),
-            value: ActionValue::None,
-            evidence: vec!["android-webview-browser".into(), "operation:click".into()],
+        let mut tampered = accepted.clone();
+        let ActionValue::Fields(fields) = &mut tampered.value else {
+            panic!("fields");
         };
+        fields.insert(
+            "receipt".into(),
+            format!("android-webview:click:1:{}", "0".repeat(64)),
+        );
         assert!(matches!(
-            verifier.verify(&descriptor, action, &rejected),
+            verifier.verify(&descriptor, action, &tampered),
+            ActionVerification::Reject { .. }
+        ));
+
+        let set_plan = governed_explicit_action_plan("browser set input#q to private-value")
+            .expect("set plan")
+            .expect("set action");
+        let set_action = set_plan.payloads.get(&1).expect("set action");
+        let value_hash = digest_hex(&sha256(b"private-value"));
+        let set_digest = digest_hex(&sha256(b"set_value\ninput#q\nprivate-value"));
+        let set_receipt = format!("android-webview:set_value:2:{set_digest}");
+        let set_platform = format!(
+            "receipt={set_receipt}\noperation=set_value\ntarget=input#q\nurl=https://example.com/\ntitle=Example\ntag=INPUT\nvalue_sha256={value_hash}"
+        );
+        let set_output = ActionOutput {
+            summary: "verified browser set_value".into(),
+            value: ActionValue::Fields(BTreeMap::from([
+                ("operation".into(), "set_value".into()),
+                ("target".into(), "input#q".into()),
+                ("receipt".into(), set_receipt.clone()),
+                ("platform".into(), set_platform),
+            ])),
+            evidence: vec![
+                "android-webview-browser".into(),
+                "operation:set_value".into(),
+                format!("receipt:{set_receipt}"),
+            ],
+        };
+        assert_eq!(
+            verifier.verify(&descriptor, set_action, &set_output),
+            ActionVerification::Accept
+        );
+        let mut wrong_hash = set_output;
+        let ActionValue::Fields(fields) = &mut wrong_hash.value else {
+            panic!("fields");
+        };
+        fields
+            .get_mut("platform")
+            .expect("platform")
+            .push_str("\nvalue_sha256=00");
+        assert!(matches!(
+            verifier.verify(&descriptor, set_action, &wrong_hash),
             ActionVerification::Reject { .. }
         ));
     }
