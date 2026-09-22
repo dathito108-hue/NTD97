@@ -146,7 +146,7 @@ fn parse_action_line(
                 url: url.to_owned(),
                 path: path.to_owned(),
             }
-        },
+        }
         "browser.observe" => TypedAction::BrowserObserve {
             target: payload.to_owned(),
         },
@@ -534,7 +534,10 @@ END",
         let AssistantPlanDecision::Actions(plan) = parsed else {
             panic!("expected actions");
         };
-        assert_eq!(plan.graph.actions[0].side_effect, SideEffectClass::Reversible);
+        assert_eq!(
+            plan.graph.actions[0].side_effect,
+            SideEffectClass::Reversible
+        );
         assert_eq!(
             plan.payloads.get(&1),
             Some(&TypedAction::ArtifactDownload {
