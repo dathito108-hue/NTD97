@@ -86,7 +86,7 @@ struct NativeChatModel {
     capability_root: PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct PcPairProfile {
     peer: String,
     address: SocketAddr,
