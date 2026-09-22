@@ -19,7 +19,7 @@ public final class NtdRealModelProbeActivity extends Activity {
     private static final String RUNTIME_ROOT = "ntd97-real-model";
     private static final String RESULT_FILE = "ntd97-real-model-probe.txt";
 
-    private static final int MAX_PRODUCTION_FOCUS_ATTEMPTS = 24;
+    private static final int MAX_PRODUCTION_FOCUS_ATTEMPTS = 48;
     private static final long PRODUCTION_FOCUS_RETRY_MS = 250L;
     private static final long PRODUCTION_FOCUS_SETTLE_MS = 750L;
 
@@ -82,26 +82,34 @@ public final class NtdRealModelProbeActivity extends Activity {
     }
 
     private void runProductionProbeAndFinish() {
-        String result = pendingResult;
-        try {
-            result = result + runChatApiProbe();
-        } catch (Exception error) {
-            String message = error.getMessage();
-            if (message == null || message.isEmpty()) {
-                message = error.getClass().getSimpleName();
+        final String prefix = pendingResult;
+        Thread chatProbeThread = new Thread(() -> {
+            String result = prefix;
+            try {
+                result = result + runChatApiProbe();
+            } catch (Exception error) {
+                String message = error.getMessage();
+                if (message == null || message.isEmpty()) {
+                    message = error.getClass().getSimpleName();
+                }
+                result = result
+                        + "chat_submit=failed\n"
+                        + "chat_external_approval=failed\n"
+                        + "chat_external_approval_detail=foreground-probe:"
+                        + message.replace('\n', ' ').replace('\r', ' ')
+                        + "\n"
+                        + "chat_upload_continuity=failed\n"
+                        + "chat_upload_continuity_detail=foreground-probe\n";
             }
-            result = result
-                    + "chat_submit=failed\n"
-                    + "chat_external_approval=failed\n"
-                    + "chat_external_approval_detail=foreground-probe:"
-                    + message.replace('\n', ' ').replace('\r', ' ')
-                    + "\n"
-                    + "chat_upload_continuity=failed\n"
-                    + "chat_upload_continuity_detail=foreground-probe\n";
-        }
 
-        pendingResult = result;
-        restoreProbeForegroundAndSchedule();
+            String finalResult = result;
+            runOnUiThread(() -> {
+                pendingResult = finalResult;
+                restoreProbeForegroundAndSchedule();
+            });
+        }, "ntd97-chat-acceptance");
+        chatProbeThread.setDaemon(true);
+        chatProbeThread.start();
     }
 
     private void restoreProbeForegroundAndSchedule() {
