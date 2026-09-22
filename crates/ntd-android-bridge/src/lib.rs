@@ -2540,7 +2540,10 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeChatTrans
     java_bytes(&env, chat_transcript().as_bytes())
 }
 
-fn production_capability_probe(capability_root: &str) -> Result<String, String> {
+fn production_capability_probe(
+    capability_root: &str,
+    package_name: &str,
+) -> Result<String, String> {
     let root = PathBuf::from(capability_root);
     let mut file = AndroidScopedFileAdapter::new(root.clone())?;
     let mut verifier = AndroidProductionVerifier;
@@ -2647,8 +2650,98 @@ fn production_capability_probe(capability_root: &str) -> Result<String, String> 
         return Err("production file.write rollback did not restore absent state".into());
     }
 
+    let clipboard_scope = AuthorityScope::new("device.clipboard.write")
+        .map_err(|error| format!("clipboard authority scope: {error:?}"))?;
+    let mut clipboard_descriptor = CapabilityDescriptor::new(
+        CapabilityId("device.interact".into()),
+        1,
+        CapabilityDomain::Device,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("device.interact descriptor: {error:?}"))?;
+    clipboard_descriptor.required_scopes.push(clipboard_scope.clone());
+    clipboard_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize device.interact descriptor: {error:?}"))?;
+    let clipboard_action = TypedAction::DeviceInteract {
+        surface: "clipboard".into(),
+        operation: "set_text".into(),
+        argument: Some("NTD97-M13-CLIPBOARD".into()),
+    };
+    let clipboard_authority_blocked =
+        AuthorityGrant::new().permits(&clipboard_descriptor).is_err();
+    if !clipboard_authority_blocked {
+        return Err("clipboard external write was not denied by default".into());
+    }
+    let mut clipboard_authority = AuthorityGrant::new().with_scope(clipboard_scope);
+    clipboard_authority.allow_external_write = true;
+    clipboard_authority
+        .permits(&clipboard_descriptor)
+        .map_err(|error| format!("clipboard explicit authority rejected: {error:?}"))?;
+    let mut clipboard = AndroidDeviceInteractAdapter;
+    let clipboard_result = clipboard
+        .execute(ntd_runtime::ActionId(94), &clipboard_action)
+        .map_err(|error| format!("production clipboard probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: clipboard_output,
+        ..
+    } = clipboard_result
+    else {
+        return Err("production clipboard probe did not complete".into());
+    };
+    if verifier.verify(
+        &clipboard_descriptor,
+        &clipboard_action,
+        &clipboard_output,
+    ) != ActionVerification::Accept
+    {
+        return Err("production clipboard evidence verification failed".into());
+    }
+
+    let app_scope = AuthorityScope::new("app.launch")
+        .map_err(|error| format!("app launch authority scope: {error:?}"))?;
+    let mut app_descriptor = CapabilityDescriptor::new(
+        CapabilityId("app.action".into()),
+        1,
+        CapabilityDomain::App,
+        SideEffectClass::ExternalWrite,
+    )
+    .map_err(|error| format!("app.action descriptor: {error:?}"))?;
+    app_descriptor.required_scopes.push(app_scope.clone());
+    app_descriptor
+        .normalize()
+        .map_err(|error| format!("normalize app.action descriptor: {error:?}"))?;
+    let app_action = TypedAction::AppAction {
+        app: package_name.to_owned(),
+        action: "launch".into(),
+        payload: Vec::new(),
+    };
+    let app_authority_blocked = AuthorityGrant::new().permits(&app_descriptor).is_err();
+    if !app_authority_blocked {
+        return Err("app launch external write was not denied by default".into());
+    }
+    let mut app_authority = AuthorityGrant::new().with_scope(app_scope);
+    app_authority.allow_external_write = true;
+    app_authority
+        .permits(&app_descriptor)
+        .map_err(|error| format!("app launch explicit authority rejected: {error:?}"))?;
+    let mut app = AndroidAppActionAdapter;
+    let app_result = app
+        .execute(ntd_runtime::ActionId(95), &app_action)
+        .map_err(|error| format!("production app launch probe: {error}"))?;
+    let AdapterResult::Completed {
+        output: app_output,
+        ..
+    } = app_result
+    else {
+        return Err("production app launch probe did not complete".into());
+    };
+    if verifier.verify(&app_descriptor, &app_action, &app_output) != ActionVerification::Accept {
+        return Err("production app launch evidence verification failed".into());
+    }
+
     Ok(
-        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\n"
+        "web_fetch=ok\nweb_private_block=ok\nfile_write=ok\nfile_read=ok\nfile_rollback=ok\ndevice_clipboard_authority_block=ok\ndevice_clipboard_write=ok\napp_launch_authority_block=ok\napp_launch=ok\n"
             .into(),
     )
 }
@@ -2659,11 +2752,15 @@ pub extern "system" fn Java_ai_ntd97_mobile_NtdNativeRuntimeHost_nativeProductio
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     capability_root: JString<'_>,
+    package_name: JString<'_>,
 ) -> jbyteArray {
     let Some(capability_root) = java_string(&mut env, &capability_root) else {
         return java_bytes(&env, b"production_capabilities=failed\n");
     };
-    match production_capability_probe(&capability_root) {
+    let Some(package_name) = java_string(&mut env, &package_name) else {
+        return java_bytes(&env, b"production_capabilities=failed\n");
+    };
+    match production_capability_probe(&capability_root, &package_name) {
         Ok(result) => java_bytes(&env, result.as_bytes()),
         Err(error) => java_bytes(
             &env,
