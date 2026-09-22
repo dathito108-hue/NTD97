@@ -18,8 +18,14 @@ public final class NtdRealModelProbeActivity extends Activity {
     private static final String RUNTIME_ROOT = "ntd97-real-model";
     private static final String RESULT_FILE = "ntd97-real-model-probe.txt";
 
+    private static final int MAX_PRODUCTION_FOCUS_ATTEMPTS = 24;
+    private static final long PRODUCTION_FOCUS_RETRY_MS = 250L;
+    private static final long PRODUCTION_FOCUS_SETTLE_MS = 750L;
+
     private String pendingResult;
     private boolean productionProbeStarted;
+    private boolean productionCapabilityProbeStarted;
+    private int productionFocusAttempts;
     private String externalApprovalDiagnostic = "not-run";
 
     @Override
@@ -90,6 +96,45 @@ public final class NtdRealModelProbeActivity extends Activity {
                     + "\n";
         }
 
+        pendingResult = result;
+        scheduleProductionCapabilityProbe();
+    }
+
+    private void scheduleProductionCapabilityProbe() {
+        if (productionCapabilityProbeStarted || pendingResult == null || isFinishing()) {
+            return;
+        }
+
+        if (hasWindowFocus()) {
+            productionCapabilityProbeStarted = true;
+            getWindow().getDecorView().postDelayed(
+                    this::runProductionCapabilityProbeAndFinish,
+                    PRODUCTION_FOCUS_SETTLE_MS);
+            return;
+        }
+
+        productionFocusAttempts++;
+        if (productionFocusAttempts > MAX_PRODUCTION_FOCUS_ATTEMPTS) {
+            writeResult(
+                    pendingResult
+                            + "production_capabilities=failed\n"
+                            + "error=foreground focus unavailable after clipboard approval\n");
+            finish();
+            return;
+        }
+        getWindow().getDecorView().postDelayed(
+                this::scheduleProductionCapabilityProbe,
+                PRODUCTION_FOCUS_RETRY_MS);
+    }
+
+    private void runProductionCapabilityProbeAndFinish() {
+        if (!hasWindowFocus()) {
+            productionCapabilityProbeStarted = false;
+            scheduleProductionCapabilityProbe();
+            return;
+        }
+
+        String result = pendingResult;
         try {
             result = result + new String(
                     NtdNativeRuntimeHost.runProductionCapabilityProbe(this),
