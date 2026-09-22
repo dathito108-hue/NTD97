@@ -293,8 +293,51 @@ final class NtdBrowserPlatform {
             }
             URL currentUrl = validatePublicHttps(current);
             String expectedOrigin = browserOrigin(currentUrl);
-            view.setWebViewClient(new GuardedClient(
-                    result, latch, completed, expectedOrigin));
+            if ("submit".equals(operation)) {
+                view.setWebViewClient(new GuardedClient(
+                        result, latch, completed, expectedOrigin) {
+                    @Override
+                    public void onPageFinished(WebView finishedView, String url) {
+                        if (completed.get()) {
+                            return;
+                        }
+                        try {
+                            URL finalUrl = validatePublicHttps(url);
+                            if (!browserOrigin(finalUrl).equals(expectedOrigin)) {
+                                finish(
+                                        completed,
+                                        result,
+                                        latch,
+                                        encodeError("browser submit changed origin"));
+                                return;
+                            }
+                            persistVerifiedSessionUrl(context, finalUrl);
+                            long receiptId = RECEIPT_COUNTER.incrementAndGet();
+                            String receipt = browserReceipt(
+                                    operation,
+                                    target,
+                                    value == null ? "" : value,
+                                    receiptId);
+                            finish(
+                                    completed,
+                                    result,
+                                    latch,
+                                    encodeSuccess(
+                                            "receipt=" + receipt
+                                                    + "\noperation=" + operation
+                                                    + "\ntarget=" + sanitizeLine(target)
+                                                    + "\nurl=" + finalUrl.toExternalForm()
+                                                    + "\ntitle=" + sanitizeLine(finishedView.getTitle())
+                                                    + "\ntag=FORM"));
+                        } catch (Exception error) {
+                            finish(completed, result, latch, encodeError(safeMessage(error)));
+                        }
+                    }
+                });
+            } else {
+                view.setWebViewClient(new GuardedClient(
+                        result, latch, completed, expectedOrigin));
+            }
 
             String selector = JSONObject.quote(target);
             String uniquePrefix = "try{var m=document.querySelectorAll(" + selector + ");"
@@ -387,7 +430,10 @@ final class NtdBrowserPlatform {
                             finish(completed, result, latch, encodeError(safeMessage(error)));
                         }
                     };
-                    if ("click".equals(operation) || "submit".equals(operation)) {
+                    if ("submit".equals(operation)) {
+                        return;
+                    }
+                    if ("click".equals(operation)) {
                         MAIN.postDelayed(finishInteraction, INTERACTION_SETTLE_MS);
                     } else {
                         finishInteraction.run();
