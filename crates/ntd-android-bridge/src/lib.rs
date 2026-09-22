@@ -4,6 +4,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    io::Write,
     path::{Component, Path, PathBuf},
     ptr::null_mut,
     sync::{
@@ -441,7 +442,15 @@ impl AndroidScopedFileAdapter {
             .and_then(|name| name.to_str())
             .ok_or_else(|| "invalid app-private file name".to_owned())?;
         let temp = canonical_parent.join(format!(".{file_name}.ntd97-{}", action_id.0));
-        fs::write(&temp, bytes).map_err(|error| format!("write app-private temp file: {error}"))?;
+        let mut output = fs::File::create(&temp)
+            .map_err(|error| format!("create app-private temp file: {error}"))?;
+        output
+            .write_all(bytes)
+            .map_err(|error| format!("write app-private temp file: {error}"))?;
+        output
+            .sync_all()
+            .map_err(|error| format!("sync app-private temp file: {error}"))?;
+        drop(output);
         fs::rename(&temp, &target).map_err(|error| format!("commit app-private file: {error}"))?;
         Ok(rollback)
     }
