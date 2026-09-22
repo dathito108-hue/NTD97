@@ -1,6 +1,8 @@
 #![deny(unsafe_code)]
 #![allow(non_snake_case)]
 
+mod platform;
+
 use std::{
     collections::BTreeMap,
     fs,
@@ -14,7 +16,7 @@ use std::{
 use jni::{
     objects::{JByteArray, JClass, JString},
     sys::{jboolean, jbyteArray, jint, jlong},
-    JNIEnv,
+    JavaVM, JNIEnv,
 };
 use ntd_assimilation::{
     activate_thin_generative_capsule, verify_native_package_with_shards, AssetKind,
@@ -31,7 +33,7 @@ use ntd_runtime::{
     execute_verified_assistant_plan, memory_recall_limit_for_budget, model_inference_signals,
     parse_native_action_plan, run_budgeted_reasoning_cycle, sample_token, ActionFabric,
     ActionOutput, ActionValue, ActionVerification, ActionVerifier, AdapterResult,
-    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, CapabilityAdapter,
+    AssistantActionPlan, AssistantPlanDecision, AuthorityGrant, AuthorityScope, CapabilityAdapter,
     CapabilityDescriptor, CapabilityDomain, CapabilityId, CapabilityRegistry, CognitiveContext,
     CognitiveIdentity, CognitiveObservation, CpuReferenceProvider, DistributionKind,
     GenerationConfig, GenerationControl, GraphGenerator, LlamaSpmConfig, LlamaSpmTokenizer,
@@ -39,6 +41,8 @@ use ntd_runtime::{
     SideEffectClass, SovereignConversationState, TaskStatus, ThermalState, TypedAction,
     NATIVE_ACTION_DIRECT, NATIVE_ACTION_PROTOCOL_V1,
 };
+use platform::{AndroidPlatformAdapter, AndroidPlatformVerifier};
+
 use ntd_validation::{
     encode_physical_evidence, run_logical_continuity_soak, run_native_validation_workload,
     DeviceEvidence, EvidenceClass, PhysicalEvidenceRecord,
@@ -258,6 +262,7 @@ struct NativeState {
     chat_model: Option<Arc<NativeChatModel>>,
     chat_session: Option<NativeChatSession>,
     chat_submit_in_progress: bool,
+    platform_vm: Option<Arc<JavaVM>>,
     conversation: SovereignConversationState,
     next_chat_request_id: u64,
 }
@@ -277,6 +282,7 @@ impl Default for NativeState {
             chat_model: None,
             chat_session: None,
             chat_submit_in_progress: false,
+            platform_vm: None,
             conversation: SovereignConversationState::new(CognitiveIdentity(*b"NTD97-ASSISTANT1")),
             next_chat_request_id: 1,
         }
